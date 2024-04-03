@@ -4,12 +4,11 @@ from typing import Any, cast
 from unittest.mock import call
 
 import pytest
-import pytest_asyncio
 
-from hypercorn.asyncio.worker_context import WorkerContext
-from hypercorn.config import Config
-from hypercorn.logging import Logger
-from hypercorn.protocol.events import (
+from anycorn.worker_context import WorkerContext
+from anycorn.config import Config
+from anycorn.logging import Logger
+from anycorn.protocol.events import (
     Body,
     EndBody,
     InformationalResponse,
@@ -17,9 +16,9 @@ from hypercorn.protocol.events import (
     Response,
     StreamClosed,
 )
-from hypercorn.protocol.http_stream import ASGIHTTPState, HTTPStream
-from hypercorn.typing import HTTPResponseBodyEvent, HTTPResponseStartEvent, HTTPScope
-from hypercorn.utils import UnexpectedMessageError
+from anycorn.protocol.http_stream import ASGIHTTPState, HTTPStream
+from anycorn.typing import HTTPResponseBodyEvent, HTTPResponseStartEvent, HTTPScope
+from anycorn.utils import UnexpectedMessageError
 
 try:
     from unittest.mock import AsyncMock
@@ -28,7 +27,7 @@ except ImportError:
     from mock import AsyncMock  # type: ignore
 
 
-@pytest_asyncio.fixture(name="stream")  # type: ignore[misc]
+@pytest.fixture(name="stream")
 async def _stream() -> HTTPStream:
     stream = HTTPStream(
         AsyncMock(), Config(), WorkerContext(None), AsyncMock(), False, None, None, AsyncMock(), 1
@@ -39,7 +38,7 @@ async def _stream() -> HTTPStream:
 
 
 @pytest.mark.parametrize("http_version", ["1.0", "1.1"])
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_request_http_1(stream: HTTPStream, http_version: str) -> None:
     await stream.handle(
         Request(stream_id=1, http_version=http_version, headers=[], raw_path=b"/?a=b", method="GET")
@@ -63,7 +62,7 @@ async def test_handle_request_http_1(stream: HTTPStream, http_version: str) -> N
     }
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_request_http_2(stream: HTTPStream) -> None:
     await stream.handle(
         Request(stream_id=1, http_version="2", headers=[], raw_path=b"/?a=b", method="GET")
@@ -87,7 +86,7 @@ async def test_handle_request_http_2(stream: HTTPStream) -> None:
     }
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_body(stream: HTTPStream) -> None:
     await stream.handle(Body(stream_id=1, data=b"data"))
     stream.app_put.assert_called()  # type: ignore
@@ -96,7 +95,7 @@ async def test_handle_body(stream: HTTPStream) -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_end_body(stream: HTTPStream) -> None:
     stream.app_put = AsyncMock()
     await stream.handle(EndBody(stream_id=1))
@@ -106,7 +105,7 @@ async def test_handle_end_body(stream: HTTPStream) -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_closed(stream: HTTPStream) -> None:
     await stream.handle(
         Request(stream_id=1, http_version="2", headers=[], raw_path=b"/?a=b", method="GET")
@@ -116,7 +115,7 @@ async def test_handle_closed(stream: HTTPStream) -> None:
     assert stream.app_put.call_args_list == [call({"type": "http.disconnect"})]  # type: ignore
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_response(stream: HTTPStream) -> None:
     await stream.handle(
         Request(stream_id=1, http_version="2", headers=[], raw_path=b"/?a=b", method="GET")
@@ -141,9 +140,9 @@ async def test_send_response(stream: HTTPStream) -> None:
     stream.config._log.access.assert_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_invalid_server_name(stream: HTTPStream) -> None:
-    stream.config.server_names = ["hypercorn"]
+    stream.config.server_names = ["anycorn"]
     await stream.handle(
         Request(
             stream_id=1,
@@ -167,7 +166,7 @@ async def test_invalid_server_name(stream: HTTPStream) -> None:
     await stream.handle(Body(stream_id=1, data=b"Body"))
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_push(stream: HTTPStream, http_scope: HTTPScope) -> None:
     stream.scope = http_scope
     stream.stream_id = 1
@@ -185,7 +184,7 @@ async def test_send_push(stream: HTTPStream, http_scope: HTTPScope) -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_early_hint(stream: HTTPStream, http_scope: HTTPScope) -> None:
     stream.scope = http_scope
     stream.stream_id = 1
@@ -203,7 +202,7 @@ async def test_send_early_hint(stream: HTTPStream, http_scope: HTTPScope) -> Non
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_app_error(stream: HTTPStream) -> None:
     await stream.handle(
         Request(stream_id=1, http_version="2", headers=[], raw_path=b"/?a=b", method="GET")
@@ -233,7 +232,7 @@ async def test_send_app_error(stream: HTTPStream) -> None:
         (ASGIHTTPState.CLOSED, "http.response.body"),
     ],
 )
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_invalid_message_given_state(
     stream: HTTPStream, state: ASGIHTTPState, message_type: str
 ) -> None:
@@ -250,7 +249,7 @@ async def test_send_invalid_message_given_state(
         (200, [], "Body"),  # Body should be bytes
     ],
 )
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_invalid_message(
     stream: HTTPStream,
     http_scope: HTTPScope,
@@ -276,7 +275,7 @@ def test_stream_idle(stream: HTTPStream) -> None:
     assert stream.idle is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_closure(stream: HTTPStream) -> None:
     await stream.handle(
         Request(stream_id=1, http_version="2", headers=[], raw_path=b"/?a=b", method="GET")
@@ -291,7 +290,7 @@ async def test_closure(stream: HTTPStream) -> None:
     assert stream.app_put.call_args_list == [call({"type": "http.disconnect"})]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_closed_app_send_noop(stream: HTTPStream) -> None:
     stream.closed = True
     await stream.app_send(

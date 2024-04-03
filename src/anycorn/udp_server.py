@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import trio
+import anyio
 
 from .task_group import TaskGroup
 from .worker_context import WorkerContext
-from ..config import Config
-from ..events import Event, RawData
-from ..typing import AppWrapper
-from ..utils import parse_socket_addr
+from .config import Config
+from .events import Event, RawData
+from .typing import AppWrapper
+from .utils import parse_socket_addr
 
 MAX_RECV = 2**16
 
@@ -18,17 +18,17 @@ class UDPServer:
         app: AppWrapper,
         config: Config,
         context: WorkerContext,
-        socket: trio.socket.socket,
+        socket: anyio.abc.UDPSocket,
     ) -> None:
         self.app = app
         self.config = config
         self.context = context
-        self.socket = trio.socket.from_stdlib_socket(socket)
+        self.socket = socket
 
     async def run(
-        self, task_status: trio._core._run._TaskStatus = trio.TASK_STATUS_IGNORED
+        self, *, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED
     ) -> None:
-        from ..protocol.quic import QuicProtocol  # h3/Quic is an optional part of Hypercorn
+        from ..protocol.quic import QuicProtocol  # h3/Quic is an optional part of Anycorn
 
         task_status.started()
         server = parse_socket_addr(self.socket.family, self.socket.getsockname())

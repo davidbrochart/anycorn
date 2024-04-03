@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from hypercorn.middleware import ProxyFixMiddleware
-from hypercorn.typing import HTTPScope
+from anycorn.middleware import ProxyFixMiddleware
+from anycorn.typing import HTTPScope
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_proxy_fix_legacy() -> None:
     mock = AsyncMock()
     app = ProxyFixMiddleware(mock)
@@ -41,7 +41,7 @@ async def test_proxy_fix_legacy() -> None:
     assert host_headers == [(b"host", b"example.com")]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_proxy_fix_modern() -> None:
     mock = AsyncMock()
     app = ProxyFixMiddleware(mock, mode="modern")

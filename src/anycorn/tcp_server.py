@@ -3,15 +3,15 @@ from __future__ import annotations
 from math import inf
 from typing import Any, Generator, Optional
 
-import trio
+import anyio
 
 from .task_group import TaskGroup
 from .worker_context import WorkerContext
-from ..config import Config
-from ..events import Closed, Event, RawData, Updated
-from ..protocol import ProtocolWrapper
-from ..typing import AppWrapper
-from ..utils import parse_socket_addr
+from .config import Config
+from .events import Closed, Event, RawData, Updated
+from .protocol import ProtocolWrapper
+from .typing import AppWrapper
+from .utils import parse_socket_addr
 
 MAX_RECV = 2**16
 
@@ -24,11 +24,11 @@ class TCPServer:
         self.config = config
         self.context = context
         self.protocol: ProtocolWrapper
-        self.send_lock = trio.Lock()
-        self.idle_lock = trio.Lock()
+        self.send_lock = anyio.Lock()
+        self.idle_lock = anyio.Lock()
         self.stream = stream
 
-        self._idle_handle: Optional[trio.CancelScope] = None
+        self._idle_handle: Optional[anyio.CancelScope] = None
 
     def __await__(self) -> Generator[Any, None, None]:
         return self.run().__await__()
@@ -36,16 +36,16 @@ class TCPServer:
     async def run(self) -> None:
         try:
             try:
-                with trio.fail_after(self.config.ssl_handshake_timeout):
+                with anyio.fail_after(self.config.ssl_handshake_timeout):
                     await self.stream.do_handshake()
-            except (trio.BrokenResourceError, trio.TooSlowError):
+            except (anyio.BrokenResourceError, TimeoutError):
                 return  # Handshake failed
             alpn_protocol = self.stream.selected_alpn_protocol()
             socket = self.stream.transport_stream.socket
             ssl = True
         except AttributeError:  # Not SSL
             alpn_protocol = "http/1.1"
-            socket = self.stream.socket
+            socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
             ssl = False
 
         try:
@@ -77,10 +77,10 @@ class TCPServer:
         if isinstance(event, RawData):
             async with self.send_lock:
                 try:
-                    with trio.CancelScope() as cancel_scope:
-                        cancel_scope.shield = True
-                        await self.stream.send_all(event.data)
-                except (trio.BrokenResourceError, trio.ClosedResourceError):
+                    with anyio.CancelScope(shield=True) as cancel_scope:
+                        #cancel_scope.shield = True
+                        await self.stream.send(event.data)
+                except (anyio.BrokenResourceError, TimeoutError):
                     await self.protocol.handle(Closed())
         elif isinstance(event, Closed):
             await self._close()
@@ -94,12 +94,13 @@ class TCPServer:
     async def _read_data(self) -> None:
         while True:
             try:
-                with trio.fail_after(self.config.read_timeout or inf):
-                    data = await self.stream.receive_some(MAX_RECV)
+                with anyio.fail_after(self.config.read_timeout or inf):
+                    data = await self.stream.receive(MAX_RECV)
             except (
-                trio.ClosedResourceError,
-                trio.BrokenResourceError,
-                trio.TooSlowError,
+                anyio.ClosedResourceError,
+                anyio.BrokenResourceError,
+                anyio.EndOfStream,
+                TimeoutError,
             ):
                 break
             else:
@@ -112,10 +113,10 @@ class TCPServer:
         try:
             await self.stream.send_eof()
         except (
-            trio.BrokenResourceError,
+            anyio.BrokenResourceError,
             AttributeError,
-            trio.BusyResourceError,
-            trio.ClosedResourceError,
+            anyio.BusyResourceError,
+            anyio.ClosedResourceError,
         ):
             # They're already gone, nothing to do
             # Or it is a SSL stream
@@ -129,7 +130,7 @@ class TCPServer:
     async def _start_idle(self) -> None:
         async with self.idle_lock:
             if self._idle_handle is None:
-                self._idle_handle = await self._task_group._nursery.start(self._run_idle)
+                self._idle_handle = await self._task_group._task_group.start(self._run_idle)
 
     async def _stop_idle(self) -> None:
         async with self.idle_lock:
@@ -139,13 +140,22 @@ class TCPServer:
 
     async def _run_idle(
         self,
-        task_status: trio._core._run._TaskStatus = trio.TASK_STATUS_IGNORED,
+        *, 
+        task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED,
     ) -> None:
-        cancel_scope = trio.CancelScope()
+        cancel_scope = anyio.CancelScope()
         task_status.started(cancel_scope)
         with cancel_scope:
-            with trio.move_on_after(self.config.keep_alive_timeout):
+            with anyio.move_on_after(self.config.keep_alive_timeout):
                 await self.context.terminated.wait()
 
-            cancel_scope.shield = True
-            await self._initiate_server_close()
+            with anyio.CancelScope(shield=True) as scope:
+                #cancel_scope.shield = True
+                await self._initiate_server_close()
+
+
+def tcp_server_handler(app: AppWrapper, config: Config, context: WorkerContext):
+    async def handler(stream: trio.abc.Stream):
+        tcp_server = TCPServer(app, config, context, stream)
+        await tcp_server.run()
+    return handler

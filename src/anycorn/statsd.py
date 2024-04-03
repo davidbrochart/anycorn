@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import socket
 from typing import Any, TYPE_CHECKING
 
+import anyio
+
+from .config import Config
 from .logging import Logger
 
 if TYPE_CHECKING:
@@ -16,7 +20,7 @@ COUNTER_TYPE = "counter"
 HISTOGRAM_TYPE = "histogram"
 
 
-class StatsdLogger(Logger):
+class BaseStatsdLogger(Logger):
     def __init__(self, config: "Config") -> None:
         super().__init__(config)
         self.dogstatsd_tags = config.dogstatsd_tags
@@ -26,15 +30,15 @@ class StatsdLogger(Logger):
 
     async def critical(self, message: str, *args: Any, **kwargs: Any) -> None:
         await super().critical(message, *args, **kwargs)
-        await self.increment("hypercorn.log.critical", 1)
+        await self.increment("anycorn.log.critical", 1)
 
     async def error(self, message: str, *args: Any, **kwargs: Any) -> None:
         await super().error(message, *args, **kwargs)
-        await self.increment("hypercorn.log.error", 1)
+        await self.increment("anycorn.log.error", 1)
 
     async def warning(self, message: str, *args: Any, **kwargs: Any) -> None:
         await super().warning(message, *args, **kwargs)
-        await self.increment("hypercorn.log.warning", 1)
+        await self.increment("anycorn.log.warning", 1)
 
     async def info(self, message: str, *args: Any, **kwargs: Any) -> None:
         await super().info(message, *args, **kwargs)
@@ -44,7 +48,7 @@ class StatsdLogger(Logger):
 
     async def exception(self, message: str, *args: Any, **kwargs: Any) -> None:
         await super().exception(message, *args, **kwargs)
-        await self.increment("hypercorn.log.exception", 1)
+        await self.increment("anycorn.log.exception", 1)
 
     async def log(self, level: int, message: str, *args: Any, **kwargs: Any) -> None:
         try:
@@ -70,9 +74,9 @@ class StatsdLogger(Logger):
         self, request: "WWWScope", response: "ResponseSummary", request_time: float
     ) -> None:
         await super().access(request, response, request_time)
-        await self.histogram("hypercorn.request.duration", request_time * 1_000)
-        await self.increment("hypercorn.requests", 1)
-        await self.increment(f"hypercorn.request.status.{response['status']}", 1)
+        await self.histogram("anycorn.request.duration", request_time * 1_000)
+        await self.increment("anycorn.requests", 1)
+        await self.increment(f"anycorn.request.status.{response['status']}", 1)
 
     async def gauge(self, name: str, value: int) -> None:
         await self._send(f"{self.prefix}{name}:{value}|g")
@@ -93,3 +97,13 @@ class StatsdLogger(Logger):
 
     async def _socket_send(self, message: bytes) -> None:
         raise NotImplementedError()
+
+
+class StatsdLogger(BaseStatsdLogger):
+    def __init__(self, config: Config) -> None:
+        super().__init__(config)
+        self.address = tuple(config.statsd_host.rsplit(":", 1))
+        self.socket = anyio.create_udp_socket(family=socket.AF_INET)
+
+    async def _socket_send(self, message: bytes) -> None:
+        await self.socket.sendto(message, self.address)

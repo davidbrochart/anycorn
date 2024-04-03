@@ -2,17 +2,17 @@ from __future__ import annotations
 
 from typing import Optional, Type, Union
 
-import trio
+import anyio
 
-from ..typing import Event
+from .typing import Event
 
 
 class EventWrapper:
     def __init__(self) -> None:
-        self._event = trio.Event()
+        self._event = anyio.Event()
 
     async def clear(self) -> None:
-        self._event = trio.Event()
+        self._event = anyio.Event()
 
     async def wait(self) -> None:
         await self._event.wait()
@@ -43,8 +43,8 @@ class WorkerContext:
 
     @staticmethod
     async def sleep(wait: Union[float, int]) -> None:
-        return await trio.sleep(wait)
+        return await anyio.sleep(wait)
 
     @staticmethod
     def time() -> float:
-        return trio.current_time()
+        return anyio.current_time()

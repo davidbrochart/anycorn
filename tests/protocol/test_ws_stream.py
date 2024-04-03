@@ -1,33 +1,32 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any, cast, List, Tuple
 from unittest.mock import call, Mock
 
 import pytest
-import pytest_asyncio
 from wsproto.events import BytesMessage, TextMessage
 
-from hypercorn.asyncio.task_group import TaskGroup
-from hypercorn.asyncio.worker_context import WorkerContext
-from hypercorn.config import Config
-from hypercorn.logging import Logger
-from hypercorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
-from hypercorn.protocol.ws_stream import (
+import anyio
+from anycorn.task_group import TaskGroup
+from anycorn.worker_context import WorkerContext
+from anycorn.config import Config
+from anycorn.logging import Logger
+from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
+from anycorn.protocol.ws_stream import (
     ASGIWebsocketState,
     FrameTooLargeError,
     Handshake,
     WebsocketBuffer,
     WSStream,
 )
-from hypercorn.typing import (
+from anycorn.typing import (
     WebsocketAcceptEvent,
     WebsocketCloseEvent,
     WebsocketResponseBodyEvent,
     WebsocketResponseStartEvent,
     WebsocketSendEvent,
 )
-from hypercorn.utils import UnexpectedMessageError
+from anycorn.utils import UnexpectedMessageError
 
 try:
     from unittest.mock import AsyncMock
@@ -162,7 +161,7 @@ def test_handshake_accept_additional_headers() -> None:
     ]
 
 
-@pytest_asyncio.fixture(name="stream")  # type: ignore[misc]
+@pytest.fixture(name="stream")
 async def _stream() -> WSStream:
     stream = WSStream(
         AsyncMock(), Config(), WorkerContext(None), AsyncMock(), False, None, None, AsyncMock(), 1
@@ -173,7 +172,7 @@ async def _stream() -> WSStream:
     return stream
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_request(stream: WSStream) -> None:
     await stream.handle(
         Request(
@@ -203,7 +202,7 @@ async def test_handle_request(stream: WSStream) -> None:
     }
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_connection(stream: WSStream) -> None:
     await stream.handle(
         Request(
@@ -223,7 +222,7 @@ async def test_handle_connection(stream: WSStream) -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_handle_closed(stream: WSStream) -> None:
     await stream.handle(StreamClosed(stream_id=1))
     stream.app_put.assert_called()  # type: ignore
@@ -232,7 +231,7 @@ async def test_handle_closed(stream: WSStream) -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_accept(stream: WSStream) -> None:
     await stream.handle(
         Request(
@@ -251,7 +250,7 @@ async def test_send_accept(stream: WSStream) -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_accept_with_additional_headers(stream: WSStream) -> None:
     await stream.handle(
         Request(
@@ -275,7 +274,7 @@ async def test_send_accept_with_additional_headers(stream: WSStream) -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_reject(stream: WSStream) -> None:
     await stream.handle(
         Request(
@@ -308,9 +307,9 @@ async def test_send_reject(stream: WSStream) -> None:
     stream.config._log.access.assert_called()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_invalid_server_name(stream: WSStream) -> None:
-    stream.config.server_names = ["hypercorn"]
+    stream.config.server_names = ["anycorn"]
     await stream.handle(
         Request(
             stream_id=1,
@@ -334,7 +333,7 @@ async def test_invalid_server_name(stream: WSStream) -> None:
     await stream.handle(Body(stream_id=1, data=b"Body"))
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_app_error_handshake(stream: WSStream) -> None:
     await stream.handle(
         Request(
@@ -361,7 +360,7 @@ async def test_send_app_error_handshake(stream: WSStream) -> None:
     stream.config._log.access.assert_called()  # type: ignore
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_app_error_connected(stream: WSStream) -> None:
     await stream.handle(
         Request(
@@ -383,7 +382,7 @@ async def test_send_app_error_connected(stream: WSStream) -> None:
     stream.config._log.access.assert_called()  # type: ignore
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_send_connection(stream: WSStream) -> None:
     await stream.handle(
         Request(
@@ -406,8 +405,8 @@ async def test_send_connection(stream: WSStream) -> None:
     ]
 
 
-@pytest.mark.asyncio
-async def test_pings(stream: WSStream, event_loop: asyncio.AbstractEventLoop) -> None:
+@pytest.mark.anyio
+async def test_pings(stream: WSStream) -> None:
     stream.config.websocket_ping_interval = 0.1
     await stream.handle(
         Request(
@@ -418,11 +417,11 @@ async def test_pings(stream: WSStream, event_loop: asyncio.AbstractEventLoop) ->
             method="GET",
         )
     )
-    async with TaskGroup(event_loop) as task_group:
+    async with TaskGroup() as task_group:
         stream.task_group = task_group
         await stream.app_send(cast(WebsocketAcceptEvent, {"type": "websocket.accept"}))
         stream.app_put = AsyncMock()
-        await asyncio.sleep(0.15)
+        await anyio.sleep(0.15)
         assert stream.send.call_args_list == [  # type: ignore
             call(Response(stream_id=1, headers=[], status_code=200)),
             call(Data(stream_id=1, data=b"\x89\x00")),
@@ -431,7 +430,7 @@ async def test_pings(stream: WSStream, event_loop: asyncio.AbstractEventLoop) ->
         await stream.handle(StreamClosed(stream_id=1))
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "state, message_type",
     [
@@ -453,7 +452,7 @@ async def test_send_invalid_message_given_state(
         await stream.app_send({"type": message_type})  # type: ignore
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "status, headers, body",
     [
@@ -494,7 +493,7 @@ def test_stream_idle(stream: WSStream, state: ASGIWebsocketState, idle: bool) ->
     assert stream.idle is idle
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_closure(stream: WSStream) -> None:
     assert not stream.closed
     await stream.handle(StreamClosed(stream_id=1))
@@ -506,7 +505,7 @@ async def test_closure(stream: WSStream) -> None:
     assert stream.app_put.call_args_list == [call({"type": "websocket.disconnect", "code": 1006})]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_closed_app_send_noop(stream: WSStream) -> None:
     stream.closed = True
     await stream.app_send(cast(WebsocketAcceptEvent, {"type": "websocket.accept"}))
