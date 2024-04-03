@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-import asyncio
+import math
 from functools import partial
 from typing import Any, Callable, List
 
+import anyio
 import pytest
-import trio
 
-from hypercorn.app_wrappers import _build_environ, InvalidPathError, WSGIWrapper
-from hypercorn.typing import ASGISendEvent, HTTPScope
+from anycorn.app_wrappers import _build_environ, InvalidPathError, WSGIWrapper
+from anycorn.typing import ASGISendEvent, HTTPScope
 
 
 def echo_body(environ: dict, start_response: Callable) -> List[bytes]:
@@ -22,8 +22,8 @@ def echo_body(environ: dict, start_response: Callable) -> List[bytes]:
     return [output]
 
 
-@pytest.mark.trio
-async def test_wsgi_trio() -> None:
+@pytest.mark.anyio
+async def test_wsgi() -> None:
     app = WSGIWrapper(echo_body, 2**16)
     scope: HTTPScope = {
         "http_version": "1.1",
@@ -40,7 +40,7 @@ async def test_wsgi_trio() -> None:
         "server": None,
         "extensions": {},
     }
-    send_channel, receive_channel = trio.open_memory_channel(1)
+    send_channel, receive_channel = anyio.create_memory_object_stream[str](1)
     await send_channel.send({"type": "http.request"})
 
     messages = []
@@ -49,7 +49,7 @@ async def test_wsgi_trio() -> None:
         nonlocal messages
         messages.append(message)
 
-    await app(scope, receive_channel.receive, _send, trio.to_thread.run_sync, trio.from_thread.run)
+    await app(scope, receive_channel.receive, _send, anyio.to_thread.run_sync, anyio.from_thread.run)
     assert messages == [
         {
             "headers": [(b"content-type", b"text/plain; charset=utf-8"), (b"content-length", b"0")],
@@ -62,8 +62,8 @@ async def test_wsgi_trio() -> None:
 
 
 async def _run_app(app: WSGIWrapper, scope: HTTPScope, body: bytes = b"") -> List[ASGISendEvent]:
-    queue: asyncio.Queue = asyncio.Queue()
-    await queue.put({"type": "http.request", "body": body})
+    send_stream, recv_stream = anyio.create_memory_object_stream[dict](math.inf)
+    await send_stream.send({"type": "http.request", "body": body})
 
     messages = []
 
@@ -71,18 +71,15 @@ async def _run_app(app: WSGIWrapper, scope: HTTPScope, body: bytes = b"") -> Lis
         nonlocal messages
         messages.append(message)
 
-    event_loop = asyncio.get_running_loop()
-
     def _call_soon(func: Callable, *args: Any) -> Any:
-        future = asyncio.run_coroutine_threadsafe(func(*args), event_loop)
-        return future.result()
+        return anyio.from_thread.run(func, *args)
 
-    await app(scope, queue.get, _send, partial(event_loop.run_in_executor, None), _call_soon)
+    await app(scope, recv_stream.receive, _send, anyio.to_thread.run_sync, _call_soon)
     return messages
 
 
-@pytest.mark.asyncio
-async def test_wsgi_asyncio() -> None:
+@pytest.mark.anyio
+async def test_wsgi() -> None:
     app = WSGIWrapper(echo_body, 2**16)
     scope: HTTPScope = {
         "http_version": "1.1",
@@ -111,7 +108,7 @@ async def test_wsgi_asyncio() -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_max_body_size() -> None:
     app = WSGIWrapper(echo_body, 4)
     scope: HTTPScope = {
@@ -140,7 +137,7 @@ def no_start_response(environ: dict, start_response: Callable) -> List[bytes]:
     return [b"result"]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_no_start_response() -> None:
     app = WSGIWrapper(no_start_response, 2**16)
     scope: HTTPScope = {

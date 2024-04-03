@@ -54,14 +54,14 @@ class Logger:
         self.access_log_format = config.access_log_format
 
         self.access_logger = _create_logger(
-            "hypercorn.access",
+            "anycorn.access",
             config.accesslog,
             config.loglevel,
             sys.stdout,
             propagate=False,
         )
         self.error_logger = _create_logger(
-            "hypercorn.error", config.errorlog, config.loglevel, sys.stderr
+            "anycorn.error", config.errorlog, config.loglevel, sys.stderr
         )
 
         if config.logconfig is not None:

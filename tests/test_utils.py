@@ -4,8 +4,8 @@ from typing import Any, Callable, Iterable
 
 import pytest
 
-from hypercorn.typing import Scope
-from hypercorn.utils import (
+from anycorn.typing import Scope
+from anycorn.utils import (
     build_and_validate_headers,
     filter_pseudo_headers,
     is_asgi,

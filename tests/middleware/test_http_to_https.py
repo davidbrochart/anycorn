@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from hypercorn.middleware import HTTPToHTTPSRedirectMiddleware
-from hypercorn.typing import HTTPScope, WebsocketScope
+from anycorn.middleware import HTTPToHTTPSRedirectMiddleware
+from anycorn.typing import HTTPScope, WebsocketScope
 from ..helpers import empty_framework
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.parametrize("raw_path", [b"/abc", b"/abc%3C"])
 async def test_http_to_https_redirect_middleware_http(raw_path: bytes) -> None:
     app = HTTPToHTTPSRedirectMiddleware(empty_framework, "localhost")
@@ -45,7 +45,7 @@ async def test_http_to_https_redirect_middleware_http(raw_path: bytes) -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.parametrize("raw_path", [b"/abc", b"/abc%3C"])
 async def test_http_to_https_redirect_middleware_websocket(raw_path: bytes) -> None:
     app = HTTPToHTTPSRedirectMiddleware(empty_framework, "localhost")
@@ -82,7 +82,7 @@ async def test_http_to_https_redirect_middleware_websocket(raw_path: bytes) -> N
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_http_to_https_redirect_middleware_websocket_http2() -> None:
     app = HTTPToHTTPSRedirectMiddleware(empty_framework, "localhost")
     sent_events = []
@@ -118,7 +118,7 @@ async def test_http_to_https_redirect_middleware_websocket_http2() -> None:
     ]
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_http_to_https_redirect_middleware_websocket_no_rejection() -> None:
     app = HTTPToHTTPSRedirectMiddleware(empty_framework, "localhost")
     sent_events = []

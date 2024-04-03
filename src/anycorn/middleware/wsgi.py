@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from functools import partial
 from typing import Any, Callable, Iterable
 
@@ -27,23 +26,10 @@ class _WSGIMiddleware:
         pass
 
 
-class AsyncioWSGIMiddleware(_WSGIMiddleware):
+class WSGIMiddleware(_WSGIMiddleware):
     async def __call__(
         self, scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
     ) -> None:
-        loop = asyncio.get_event_loop()
+        import anyio
 
-        def _call_soon(func: Callable, *args: Any) -> Any:
-            future = asyncio.run_coroutine_threadsafe(func(*args), loop)
-            return future.result()
-
-        await self.wsgi_app(scope, receive, send, partial(loop.run_in_executor, None), _call_soon)
-
-
-class TrioWSGIMiddleware(_WSGIMiddleware):
-    async def __call__(
-        self, scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
-    ) -> None:
-        import trio
-
-        await self.wsgi_app(scope, receive, send, trio.to_thread.run_sync, trio.from_thread.run)
+        await self.wsgi_app(scope, receive, send, anyio.to_thread.run_sync, anyio.from_thread.run)

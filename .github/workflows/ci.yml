@@ -8,7 +8,6 @@ on:
 
 jobs:
   tox:
-    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -42,14 +41,9 @@ jobs:
 
 
   h2spec:
-    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - {name: 'asyncio', worker: 'asyncio'}
-          - {name: 'trio', worker: 'trio'}
 
     steps:
       - uses: actions/checkout@v3
@@ -67,7 +61,7 @@ jobs:
 
       - name: Run server
         working-directory: compliance/h2spec
-        run: nohup hypercorn --keyfile key.pem --certfile cert.pem -k ${{ matrix.worker }} server:app &
+        run: nohup anycorn --keyfile key.pem --certfile cert.pem server:app &
 
       - name: Download h2spec
         run: |
@@ -78,14 +72,9 @@ jobs:
         run: ./h2spec -tk -h 127.0.0.1 -p 8000 -o 10
 
   autobahn:
-    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - {name: 'asyncio', worker: 'asyncio'}
-          - {name: 'trio', worker: 'trio'}
 
     steps:
       - uses: actions/checkout@v3
@@ -102,7 +91,7 @@ jobs:
       - run: python3 -m pip install trio .
       - name: Run server
         working-directory: compliance/autobahn
-        run: nohup hypercorn -k ${{ matrix.worker }} server:app &
+        run: nohup anycorn server:app &
 
       - name: Run Unit Tests
         working-directory: compliance/autobahn

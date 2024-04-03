@@ -108,7 +108,6 @@ class Config:
     verify_mode: Optional[VerifyMode] = None
     websocket_max_message_size = 16 * 1024 * 1024 * BYTES
     websocket_ping_interval: Optional[float] = None
-    worker_class = "asyncio"
     workers = 1
     wsgi_max_body_size = 16 * 1024 * 1024 * BYTES
 
@@ -281,7 +280,7 @@ class Config:
         if self.include_date_header:
             headers.append((b"date", format_date_time(time()).encode("ascii")))
         if self.include_server_header:
-            headers.append((b"server", f"hypercorn-{protocol}".encode("ascii")))
+            headers.append((b"server", f"anycorn-{protocol}".encode("ascii")))
 
         for alt_svc_header in self.alt_svc_headers:
             headers.append((b"alt-svc", alt_svc_header.encode()))
@@ -338,7 +337,7 @@ class Config:
 
         .. code-block:: python
 
-            Config.from_pyfile('hypercorn_config.py')
+            Config.from_pyfile('anycorn_config.py')
 
         Arguments:
             filename: The filename which gives the path to the file.

@@ -5,9 +5,9 @@ from json import dumps
 from socket import AF_INET
 from typing import Callable, cast, Tuple
 
-from hypercorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWScope
+from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWScope
 
-SANITY_BODY = b"Hello Hypercorn"
+SANITY_BODY = b"Hello Anycorn"
 
 
 class MockSocket:

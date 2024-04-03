@@ -7,16 +7,16 @@ from typing import Optional, Type, Union
 
 import pytest
 
-from hypercorn.config import Config
-from hypercorn.logging import AccessLogAtoms, Logger
-from hypercorn.typing import HTTPScope, ResponseSummary
+from anycorn.config import Config
+from anycorn.logging import AccessLogAtoms, Logger
+from anycorn.typing import HTTPScope, ResponseSummary
 
 
 @pytest.mark.parametrize(
     "target, expected_name, expected_handler_type",
     [
-        ("-", "hypercorn.access", logging.StreamHandler),
-        ("/tmp/path", "hypercorn.access", logging.FileHandler),
+        ("-", "anycorn.access", logging.StreamHandler),
+        ("/tmp/path", "anycorn.access", logging.FileHandler),
         (logging.getLogger("test_special"), "test_special", None),
         (None, None, None),
     ],
@@ -60,7 +60,7 @@ def test_loglevel_option(level: Optional[str], expected: int) -> None:
 
 @pytest.fixture(name="response")
 def _response_scope() -> dict:
-    return {"status": 200, "headers": [(b"Content-Length", b"5"), (b"X-Hypercorn", b"Hypercorn")]}
+    return {"status": 200, "headers": [(b"Content-Length", b"5"), (b"X-Anycorn", b"Anycorn")]}
 
 
 def test_access_log_standard_atoms(http_scope: HTTPScope, response: ResponseSummary) -> None:
@@ -75,8 +75,8 @@ def test_access_log_standard_atoms(http_scope: HTTPScope, response: ResponseSumm
     assert atoms["H"] == "2"
     assert int(atoms["b"]) == 5
     assert int(atoms["B"]) == 5
-    assert atoms["f"] == "hypercorn"
-    assert atoms["a"] == "Hypercorn"
+    assert atoms["f"] == "anycorn"
+    assert atoms["a"] == "Anycorn"
     assert atoms["p"] == f"<{os.getpid()}>"
     assert atoms["not-atom"] == "-"
     assert int(atoms["T"]) == 0
@@ -90,17 +90,17 @@ def test_access_log_standard_atoms(http_scope: HTTPScope, response: ResponseSumm
 
 def test_access_log_header_atoms(http_scope: HTTPScope, response: ResponseSummary) -> None:
     atoms = AccessLogAtoms(http_scope, response, 0)
-    assert atoms["{X-Hypercorn}i"] == "Hypercorn"
-    assert atoms["{X-HYPERCORN}i"] == "Hypercorn"
+    assert atoms["{X-Anycorn}i"] == "Anycorn"
+    assert atoms["{X-ANYCORN}i"] == "Anycorn"
     assert atoms["{not-atom}i"] == "-"
-    assert atoms["{X-Hypercorn}o"] == "Hypercorn"
-    assert atoms["{X-HYPERCORN}o"] == "Hypercorn"
+    assert atoms["{X-Anycorn}o"] == "Anycorn"
+    assert atoms["{X-ANYCORN}o"] == "Anycorn"
 
 
 def test_access_no_log_header_atoms(http_scope: HTTPScope) -> None:
     atoms = AccessLogAtoms(http_scope, {"status": 200, "headers": []}, 0)
-    assert atoms["{X-Hypercorn}i"] == "Hypercorn"
-    assert atoms["{X-HYPERCORN}i"] == "Hypercorn"
+    assert atoms["{X-Anycorn}i"] == "Anycorn"
+    assert atoms["{X-ANYCORN}i"] == "Anycorn"
     assert atoms["{not-atom}i"] == "-"
     assert not any(key.startswith("{") and key.endswith("}o") for key in atoms.keys())
 
