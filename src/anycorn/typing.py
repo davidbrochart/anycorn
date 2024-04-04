@@ -224,17 +224,13 @@ Framework = Union[ASGIFramework, WSGIFramework]
 class H2SyncStream(Protocol):
     scope: dict
 
-    def data_received(self, data: bytes) -> None:
-        ...
+    def data_received(self, data: bytes) -> None: ...  # noqa: E704
 
-    def ended(self) -> None:
-        ...
+    def ended(self) -> None: ...  # noqa: E704
 
-    def reset(self) -> None:
-        ...
+    def reset(self) -> None: ...  # noqa: E704
 
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...  # noqa: E704
 
     async def handle_request(
         self,
@@ -242,24 +238,19 @@ class H2SyncStream(Protocol):
         scheme: str,
         client: Tuple[str, int],
         server: Tuple[str, int],
-    ) -> None:
-        ...
+    ) -> None: ...  # noqa: E704
 
 
 class H2AsyncStream(Protocol):
     scope: dict
 
-    async def data_received(self, data: bytes) -> None:
-        ...
+    async def data_received(self, data: bytes) -> None: ...  # noqa: E704
 
-    async def ended(self) -> None:
-        ...
+    async def ended(self) -> None: ...  # noqa: E704
 
-    async def reset(self) -> None:
-        ...
+    async def reset(self) -> None: ...  # noqa: E704
 
-    async def close(self) -> None:
-        ...
+    async def close(self) -> None: ...  # noqa: E704
 
     async def handle_request(
         self,
@@ -267,25 +258,19 @@ class H2AsyncStream(Protocol):
         scheme: str,
         client: Tuple[str, int],
         server: Tuple[str, int],
-    ) -> None:
-        ...
+    ) -> None: ...  # noqa: E704
 
 
 class Event(Protocol):
-    def __init__(self) -> None:
-        ...
+    def __init__(self) -> None: ...  # noqa: E704
 
-    async def clear(self) -> None:
-        ...
+    async def clear(self) -> None: ...  # noqa: E704
 
-    async def set(self) -> None:
-        ...
+    async def set(self) -> None: ...  # noqa: E704
 
-    async def wait(self) -> None:
-        ...
+    async def wait(self) -> None: ...  # noqa: E704
 
-    def is_set(self) -> bool:
-        ...
+    def is_set(self) -> bool: ...  # noqa: E704
 
 
 class WorkerContext(Protocol):
@@ -293,16 +278,13 @@ class WorkerContext(Protocol):
     terminate: Event
     terminated: Event
 
-    async def mark_request(self) -> None:
-        ...
+    async def mark_request(self) -> None: ...  # noqa: E704
 
     @staticmethod
-    async def sleep(wait: Union[float, int]) -> None:
-        ...
+    async def sleep(wait: Union[float, int]) -> None: ...  # noqa: E704
 
     @staticmethod
-    def time() -> float:
-        ...
+    def time() -> float: ...  # noqa: E704
 
 
 class TaskGroup(Protocol):
@@ -312,17 +294,15 @@ class TaskGroup(Protocol):
         config: Config,
         scope: Scope,
         send: Callable[[Optional[ASGISendEvent]], Awaitable[None]],
-    ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]:
-        ...
+    ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]: ...  # noqa: E704
 
-    def spawn(self, func: Callable, *args: Any) -> None:
-        ...
+    def spawn(self, func: Callable, *args: Any) -> None: ...  # noqa: E704
 
-    async def __aenter__(self) -> TaskGroup:
-        ...
+    async def __aenter__(self) -> TaskGroup: ...  # noqa: E704
 
-    async def __aexit__(self, exc_type: type, exc_value: BaseException, tb: TracebackType) -> None:
-        ...
+    async def __aexit__(
+        self, exc_type: type, exc_value: BaseException, tb: TracebackType
+    ) -> None: ...  # noqa: E704
 
 
 class ResponseSummary(TypedDict):
@@ -338,5 +318,4 @@ class AppWrapper(Protocol):
         send: ASGISendCallable,
         sync_spawn: Callable,
         call_soon: Callable,
-    ) -> None:
-        ...
+    ) -> None: ...  # noqa: E704

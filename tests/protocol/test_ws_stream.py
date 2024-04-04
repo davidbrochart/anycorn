@@ -3,12 +3,10 @@ from __future__ import annotations
 from typing import Any, cast, List, Tuple
 from unittest.mock import call, Mock
 
+import anyio
 import pytest
 from wsproto.events import BytesMessage, TextMessage
 
-import anyio
-from anycorn.task_group import TaskGroup
-from anycorn.worker_context import WorkerContext
 from anycorn.config import Config
 from anycorn.logging import Logger
 from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
@@ -19,6 +17,7 @@ from anycorn.protocol.ws_stream import (
     WebsocketBuffer,
     WSStream,
 )
+from anycorn.task_group import TaskGroup
 from anycorn.typing import (
     WebsocketAcceptEvent,
     WebsocketCloseEvent,
@@ -27,6 +26,7 @@ from anycorn.typing import (
     WebsocketSendEvent,
 )
 from anycorn.utils import UnexpectedMessageError
+from anycorn.worker_context import WorkerContext
 
 try:
     from unittest.mock import AsyncMock
@@ -488,7 +488,8 @@ async def test_send_invalid_http_message(
     ]
     + [(ASGIWebsocketState.CLOSED, True), (ASGIWebsocketState.HTTPCLOSED, True)],
 )
-def test_stream_idle(stream: WSStream, state: ASGIWebsocketState, idle: bool) -> None:
+@pytest.mark.anyio
+async def test_stream_idle(stream: WSStream, state: ASGIWebsocketState, idle: bool) -> None:
     stream.state = state
     assert stream.idle is idle
 

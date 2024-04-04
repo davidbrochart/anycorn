@@ -6,10 +6,11 @@ import pytest
 from h2.connection import H2Connection
 from h2.events import ConnectionTerminated
 
-from anycorn.worker_context import EventWrapper, WorkerContext
 from anycorn.config import Config
 from anycorn.events import Closed, RawData
-from anycorn.protocol.h2 import BUFFER_HIGH_WATER, BufferCompleteError, H2Protocol, StreamBuffer
+# from anycorn.protocol.h2 import BUFFER_HIGH_WATER
+from anycorn.protocol.h2 import BufferCompleteError, H2Protocol, StreamBuffer
+from anycorn.worker_context import EventWrapper, WorkerContext
 
 try:
     from unittest.mock import AsyncMock
@@ -22,11 +23,11 @@ except ImportError:
 # @pytest.mark.asyncio
 # async def test_stream_buffer_push_and_pop(event_loop: asyncio.AbstractEventLoop) -> None:
 #     stream_buffer = StreamBuffer(EventWrapper)
-# 
+#
 #     async def _push_over_limit() -> bool:
 #         await stream_buffer.push(b"a" * (BUFFER_HIGH_WATER + 1))
 #         return True
-# 
+#
 #     task = event_loop.create_task(_push_over_limit())
 #     assert not task.done()  # Blocked as over high water
 #     await stream_buffer.pop(BUFFER_HIGH_WATER // 4)
@@ -40,11 +41,11 @@ except ImportError:
 # async def test_stream_buffer_drain(event_loop: asyncio.AbstractEventLoop) -> None:
 #     stream_buffer = StreamBuffer(EventWrapper)
 #     await stream_buffer.push(b"a" * 10)
-# 
+#
 #     async def _drain() -> bool:
 #         await stream_buffer.drain()
 #         return True
-# 
+#
 #     task = event_loop.create_task(_drain())
 #     assert not task.done()  # Blocked
 #     await stream_buffer.pop(20)

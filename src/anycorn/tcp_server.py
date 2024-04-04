@@ -1,24 +1,28 @@
 from __future__ import annotations
 
 from math import inf
-from typing import Any, Generator, Optional
+from typing import Any, Callable, Generator, Optional
 
 import anyio
 
-from .task_group import TaskGroup
-from .worker_context import WorkerContext
 from .config import Config
 from .events import Closed, Event, RawData, Updated
 from .protocol import ProtocolWrapper
+from .task_group import TaskGroup
 from .typing import AppWrapper
 from .utils import parse_socket_addr
+from .worker_context import WorkerContext
 
 MAX_RECV = 2**16
 
 
 class TCPServer:
     def __init__(
-        self, app: AppWrapper, config: Config, context: WorkerContext, stream: trio.abc.Stream
+        self,
+        app: AppWrapper,
+        config: Config,
+        context: WorkerContext,
+        stream: anyio.abc.SocketStream,
     ) -> None:
         self.app = app
         self.config = config
@@ -34,19 +38,24 @@ class TCPServer:
         return self.run().__await__()
 
     async def run(self) -> None:
-        try:
-            try:
-                with anyio.fail_after(self.config.ssl_handshake_timeout):
-                    await self.stream.do_handshake()
-            except (anyio.BrokenResourceError, TimeoutError):
-                return  # Handshake failed
-            alpn_protocol = self.stream.selected_alpn_protocol()
-            socket = self.stream.transport_stream.socket
-            ssl = True
-        except AttributeError:  # Not SSL
-            alpn_protocol = "http/1.1"
-            socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
-            ssl = False
+        # FIXME
+        # try:
+        #     try:
+        #         with anyio.fail_after(self.config.ssl_handshake_timeout):
+        #             await self.stream.do_handshake()
+        #     except (anyio.BrokenResourceError, TimeoutError):
+        #         return  # Handshake failed
+        #     alpn_protocol = self.stream.selected_alpn_protocol()
+        #     socket = self.stream.transport_stream.socket
+        #     ssl = True
+        # except AttributeError:  # Not SSL
+        #     alpn_protocol = "http/1.1"
+        #     socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
+        #     ssl = False
+
+        alpn_protocol = "http/1.1"
+        socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
+        ssl = False
 
         try:
             client = parse_socket_addr(socket.family, socket.getpeername())
@@ -77,8 +86,8 @@ class TCPServer:
         if isinstance(event, RawData):
             async with self.send_lock:
                 try:
-                    with anyio.CancelScope(shield=True) as cancel_scope:
-                        #cancel_scope.shield = True
+                    with anyio.CancelScope(shield=True):  # as cancel_scope:
+                        # cancel_scope.shield = True
                         await self.stream.send(event.data)
                 except (anyio.BrokenResourceError, TimeoutError):
                     await self.protocol.handle(Closed())
@@ -140,8 +149,8 @@ class TCPServer:
 
     async def _run_idle(
         self,
-        *, 
-        task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED,
+        *,
+        task_status: anyio.abc.TaskStatus[anyio.CancelScope] = anyio.TASK_STATUS_IGNORED,
     ) -> None:
         cancel_scope = anyio.CancelScope()
         task_status.started(cancel_scope)
@@ -149,13 +158,14 @@ class TCPServer:
             with anyio.move_on_after(self.config.keep_alive_timeout):
                 await self.context.terminated.wait()
 
-            with anyio.CancelScope(shield=True) as scope:
-                #cancel_scope.shield = True
+            with anyio.CancelScope(shield=True):  # as cancel_scope:
+                # cancel_scope.shield = True
                 await self._initiate_server_close()
 
 
-def tcp_server_handler(app: AppWrapper, config: Config, context: WorkerContext):
-    async def handler(stream: trio.abc.Stream):
+def tcp_server_handler(app: AppWrapper, config: Config, context: WorkerContext) -> Callable:
+    async def handler(stream: anyio.abc.SocketStream) -> None:
         tcp_server = TCPServer(app, config, context, stream)
         await tcp_server.run()
+
     return handler

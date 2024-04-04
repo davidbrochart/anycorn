@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import anyio
 import pytest
 
@@ -8,6 +10,9 @@ from anycorn.config import Config
 from anycorn.lifespan import Lifespan
 from anycorn.utils import LifespanFailureError, LifespanTimeoutError
 from .helpers import lifespan_failure, SlowLifespanFramework
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import ExceptionGroup
 
 
 @pytest.mark.anyio
@@ -25,9 +30,17 @@ async def test_startup_timeout_error() -> None:
 @pytest.mark.anyio
 async def test_startup_failure() -> None:
     lifespan = Lifespan(ASGIWrapper(lifespan_failure), Config())
-    with pytest.raises(LifespanFailureError) as exc_info:
-        async with anyio.create_task_group() as lifespan_tg:
-            await lifespan_tg.start(lifespan.handle_lifespan)
+    try:
+        async with anyio.create_task_group() as tg:
+            await tg.start(lifespan.handle_lifespan)
             await lifespan.wait_for_startup()
+            exception = None
+    except Exception as e:
+        exception = e
 
-    assert str(exc_info.value) == "Lifespan failure in startup. 'Failure'"
+    assert exception is not None
+    assert isinstance(exception, ExceptionGroup)
+    assert len(exception.exceptions) == 1
+    exception = exception.exceptions[0]
+    assert isinstance(exception, LifespanFailureError)
+    assert str(exception) == "Lifespan failure in startup. 'Failure'"

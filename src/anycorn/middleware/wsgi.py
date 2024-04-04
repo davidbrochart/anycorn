@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from functools import partial
-from typing import Any, Callable, Iterable
+from typing import Callable, Iterable
 
 from ..app_wrappers import WSGIWrapper
 from ..typing import ASGIReceiveCallable, ASGISendCallable, Scope, WSGIFramework

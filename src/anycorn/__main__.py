@@ -137,15 +137,16 @@ def main(sys_args: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "-p", "--pid", help="Location to write the PID (Program ID) to.", default=sentinel
     )
-    parser.add_argument(
-        "--quic-bind",
-        dest="quic_binds",
-        help="""The UDP/QUIC host/address to bind to. See *bind* for formatting
-        options.
-        """,
-        default=[],
-        action="append",
-    )
+    # FIXME
+    # parser.add_argument(
+    #     "--quic-bind",
+    #     dest="quic_binds",
+    #     help="""The UDP/QUIC host/address to bind to. See *bind* for formatting
+    #     options.
+    #     """,
+    #     default=[],
+    #     action="append",
+    # )
     parser.add_argument(
         "--reload",
         help="Enable automatic reloads on code changes",
@@ -285,8 +286,9 @@ def main(sys_args: Optional[List[str]] = None) -> int:
         config.bind = args.binds
     if len(args.insecure_binds) > 0:
         config.insecure_bind = args.insecure_binds
-    if len(args.quic_binds) > 0:
-        config.quic_bind = args.quic_binds
+    # FIXME
+    # if len(args.quic_binds) > 0:
+    #     config.quic_bind = args.quic_binds
     if len(args.server_names) > 0:
         config.server_names = args.server_names
 

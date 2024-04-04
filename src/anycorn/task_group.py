@@ -51,7 +51,9 @@ class TaskGroup:
         scope: Scope,
         send: Callable[[Optional[ASGISendEvent]], Awaitable[None]],
     ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]:
-        app_send_channel, app_receive_channel = anyio.create_memory_object_stream(config.max_app_queue_size)
+        app_send_channel, app_receive_channel = anyio.create_memory_object_stream[Any](
+            config.max_app_queue_size
+        )
         self._task_group.start_soon(
             _handle,
             app,
@@ -74,6 +76,6 @@ class TaskGroup:
             self._exit_stack = exit_stack.pop_all()
         return self
 
-    async def __aexit__(self, exc_type: type, exc_value: BaseException, tb: TracebackType) -> None:
+    async def __aexit__(self, exc_type: type, exc_value: BaseException, tb: TracebackType) -> Any:
         self._task_group = None
         return await self._exit_stack.__aexit__(exc_type, exc_value, tb)
