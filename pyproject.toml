@@ -21,7 +21,7 @@ classifiers = [
 ]
 include = ["src/anycorn/py.typed"]
 license = "MIT"
-readme = "README.rst"
+readme = "README.md"
 repository = "https://github.com/davidbrochart/anycorn/"
 documentation = "https://hypercorn.readthedocs.io"
 
