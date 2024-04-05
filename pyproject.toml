@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "anycorn"
 version = "0.16.0"
-description = "A ASGI Server based on Hyper libraries and inspired by Gunicorn"
+description = "A fork of Hypercorn that uses AnyIO"
 authors = ["pgjones <philip.graham.jones@googlemail.com>", "David Brochart <david.brochart@gmail.com>"]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -44,9 +44,8 @@ wsproto = ">=0.14.0"
 hypothesis = "*"
 mock = "*"
 pytest = "*"
-pytest-asyncio = "*"
-pytest-trio = "*"
 trio = "*"
+exceptiongroup = { version = ">=1.2.0, <2.0", python = "<3.11" }
 
 [tool.poetry.scripts]
 anycorn = "anycorn.__main__:main"
@@ -94,8 +93,7 @@ module =["aioquic.*", "cryptography.*", "h11.*", "h2.*", "priority.*", "pytest_a
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-addopts = "--no-cov-on-fail --showlocals --strict-markers"
-asyncio_mode = "strict"
+addopts = "--no-cov-on-fail --showlocals --strict-markers --color=yes -v"
 testpaths = ["tests"]
 
 [build-system]

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import math
-from functools import partial
-from typing import Any, Callable, List
+from typing import Any, Callable, cast, Dict, List
 
 import anyio
 import pytest
 
-from anycorn.app_wrappers import _build_environ, InvalidPathError, WSGIWrapper
+from anycorn.app_wrappers import _build_environ, ASGIReceiveCallable, InvalidPathError, WSGIWrapper
 from anycorn.typing import ASGISendEvent, HTTPScope
 
 
@@ -40,7 +39,7 @@ async def test_wsgi() -> None:
         "server": None,
         "extensions": {},
     }
-    send_channel, receive_channel = anyio.create_memory_object_stream[str](1)
+    send_channel, receive_channel = anyio.create_memory_object_stream[Dict[str, Any]](1)
     await send_channel.send({"type": "http.request"})
 
     messages = []
@@ -49,7 +48,8 @@ async def test_wsgi() -> None:
         nonlocal messages
         messages.append(message)
 
-    await app(scope, receive_channel.receive, _send, anyio.to_thread.run_sync, anyio.from_thread.run)
+    receive = cast(ASGIReceiveCallable, receive_channel.receive)
+    await app(scope, receive, _send, anyio.to_thread.run_sync, anyio.from_thread.run)
     assert messages == [
         {
             "headers": [(b"content-type", b"text/plain; charset=utf-8"), (b"content-length", b"0")],
@@ -74,12 +74,13 @@ async def _run_app(app: WSGIWrapper, scope: HTTPScope, body: bytes = b"") -> Lis
     def _call_soon(func: Callable, *args: Any) -> Any:
         return anyio.from_thread.run(func, *args)
 
-    await app(scope, recv_stream.receive, _send, anyio.to_thread.run_sync, _call_soon)
+    receive = cast(ASGIReceiveCallable, recv_stream.receive)
+    await app(scope, receive, _send, anyio.to_thread.run_sync, _call_soon)
     return messages
 
 
 @pytest.mark.anyio
-async def test_wsgi() -> None:
+async def test_wsgi2() -> None:
     app = WSGIWrapper(echo_body, 2**16)
     scope: HTTPScope = {
         "http_version": "1.1",

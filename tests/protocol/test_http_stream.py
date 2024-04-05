@@ -5,7 +5,6 @@ from unittest.mock import call
 
 import pytest
 
-from anycorn.worker_context import WorkerContext
 from anycorn.config import Config
 from anycorn.logging import Logger
 from anycorn.protocol.events import (
@@ -19,6 +18,7 @@ from anycorn.protocol.events import (
 from anycorn.protocol.http_stream import ASGIHTTPState, HTTPStream
 from anycorn.typing import HTTPResponseBodyEvent, HTTPResponseStartEvent, HTTPScope
 from anycorn.utils import UnexpectedMessageError
+from anycorn.worker_context import WorkerContext
 
 try:
     from unittest.mock import AsyncMock
@@ -271,7 +271,8 @@ async def test_send_invalid_message(
         )
 
 
-def test_stream_idle(stream: HTTPStream) -> None:
+@pytest.mark.anyio
+async def test_stream_idle(stream: HTTPStream) -> None:
     assert stream.idle is False
 
 

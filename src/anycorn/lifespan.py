@@ -17,9 +17,9 @@ class Lifespan:
         self.config = config
         self.startup = anyio.Event()
         self.shutdown = anyio.Event()
-        self.app_send_channel, self.app_receive_channel = anyio.create_memory_object_stream[dict[str, str]](
-            config.max_app_queue_size
-        )
+        self.app_send_channel, self.app_receive_channel = anyio.create_memory_object_stream[
+            ASGIReceiveEvent
+        ](config.max_app_queue_size)
         self.supported = True
 
     async def handle_lifespan(

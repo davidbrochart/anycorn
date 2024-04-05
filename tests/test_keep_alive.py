@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from typing import Callable, Generator
+from typing import Callable  # , Generator
 
 import anyio
 import h11
-import pytest
 
-from anycorn.app_wrappers import ASGIWrapper
-from anycorn.config import Config
-from anycorn.tcp_server import TCPServer
-from anycorn.worker_context import WorkerContext
+# import pytest
+
+# from anycorn.app_wrappers import ASGIWrapper
+# from anycorn.config import Config
+# from anycorn.tcp_server import TCPServer
 from anycorn.typing import Scope
-from .helpers import MockSocket
+# from anycorn.worker_context import WorkerContext
+# from .helpers import MockSocket
 
 KEEP_ALIVE_TIMEOUT = 0.01
 REQUEST = h11.Request(method="GET", target="/", headers=[(b"host", b"anycorn")])

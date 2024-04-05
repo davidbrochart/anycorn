@@ -5,7 +5,6 @@ from typing import Any, TYPE_CHECKING
 
 import anyio
 
-from .config import Config
 from .logging import Logger
 
 if TYPE_CHECKING:
@@ -100,10 +99,16 @@ class BaseStatsdLogger(Logger):
 
 
 class StatsdLogger(BaseStatsdLogger):
-    def __init__(self, config: Config) -> None:
+    socket: anyio.abc.ConnectedUDPSocket | None
+
+    def __init__(self, config: "Config") -> None:
         super().__init__(config)
         self.address = tuple(config.statsd_host.rsplit(":", 1))
-        self.socket = anyio.create_udp_socket(family=socket.AF_INET)
+        self.socket = None
 
     async def _socket_send(self, message: bytes) -> None:
-        await self.socket.sendto(message, self.address)
+        if self.socket is None:
+            self.socket = await anyio.create_connected_udp_socket(
+                self.address[0], int(self.address[1]), family=socket.AddressFamily.AF_INET
+            )
+        await self.socket.send(message)

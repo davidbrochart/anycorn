@@ -26,9 +26,7 @@ async def test_dispatcher_middleware(http_scope: HTTPScope) -> None:
             )
             await send({"type": "http.response.body", "body": response.encode()})
 
-    app = DispatcherMiddleware(
-        {"/api/x": EchoFramework("apix"), "/api": EchoFramework("api")}
-    )
+    app = DispatcherMiddleware({"/api/x": EchoFramework("apix"), "/api": EchoFramework("api")})
 
     sent_events = []
 

@@ -8,13 +8,14 @@ import pytest
 from _pytest.monkeypatch import MonkeyPatch
 
 import anycorn.protocol.h11
-from anycorn.worker_context import EventWrapper
 from anycorn.config import Config
 from anycorn.events import Closed, RawData, Updated
 from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
 from anycorn.protocol.h11 import H2CProtocolRequiredError, H2ProtocolAssumedError, H11Protocol
 from anycorn.protocol.http_stream import HTTPStream
 from anycorn.typing import Event as IOEvent
+
+# from anycorn.worker_context import EventWrapper
 
 try:
     from unittest.mock import AsyncMock

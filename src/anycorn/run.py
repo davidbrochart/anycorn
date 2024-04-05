@@ -21,7 +21,7 @@ from .lifespan import Lifespan
 from .statsd import StatsdLogger
 from .tcp_server import tcp_server_handler
 from .typing import AppWrapper, WorkerFunc
-from .udp_server import UDPServer
+# from .udp_server import UDPServer
 from .utils import (
     check_for_updates,
     check_multiprocess_shutdown_event,
@@ -33,7 +33,6 @@ from .utils import (
     write_pid_file,
 )
 from .worker_context import WorkerContext
-
 
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup
@@ -161,7 +160,7 @@ async def worker_serve(
     *,
     sockets: Optional[Sockets] = None,
     shutdown_trigger: Optional[Callable[..., Awaitable[None]]] = None,
-    task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED,
+    task_status: anyio.abc.TaskStatus[List[str]] = anyio.TASK_STATUS_IGNORED,
 ) -> None:
     config.set_statsd_logger_class(StatsdLogger)
 
@@ -171,11 +170,11 @@ async def worker_serve(
         max_requests = config.max_requests + randint(0, config.max_requests_jitter)
     context = WorkerContext(max_requests)
 
-    async with anyio.create_task_group() as lifespan_nursery:
-        await lifespan_nursery.start(lifespan.handle_lifespan)
+    async with anyio.create_task_group() as lifespan_tg:
+        await lifespan_tg.start(lifespan.handle_lifespan)
         await lifespan.wait_for_startup()
 
-        async with anyio.create_task_group() as server_nursery:
+        async with anyio.create_task_group() as server_tg:
             if sockets is None:
                 sockets = config.create_sockets()
                 for sock in sockets.secure_sockets:
@@ -184,42 +183,41 @@ async def worker_serve(
                     sock.listen(config.backlog)
 
             ssl_context = config.create_ssl_context()
-            listeners = []
+            listeners: List[anyio.abc.SocketListener | anyio.streams.tls.TLSListener] = []
             binds = []
-            for sock in sockets.secure_sockets:
-                listeners.append(
-                    trio.SSLListener(
-                        trio.SocketListener(trio.socket.from_stdlib_socket(sock)),
-                        ssl_context,
-                        https_compatible=True,
-                    )
+            for secure_sock in sockets.secure_sockets:
+                asynclib = anyio._core._eventloop.get_async_backend()
+                secure_listener = anyio.streams.tls.TLSListener(
+                    asynclib.create_tcp_listener(secure_sock), ssl_context
                 )
-                bind = repr_socket_addr(sock.family, sock.getsockname())
+                listeners.append(secure_listener)
+                bind = repr_socket_addr(secure_sock.family, secure_sock.getsockname())
                 binds.append(f"https://{bind}")
                 await config.log.info(f"Running on https://{bind} (CTRL + C to quit)")
 
-            for sock in sockets.insecure_sockets:
+            for insecure_sock in sockets.insecure_sockets:
                 asynclib = anyio._core._eventloop.get_async_backend()
-                listener = asynclib.create_tcp_listener(sock)
-                listeners.append(listener)
-                bind = repr_socket_addr(sock.family, sock.getsockname())
+                insecure_listener = asynclib.create_tcp_listener(insecure_sock)
+                listeners.append(insecure_listener)
+                bind = repr_socket_addr(insecure_sock.family, insecure_sock.getsockname())
                 binds.append(f"http://{bind}")
                 await config.log.info(f"Running on http://{bind} (CTRL + C to quit)")
 
-            for sock in sockets.quic_sockets:
-                await server_nursery.start(UDPServer(app, config, context, sock).run)
-                bind = repr_socket_addr(sock.family, sock.getsockname())
-                await config.log.info(f"Running on https://{bind} (QUIC) (CTRL + C to quit)")
+            # FIXME
+            # for quic_sock in sockets.quic_sockets:
+            #     await server_tg.start(UDPServer(app, config, context, quic_sock).run)
+            #     bind = repr_socket_addr(quic_sock.family, quic_sock.getsockname())
+            #     await config.log.info(f"Running on https://{bind} (QUIC) (CTRL + C to quit)")
 
             task_status.started(binds)
             try:
-                async with anyio.create_task_group() as nursery:
+                async with anyio.create_task_group() as tg:
                     if shutdown_trigger is not None:
-                        nursery.start_soon(raise_shutdown, shutdown_trigger)
-                    nursery.start_soon(raise_shutdown, context.terminate.wait)
+                        tg.start_soon(raise_shutdown, shutdown_trigger)
+                    tg.start_soon(raise_shutdown, context.terminate.wait)
 
                     for listener in listeners:
-                        nursery.start_soon(
+                        tg.start_soon(
                             partial(
                                 listener.serve,
                                 tcp_server_handler(app, config, context),
@@ -233,10 +231,10 @@ async def worker_serve(
                     raise other_errors
             finally:
                 await context.terminated.set()
-                server_nursery.cancel_scope.deadline = anyio.current_time() + config.graceful_timeout
+                server_tg.cancel_scope.deadline = anyio.current_time() + config.graceful_timeout
 
         await lifespan.wait_for_shutdown()
-        lifespan_nursery.cancel_scope.cancel()
+        lifespan_tg.cancel_scope.cancel()
 
 
 def anyio_worker(
@@ -253,4 +251,6 @@ def anyio_worker(
     if shutdown_event is not None:
         shutdown_trigger = partial(check_multiprocess_shutdown_event, shutdown_event, anyio.sleep)
 
-    anyio.run(partial(worker_serve, app, config, sockets=sockets, shutdown_trigger=shutdown_trigger))
+    anyio.run(
+        partial(worker_serve, app, config, sockets=sockets, shutdown_trigger=shutdown_trigger)
+    )

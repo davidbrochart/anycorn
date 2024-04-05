@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable, Dict
+from typing import Any, Callable, Dict, Tuple
 
 from ..typing import ASGIFramework, Scope
 
@@ -37,7 +37,16 @@ class DispatcherMiddleware(_DispatcherMiddleware):
     async def _handle_lifespan(self, scope: Scope, receive: Callable, send: Callable) -> None:
         import anyio
 
-        self.app_queues = {path: anyio.create_memory_object_stream(MAX_QUEUE_SIZE) for path in self.mounts}
+        self.app_queues: Dict[
+            str,
+            Tuple[
+                anyio.streams.memory.MemoryObjectSendStream,
+                anyio.streams.memory.MemoryObjectReceiveStream,
+            ],
+        ] = {
+            path: anyio.create_memory_object_stream[Dict[str, Any]](MAX_QUEUE_SIZE)
+            for path in self.mounts
+        }
         self.startup_complete = {path: False for path in self.mounts}
         self.shutdown_complete = {path: False for path in self.mounts}
 
