@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from math import inf
+from ssl import SSLError, SSLZeroReturnError
 from typing import Any, Callable, Generator, Optional
 
 import anyio
@@ -78,7 +79,7 @@ class TCPServer:
                     with anyio.CancelScope(shield=True):  # as cancel_scope:
                         # cancel_scope.shield = True
                         await self.stream.send(event.data)
-                except (anyio.BrokenResourceError, TimeoutError):
+                except (anyio.ClosedResourceError, anyio.BrokenResourceError, TimeoutError):
                     await self.protocol.handle(Closed())
         elif isinstance(event, Closed):
             await self._close()
@@ -99,6 +100,7 @@ class TCPServer:
                 anyio.BrokenResourceError,
                 anyio.EndOfStream,
                 TimeoutError,
+                SSLZeroReturnError,
             ):
                 break
             else:
@@ -113,22 +115,31 @@ class TCPServer:
         except (
             anyio.BrokenResourceError,
             AttributeError,
+            NotImplementedError,
+            TypeError,
             anyio.BusyResourceError,
             anyio.ClosedResourceError,
         ):
             # They're already gone, nothing to do
             # Or it is a SSL stream
             pass
-        await self.stream.aclose()
+        try:
+            await self.stream.aclose()
+        except (SSLError, anyio.ClosedResourceError, anyio.BrokenResourceError):
+            pass
 
     async def _initiate_server_close(self) -> None:
         await self.protocol.handle(Closed())
-        await self.stream.aclose()
+        try:
+            await self.stream.aclose()
+        except (SSLError, anyio.BrokenResourceError, anyio.BusyResourceError):
+            pass
 
     async def _start_idle(self) -> None:
         async with self.idle_lock:
             if self._idle_handle is None:
-                self._idle_handle = await self._task_group._task_group.start(self._run_idle)
+                if self._task_group._task_group is not None:
+                    self._idle_handle = await self._task_group._task_group.start(self._run_idle)
 
     async def _stop_idle(self) -> None:
         async with self.idle_lock:
