@@ -40,7 +40,6 @@ jobs:
       - run: tox -e ${{ matrix.tox }}
 
 
-  # FIXME
   # h2spec:
   #   runs-on: ubuntu-latest
   #   strategy:

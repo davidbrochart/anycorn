@@ -188,7 +188,7 @@ async def worker_serve(
             for secure_sock in sockets.secure_sockets:
                 asynclib = anyio._core._eventloop.get_async_backend()
                 secure_listener = anyio.streams.tls.TLSListener(
-                    asynclib.create_tcp_listener(secure_sock), ssl_context
+                    asynclib.create_tcp_listener(secure_sock), ssl_context, True, config.ssl_handshake_timeout
                 )
                 listeners.append(secure_listener)
                 bind = repr_socket_addr(secure_sock.family, secure_sock.getsockname())

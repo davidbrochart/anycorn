@@ -38,26 +38,15 @@ class TCPServer:
         return self.run().__await__()
 
     async def run(self) -> None:
-        # FIXME
-        # try:
-        #     try:
-        #         with anyio.fail_after(self.config.ssl_handshake_timeout):
-        #             await self.stream.do_handshake()
-        #     except (anyio.BrokenResourceError, TimeoutError):
-        #         return  # Handshake failed
-        #     alpn_protocol = self.stream.selected_alpn_protocol()
-        #     socket = self.stream.transport_stream.socket
-        #     ssl = True
-        # except AttributeError:  # Not SSL
-        #     alpn_protocol = "http/1.1"
-        #     socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
-        #     ssl = False
-
-        alpn_protocol = "http/1.1"
-        socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
-        ssl = False
+        try:
+            alpn_protocol = self.stream.extra(anyio.streams.tls.TLSAttribute.alpn_protocol)
+            ssl = True
+        except anyio.TypedAttributeLookupError:  # Not SSL
+            alpn_protocol = "http/1.1"
+            ssl = False
 
         try:
+            socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
             client = parse_socket_addr(socket.family, socket.getpeername())
             server = parse_socket_addr(socket.family, socket.getsockname())
 
