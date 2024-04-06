@@ -40,36 +40,36 @@ jobs:
       - run: tox -e ${{ matrix.tox }}
 
 
-  # h2spec:
-  #   runs-on: ubuntu-latest
-  #   strategy:
-  #     fail-fast: false
+  h2spec:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
 
-  #   steps:
-  #     - uses: actions/checkout@v3
+    steps:
+      - uses: actions/checkout@v3
 
-  #     - uses: actions/setup-python@v3
-  #       with:
-  #         python-version: "3.12"
+      - uses: actions/setup-python@v3
+        with:
+          python-version: "3.12"
 
-  #     - name: update pip
-  #       run: |
-  #         pip install -U wheel
-  #         pip install -U setuptools
-  #         python -m pip install -U pip
-  #     - run: pip install trio .
+      - name: update pip
+        run: |
+          pip install -U wheel
+          pip install -U setuptools
+          python -m pip install -U pip
+      - run: pip install trio .
 
-  #     - name: Run server
-  #       working-directory: compliance/h2spec
-  #       run: nohup anycorn --keyfile key.pem --certfile cert.pem server:app &
+      - name: Run server
+        working-directory: compliance/h2spec
+        run: nohup anycorn --keyfile key.pem --certfile cert.pem server:app &
 
-  #     - name: Download h2spec
-  #       run: |
-  #         wget https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz
-  #         tar -xvf h2spec_linux_amd64.tar.gz
+      - name: Download h2spec
+        run: |
+          wget https://github.com/summerwind/h2spec/releases/download/v2.6.0/h2spec_linux_amd64.tar.gz
+          tar -xvf h2spec_linux_amd64.tar.gz
 
-  #     - name: Run h2spec
-  #       run: ./h2spec -tk -h 127.0.0.1 -p 8000 -o 10
+      - name: Run h2spec
+        run: ./h2spec -tk -h 127.0.0.1 -p 8000 -o 10
 
   autobahn:
     runs-on: ubuntu-latest
