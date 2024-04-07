@@ -43,17 +43,20 @@ async def _protocol(monkeypatch: MonkeyPatch) -> H11Protocol:
 @pytest.mark.anyio
 async def test_protocol_send_response(protocol: H11Protocol) -> None:
     await protocol.stream_send(Response(stream_id=1, status_code=201, headers=[]))
-    protocol.send.assert_called()
-    assert protocol.send.call_args_list == [
-        call(
-            RawData(
-                data=(
-                    b"HTTP/1.1 201 \r\ndate: Thu, 01 Jan 1970 01:23:20 GMT\r\n"
-                    b"server: anycorn-h11\r\nConnection: close\r\n\r\n"
+    protocol.send.assert_called()  # type: ignore[attr-defined]
+    assert (
+        protocol.send.call_args_list  # type: ignore[attr-defined]
+        == [
+            call(
+                RawData(
+                    data=(
+                        b"HTTP/1.1 201 \r\ndate: Thu, 01 Jan 1970 01:23:20 GMT\r\n"
+                        b"server: anycorn-h11\r\nConnection: close\r\n\r\n"
+                    )
                 )
             )
-        )
-    ]
+        ]
+    )
 
 
 @pytest.mark.anyio
@@ -61,25 +64,28 @@ async def test_protocol_preserve_headers(protocol: H11Protocol) -> None:
     await protocol.stream_send(
         Response(stream_id=1, status_code=201, headers=[(b"X-Special", b"Value")])
     )
-    protocol.send.assert_called()
-    assert protocol.send.call_args_list == [
-        call(
-            RawData(
-                data=(
-                    b"HTTP/1.1 201 \r\nX-Special: Value\r\n"
-                    b"date: Thu, 01 Jan 1970 01:23:20 GMT\r\n"
-                    b"server: anycorn-h11\r\nConnection: close\r\n\r\n"
+    protocol.send.assert_called()  # type: ignore[attr-defined]
+    assert (
+        protocol.send.call_args_list  # type: ignore[attr-defined]
+        == [
+            call(
+                RawData(
+                    data=(
+                        b"HTTP/1.1 201 \r\nX-Special: Value\r\n"
+                        b"date: Thu, 01 Jan 1970 01:23:20 GMT\r\n"
+                        b"server: anycorn-h11\r\nConnection: close\r\n\r\n"
+                    )
                 )
             )
-        )
-    ]
+        ]
+    )
 
 
 @pytest.mark.anyio
 async def test_protocol_send_data(protocol: H11Protocol) -> None:
     await protocol.stream_send(Data(stream_id=1, data=b"hello"))
-    protocol.send.assert_called()
-    assert protocol.send.call_args_list == [call(RawData(data=b"hello"))]
+    protocol.send.assert_called()  # type: ignore[attr-defined]
+    assert protocol.send.call_args_list == [call(RawData(data=b"hello"))]  # type: ignore[attr-defined]
 
 
 @pytest.mark.anyio
@@ -91,8 +97,8 @@ async def test_protocol_send_body(protocol: H11Protocol) -> None:
         Response(stream_id=1, status_code=200, headers=[(b"content-length", b"5")])
     )
     await protocol.stream_send(Body(stream_id=1, data=b"hello"))
-    protocol.send.assert_called()
-    assert protocol.send.call_args_list == [
+    protocol.send.assert_called()  # type: ignore[attr-defined]
+    assert protocol.send.call_args_list == [  # type: ignore[attr-defined]
         call(Updated(idle=False)),
         call(
             RawData(
@@ -111,8 +117,8 @@ async def test_protocol_keep_alive_max_requests(protocol: H11Protocol) -> None:
     await protocol.stream_send(Response(stream_id=1, status_code=200, headers=[]))
     await protocol.stream_send(EndBody(stream_id=1))
     await protocol.stream_send(StreamClosed(stream_id=1))
-    protocol.send.assert_called()
-    assert protocol.send.call_args_list[3] == call(Closed())
+    protocol.send.assert_called()  # type: ignore[attr-defined]
+    assert protocol.send.call_args_list[3] == call(Closed())  # type: ignore[attr-defined]
 
 
 @pytest.mark.anyio
@@ -129,8 +135,8 @@ async def test_protocol_send_stream_closed(
     await protocol.stream_send(Response(stream_id=1, status_code=200, headers=[]))
     await protocol.stream_send(EndBody(stream_id=1))
     await protocol.stream_send(StreamClosed(stream_id=1))
-    protocol.send.assert_called()
-    assert protocol.send.call_args_list[3] == call(expected)
+    protocol.send.assert_called()  # type: ignore[attr-defined]
+    assert protocol.send.call_args_list[3] == call(expected)  # type: ignore[attr-defined]
 
 
 # FIXME
@@ -173,8 +179,8 @@ async def test_protocol_handle_closed(protocol: H11Protocol) -> None:
     )
     stream = protocol.stream
     await protocol.handle(Closed())
-    stream.handle.assert_called()
-    assert stream.handle.call_args_list == [
+    stream.handle.assert_called()  # type: ignore[attr-defined]
+    assert stream.handle.call_args_list == [  # type: ignore[attr-defined]
         call(
             Request(
                 stream_id=1,
@@ -195,8 +201,8 @@ async def test_protocol_handle_request(protocol: H11Protocol) -> None:
     await protocol.handle(
         RawData(data=client.send(h11.Request(method="GET", target="/?a=b", headers=BASIC_HEADERS)))
     )
-    protocol.stream.handle.assert_called()
-    assert protocol.stream.handle.call_args_list == [
+    protocol.stream.handle.assert_called()  # type: ignore[attr-defined]
+    assert protocol.stream.handle.call_args_list == [  # type: ignore[attr-defined]
         call(
             Request(
                 stream_id=1,
@@ -218,8 +224,8 @@ async def test_protocol_handle_request_with_raw_headers(protocol: H11Protocol) -
     await protocol.handle(
         RawData(data=client.send(h11.Request(method="GET", target="/?a=b", headers=headers)))
     )
-    protocol.stream.handle.assert_called()
-    assert protocol.stream.handle.call_args_list == [
+    protocol.stream.handle.assert_called()  # type: ignore[attr-defined]
+    assert protocol.stream.handle.call_args_list == [  # type: ignore[attr-defined]
         call(
             Request(
                 stream_id=1,
@@ -240,17 +246,20 @@ async def test_protocol_handle_request_with_raw_headers(protocol: H11Protocol) -
 @pytest.mark.anyio
 async def test_protocol_handle_protocol_error(protocol: H11Protocol) -> None:
     await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
-    protocol.send.assert_called()
-    assert protocol.send.call_args_list == [
-        call(
-            RawData(
-                data=b"HTTP/1.1 400 \r\ncontent-length: 0\r\nconnection: close\r\n"
-                b"date: Thu, 01 Jan 1970 01:23:20 GMT\r\nserver: anycorn-h11\r\n\r\n"
-            )
-        ),
-        call(RawData(data=b"")),
-        call(Closed()),
-    ]
+    protocol.send.assert_called()  # type: ignore[attr-defined]
+    assert (
+        protocol.send.call_args_list  # type: ignore[attr-defined]
+        == [
+            call(
+                RawData(
+                    data=b"HTTP/1.1 400 \r\ncontent-length: 0\r\nconnection: close\r\n"
+                    b"date: Thu, 01 Jan 1970 01:23:20 GMT\r\nserver: anycorn-h11\r\n\r\n"
+                )
+            ),
+            call(RawData(data=b"")),
+            call(Closed()),
+        ]
+    )
 
 
 @pytest.mark.anyio
@@ -266,7 +275,7 @@ async def test_protocol_handle_send_client_error(protocol: H11Protocol) -> None:
 
 @pytest.mark.anyio
 async def test_protocol_handle_pipelining(protocol: H11Protocol) -> None:
-    protocol.can_read.wait.side_effect = Exception()
+    protocol.can_read.wait.side_effect = Exception()  # type: ignore[attr-defined]
     with pytest.raises(Exception):
         await protocol.handle(
             RawData(
@@ -274,8 +283,8 @@ async def test_protocol_handle_pipelining(protocol: H11Protocol) -> None:
                 b"GET / HTTP/1.1\r\nHost: anycorn\r\nConnection: close\r\n\r\n"
             )
         )
-    protocol.can_read.clear.assert_called()
-    protocol.can_read.wait.assert_called()
+    protocol.can_read.clear.assert_called()  # type: ignore[attr-defined]
+    protocol.can_read.wait.assert_called()  # type: ignore[attr-defined]
 
 
 @pytest.mark.anyio
@@ -293,7 +302,7 @@ async def test_protocol_handle_continue_request(protocol: H11Protocol) -> None:
             )
         )
     )
-    assert protocol.send.call_args[0][0] == RawData(
+    assert protocol.send.call_args[0][0] == RawData(  # type: ignore[attr-defined]
         data=b"HTTP/1.1 100 \r\ndate: Thu, 01 Jan 1970 01:23:20 GMT\r\nserver: anycorn-h11\r\n\r\n"
     )
 
@@ -311,17 +320,20 @@ async def test_protocol_handle_max_incomplete(monkeypatch: MonkeyPatch) -> None:
         AsyncMock(), config, context, AsyncMock(), False, None, None, AsyncMock()
     )
     await protocol.handle(RawData(data=b"GET / HTTP/1.1\r\nHost: anycorn\r\n"))
-    protocol.send.assert_called()
-    assert protocol.send.call_args_list == [
-        call(
-            RawData(
-                data=b"HTTP/1.1 431 \r\ncontent-length: 0\r\nconnection: close\r\n"
-                b"date: Thu, 01 Jan 1970 01:23:20 GMT\r\nserver: anycorn-h11\r\n\r\n"
-            )
-        ),
-        call(RawData(data=b"")),
-        call(Closed()),
-    ]
+    protocol.send.assert_called()  # type: ignore[attr-defined]
+    assert (
+        protocol.send.call_args_list  # type: ignore[attr-defined]
+        == [
+            call(
+                RawData(
+                    data=b"HTTP/1.1 431 \r\ncontent-length: 0\r\nconnection: close\r\n"
+                    b"date: Thu, 01 Jan 1970 01:23:20 GMT\r\nserver: anycorn-h11\r\n\r\n"
+                )
+            ),
+            call(RawData(data=b"")),
+            call(Closed()),
+        ]
+    )
 
 
 @pytest.mark.anyio
@@ -335,19 +347,22 @@ async def test_protocol_handle_h2c_upgrade(protocol: H11Protocol) -> None:
                 )
             )
         )
-    assert protocol.send.call_args_list == [
-        call(Updated(idle=False)),
-        call(
-            RawData(
-                b"HTTP/1.1 101 \r\n"
-                b"date: Thu, 01 Jan 1970 01:23:20 GMT\r\n"
-                b"server: anycorn-h11\r\n"
-                b"connection: upgrade\r\n"
-                b"upgrade: h2c\r\n"
-                b"\r\n"
-            )
-        ),
-    ]
+    assert (
+        protocol.send.call_args_list  # type: ignore[attr-defined]
+        == [
+            call(Updated(idle=False)),
+            call(
+                RawData(
+                    b"HTTP/1.1 101 \r\n"
+                    b"date: Thu, 01 Jan 1970 01:23:20 GMT\r\n"
+                    b"server: anycorn-h11\r\n"
+                    b"connection: upgrade\r\n"
+                    b"upgrade: h2c\r\n"
+                    b"\r\n"
+                )
+            ),
+        ]
+    )
     assert exc_info.value.data == b"bbb"
     assert exc_info.value.headers == [
         (b":method", b"GET"),

@@ -42,8 +42,8 @@ async def test_handle_request_http_1(stream: HTTPStream, http_version: str) -> N
     await stream.handle(
         Request(stream_id=1, http_version=http_version, headers=[], raw_path=b"/?a=b", method="GET")
     )
-    stream.task_group.spawn_app.assert_called()
-    scope = stream.task_group.spawn_app.call_args[0][2]
+    stream.task_group.spawn_app.assert_called()  # type: ignore[attr-defined]
+    scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
     assert scope == {
         "type": "http",
         "http_version": http_version,
@@ -66,8 +66,8 @@ async def test_handle_request_http_2(stream: HTTPStream) -> None:
     await stream.handle(
         Request(stream_id=1, http_version="2", headers=[], raw_path=b"/?a=b", method="GET")
     )
-    stream.task_group.spawn_app.assert_called()
-    scope = stream.task_group.spawn_app.call_args[0][2]
+    stream.task_group.spawn_app.assert_called()  # type: ignore[attr-defined]
+    scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
     assert scope == {
         "type": "http",
         "http_version": "2",
@@ -88,8 +88,8 @@ async def test_handle_request_http_2(stream: HTTPStream) -> None:
 @pytest.mark.anyio
 async def test_handle_body(stream: HTTPStream) -> None:
     await stream.handle(Body(stream_id=1, data=b"data"))
-    stream.app_put.assert_called()
-    assert stream.app_put.call_args_list == [
+    stream.app_put.assert_called()  # type: ignore[attr-defined]
+    assert stream.app_put.call_args_list == [  # type: ignore[attr-defined]
         call({"type": "http.request", "body": b"data", "more_body": True})
     ]
 
@@ -110,8 +110,8 @@ async def test_handle_closed(stream: HTTPStream) -> None:
         Request(stream_id=1, http_version="2", headers=[], raw_path=b"/?a=b", method="GET")
     )
     await stream.handle(StreamClosed(stream_id=1))
-    stream.app_put.assert_called()
-    assert stream.app_put.call_args_list == [call({"type": "http.disconnect"})]
+    stream.app_put.assert_called()  # type: ignore[attr-defined]
+    assert stream.app_put.call_args_list == [call({"type": "http.disconnect"})]  # type: ignore[attr-defined]
 
 
 @pytest.mark.anyio
@@ -124,11 +124,11 @@ async def test_send_response(stream: HTTPStream) -> None:
     )
     assert stream.state == ASGIHTTPState.REQUEST
     # Must wait for response before sending anything
-    stream.send.assert_not_called()
+    stream.send.assert_not_called()  # type: ignore[attr-defined]
     await stream.app_send(
         cast(HTTPResponseBodyEvent, {"type": "http.response.body", "body": b"Body"})
     )
-    assert stream.state == ASGIHTTPState.CLOSED
+    assert stream.state == ASGIHTTPState.CLOSED  # type: ignore[comparison-overlap]
     stream.send.assert_called()
     assert stream.send.call_args_list == [
         call(Response(stream_id=1, headers=[], status_code=200)),
@@ -151,7 +151,7 @@ async def test_invalid_server_name(stream: HTTPStream) -> None:
             method="GET",
         )
     )
-    assert stream.send.call_args_list == [
+    assert stream.send.call_args_list == [  # type: ignore[attr-defined]
         call(
             Response(
                 stream_id=1,
@@ -170,7 +170,7 @@ async def test_send_push(stream: HTTPStream, http_scope: HTTPScope) -> None:
     stream.scope = http_scope
     stream.stream_id = 1
     await stream.app_send({"type": "http.response.push", "path": "/push", "headers": []})
-    assert stream.send.call_args_list == [
+    assert stream.send.call_args_list == [  # type: ignore[attr-defined]
         call(
             Request(
                 stream_id=1,
@@ -190,7 +190,7 @@ async def test_send_early_hint(stream: HTTPStream, http_scope: HTTPScope) -> Non
     await stream.app_send(
         {"type": "http.response.early_hint", "links": [b'</style.css>; rel="preload"; as="style"']}
     )
-    assert stream.send.call_args_list == [
+    assert stream.send.call_args_list == [  # type: ignore[attr-defined]
         call(
             InformationalResponse(
                 stream_id=1,
@@ -207,8 +207,8 @@ async def test_send_app_error(stream: HTTPStream) -> None:
         Request(stream_id=1, http_version="2", headers=[], raw_path=b"/?a=b", method="GET")
     )
     await stream.app_send(None)
-    stream.send.assert_called()
-    assert stream.send.call_args_list == [
+    stream.send.assert_called()  # type: ignore[attr-defined]
+    assert stream.send.call_args_list == [  # type: ignore[attr-defined]
         call(
             Response(
                 stream_id=1,
@@ -219,7 +219,7 @@ async def test_send_app_error(stream: HTTPStream) -> None:
         call(EndBody(stream_id=1)),
         call(StreamClosed(stream_id=1)),
     ]
-    stream.config._log.access.assert_called()
+    stream.config._log.access.assert_called()  # type: ignore[attr-defined]
 
 
 @pytest.mark.parametrize(
@@ -237,7 +237,7 @@ async def test_send_invalid_message_given_state(
 ) -> None:
     stream.state = state
     with pytest.raises(UnexpectedMessageError):
-        await stream.app_send({"type": message_type})
+        await stream.app_send({"type": message_type})  # type: ignore[arg-type, misc]
 
 
 @pytest.mark.parametrize(
@@ -296,4 +296,4 @@ async def test_closed_app_send_noop(stream: HTTPStream) -> None:
     await stream.app_send(
         cast(HTTPResponseStartEvent, {"type": "http.response.start", "status": 200, "headers": []})
     )
-    stream.send.assert_not_called()
+    stream.send.assert_not_called()  # type: ignore[attr-defined]

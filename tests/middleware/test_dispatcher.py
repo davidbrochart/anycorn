@@ -33,9 +33,9 @@ async def test_dispatcher_middleware(http_scope: HTTPScope) -> None:
         nonlocal sent_events
         sent_events.append(message)
 
-    await app({**http_scope, **{"path": "/api/x/b"}}, None, send)
-    await app({**http_scope, **{"path": "/api/b"}}, None, send)
-    await app({**http_scope, **{"path": "/"}}, None, send)
+    await app({**http_scope, **{"path": "/api/x/b"}}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
+    await app({**http_scope, **{"path": "/api/b"}}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
+    await app({**http_scope, **{"path": "/"}}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
     assert sent_events == [
         {"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"7")]},
         {"type": "http.response.body", "body": b"apix-/b"},
