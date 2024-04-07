@@ -3,7 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from json import dumps
 from socket import AF_INET
-from typing import Callable, cast, Tuple
+from typing import Callable, cast
 
 from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWScope
 
@@ -13,10 +13,10 @@ SANITY_BODY = b"Hello Anycorn"
 class MockSocket:
     family = AF_INET
 
-    def getsockname(self) -> Tuple[str, int]:
+    def getsockname(self) -> tuple[str, int]:
         return ("162.1.1.1", 80)
 
-    def getpeername(self) -> Tuple[str, int]:
+    def getpeername(self) -> tuple[str, int]:
         return ("127.0.0.1", 80)
 
 
@@ -40,10 +40,11 @@ async def echo_framework(
 ) -> None:
     input_scope = cast(WWWScope, input_scope)
     scope = deepcopy(input_scope)
-    scope["query_string"] = scope["query_string"].decode()  # type: ignore
-    scope["raw_path"] = scope["raw_path"].decode()  # type: ignore
+    scope["query_string"] = scope["query_string"].decode()  # type: ignore[arg-type]
+    scope["raw_path"] = scope["raw_path"].decode()  # type: ignore[arg-type]
     scope["headers"] = [
-        (name.decode(), value.decode()) for name, value in scope["headers"]  # type: ignore
+        (name.decode(), value.decode())  # type: ignore[misc]
+        for name, value in scope["headers"]
     ]
 
     body = bytearray()
@@ -66,7 +67,7 @@ async def echo_framework(
                 await send({"type": "http.response.body", "body": response, "more_body": False})
                 break
         elif event["type"] == "websocket.connect":
-            await send({"type": "websocket.accept"})  # type: ignore
+            await send({"type": "websocket.accept"})  # type: ignore[misc, arg-type]
         elif event["type"] == "websocket.receive":
             await send({"type": "websocket.send", "text": event["text"], "bytes": event["bytes"]})
 
@@ -86,16 +87,16 @@ async def sanity_framework(
 ) -> None:
     body = b""
     if scope["type"] == "websocket":
-        await send({"type": "websocket.accept"})  # type: ignore
+        await send({"type": "websocket.accept"})  # type: ignore[misc, arg-type]
 
     while True:
         event = await receive()
         if event["type"] in {"http.disconnect", "websocket.disconnect"}:
             break
         elif event["type"] == "lifespan.startup":
-            await send({"type": "lifspan.startup.complete"})  # type: ignore
+            await send({"type": "lifspan.startup.complete"})  # type: ignore[misc, arg-type]
         elif event["type"] == "lifespan.shutdown":
-            await send({"type": "lifspan.shutdown.complete"})  # type: ignore
+            await send({"type": "lifspan.shutdown.complete"})  # type: ignore[misc, arg-type]
         elif event["type"] == "http.request" and event.get("more_body", False):
             body += event["body"]
         elif event["type"] == "http.request" and not event.get("more_body", False):
@@ -114,4 +115,4 @@ async def sanity_framework(
             break
         elif event["type"] == "websocket.receive":
             assert event["bytes"] == SANITY_BODY
-            await send({"type": "websocket.send", "text": "Hello & Goodbye"})  # type: ignore
+            await send({"type": "websocket.send", "text": "Hello & Goodbye"})  # type: ignore[arg-type]

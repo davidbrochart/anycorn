@@ -1,22 +1,22 @@
 from __future__ import annotations
 
-from unittest.mock import call, Mock
+from unittest.mock import Mock, call
 
 import pytest
-from h2.connection import H2Connection
-from h2.events import ConnectionTerminated
-
 from anycorn.config import Config
 from anycorn.events import Closed, RawData
+
 # from anycorn.protocol.h2 import BUFFER_HIGH_WATER
 from anycorn.protocol.h2 import BufferCompleteError, H2Protocol, StreamBuffer
 from anycorn.worker_context import EventWrapper, WorkerContext
+from h2.connection import H2Connection
+from h2.events import ConnectionTerminated
 
 try:
     from unittest.mock import AsyncMock
 except ImportError:
     # Python < 3.8
-    from mock import AsyncMock  # type: ignore
+    from unittest.mock import AsyncMock
 
 
 # FIXME
@@ -80,8 +80,8 @@ async def test_protocol_handle_protocol_error() -> None:
         Mock(), Config(), WorkerContext(None), AsyncMock(), False, None, None, AsyncMock()
     )
     await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
-    protocol.send.assert_awaited()  # type: ignore
-    assert protocol.send.call_args_list == [call(Closed())]  # type: ignore
+    protocol.send.assert_awaited()
+    assert protocol.send.call_args_list == [call(Closed())]
 
 
 @pytest.mark.anyio
@@ -100,6 +100,6 @@ async def test_protocol_keep_alive_max_requests() -> None:
     ]
     client.send_headers(1, headers, end_stream=True)
     await protocol.handle(RawData(data=client.data_to_send()))
-    protocol.send.assert_awaited()  # type: ignore
-    events = client.receive_data(protocol.send.call_args_list[1].args[0].data)  # type: ignore
+    protocol.send.assert_awaited()
+    events = client.receive_data(protocol.send.call_args_list[1].args[0].data)
     assert isinstance(events[-1], ConnectionTerminated)

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional, Type, Union
-
 import anyio
 
 from .typing import Event
@@ -25,9 +23,9 @@ class EventWrapper:
 
 
 class WorkerContext:
-    event_class: Type[Event] = EventWrapper
+    event_class: type[Event] = EventWrapper
 
-    def __init__(self, max_requests: Optional[int]) -> None:
+    def __init__(self, max_requests: int | None) -> None:
         self.max_requests = max_requests
         self.requests = 0
         self.terminate = self.event_class()
@@ -42,7 +40,7 @@ class WorkerContext:
             await self.terminate.set()
 
     @staticmethod
-    async def sleep(wait: Union[float, int]) -> None:
+    async def sleep(wait: float | int) -> None:
         return await anyio.sleep(wait)
 
     @staticmethod

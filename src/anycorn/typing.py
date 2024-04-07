@@ -6,13 +6,10 @@ from typing import (
     Any,
     Awaitable,
     Callable,
-    Dict,
     Iterable,
     Literal,
     Optional,
     Protocol,
-    Tuple,
-    Type,
     TypedDict,
     Union,
 )
@@ -29,7 +26,7 @@ WorkerFunc = Callable[[Config, Optional[Sockets], Optional[EventType]], None]
 
 class ASGIVersions(TypedDict, total=False):
     spec_version: str
-    version: Union[Literal["2.0"], Literal["3.0"]]
+    version: Literal["2.0"] | Literal["3.0"]
 
 
 class HTTPScope(TypedDict):
@@ -42,10 +39,10 @@ class HTTPScope(TypedDict):
     raw_path: bytes
     query_string: bytes
     root_path: str
-    headers: Iterable[Tuple[bytes, bytes]]
-    client: Optional[Tuple[str, int]]
-    server: Optional[Tuple[str, Optional[int]]]
-    extensions: Dict[str, dict]
+    headers: Iterable[tuple[bytes, bytes]]
+    client: tuple[str, int] | None
+    server: tuple[str, int | None] | None
+    extensions: dict[str, dict]
 
 
 class WebsocketScope(TypedDict):
@@ -57,11 +54,11 @@ class WebsocketScope(TypedDict):
     raw_path: bytes
     query_string: bytes
     root_path: str
-    headers: Iterable[Tuple[bytes, bytes]]
-    client: Optional[Tuple[str, int]]
-    server: Optional[Tuple[str, Optional[int]]]
+    headers: Iterable[tuple[bytes, bytes]]
+    client: tuple[str, int] | None
+    server: tuple[str, int | None] | None
     subprotocols: Iterable[str]
-    extensions: Dict[str, dict]
+    extensions: dict[str, dict]
 
 
 class LifespanScope(TypedDict):
@@ -82,7 +79,7 @@ class HTTPRequestEvent(TypedDict):
 class HTTPResponseStartEvent(TypedDict):
     type: Literal["http.response.start"]
     status: int
-    headers: Iterable[Tuple[bytes, bytes]]
+    headers: Iterable[tuple[bytes, bytes]]
 
 
 class HTTPResponseBodyEvent(TypedDict):
@@ -94,7 +91,7 @@ class HTTPResponseBodyEvent(TypedDict):
 class HTTPServerPushEvent(TypedDict):
     type: Literal["http.response.push"]
     path: str
-    headers: Iterable[Tuple[bytes, bytes]]
+    headers: Iterable[tuple[bytes, bytes]]
 
 
 class HTTPEarlyHintEvent(TypedDict):
@@ -112,26 +109,26 @@ class WebsocketConnectEvent(TypedDict):
 
 class WebsocketAcceptEvent(TypedDict):
     type: Literal["websocket.accept"]
-    subprotocol: Optional[str]
-    headers: Iterable[Tuple[bytes, bytes]]
+    subprotocol: str | None
+    headers: Iterable[tuple[bytes, bytes]]
 
 
 class WebsocketReceiveEvent(TypedDict):
     type: Literal["websocket.receive"]
-    bytes: Optional[bytes]
-    text: Optional[str]
+    bytes: bytes | None
+    text: str | None
 
 
 class WebsocketSendEvent(TypedDict):
     type: Literal["websocket.send"]
-    bytes: Optional[bytes]
-    text: Optional[str]
+    bytes: bytes | None
+    text: str | None
 
 
 class WebsocketResponseStartEvent(TypedDict):
     type: Literal["websocket.http.response.start"]
     status: int
-    headers: Iterable[Tuple[bytes, bytes]]
+    headers: Iterable[tuple[bytes, bytes]]
 
 
 class WebsocketResponseBodyEvent(TypedDict):
@@ -148,7 +145,7 @@ class WebsocketDisconnectEvent(TypedDict):
 class WebsocketCloseEvent(TypedDict):
     type: Literal["websocket.close"]
     code: int
-    reason: Optional[str]
+    reason: str | None
 
 
 class LifespanStartupEvent(TypedDict):
@@ -224,67 +221,85 @@ Framework = Union[ASGIFramework, WSGIFramework]
 class H2SyncStream(Protocol):
     scope: dict
 
-    def data_received(self, data: bytes) -> None: ...  # noqa: E704
+    def data_received(self, data: bytes) -> None:
+        ...
 
-    def ended(self) -> None: ...  # noqa: E704
+    def ended(self) -> None:
+        ...
 
-    def reset(self) -> None: ...  # noqa: E704
+    def reset(self) -> None:
+        ...
 
-    def close(self) -> None: ...  # noqa: E704
+    def close(self) -> None:
+        ...
 
     async def handle_request(
         self,
         event: h2.events.RequestReceived,
         scheme: str,
-        client: Tuple[str, int],
-        server: Tuple[str, int],
-    ) -> None: ...  # noqa: E704
+        client: tuple[str, int],
+        server: tuple[str, int],
+    ) -> None:
+        ...
 
 
 class H2AsyncStream(Protocol):
     scope: dict
 
-    async def data_received(self, data: bytes) -> None: ...  # noqa: E704
+    async def data_received(self, data: bytes) -> None:
+        ...
 
-    async def ended(self) -> None: ...  # noqa: E704
+    async def ended(self) -> None:
+        ...
 
-    async def reset(self) -> None: ...  # noqa: E704
+    async def reset(self) -> None:
+        ...
 
-    async def close(self) -> None: ...  # noqa: E704
+    async def close(self) -> None:
+        ...
 
     async def handle_request(
         self,
         event: h2.events.RequestReceived,
         scheme: str,
-        client: Tuple[str, int],
-        server: Tuple[str, int],
-    ) -> None: ...  # noqa: E704
+        client: tuple[str, int],
+        server: tuple[str, int],
+    ) -> None:
+        ...
 
 
 class Event(Protocol):
-    def __init__(self) -> None: ...  # noqa: E704
+    def __init__(self) -> None:
+        ...
 
-    async def clear(self) -> None: ...  # noqa: E704
+    async def clear(self) -> None:
+        ...
 
-    async def set(self) -> None: ...  # noqa: E704
+    async def set(self) -> None:
+        ...
 
-    async def wait(self) -> None: ...  # noqa: E704
+    async def wait(self) -> None:
+        ...
 
-    def is_set(self) -> bool: ...  # noqa: E704
+    def is_set(self) -> bool:
+        ...
 
 
 class WorkerContext(Protocol):
-    event_class: Type[Event]
+    event_class: type[Event]
     terminate: Event
     terminated: Event
 
-    async def mark_request(self) -> None: ...  # noqa: E704
+    async def mark_request(self) -> None:
+        ...
 
     @staticmethod
-    async def sleep(wait: Union[float, int]) -> None: ...  # noqa: E704
+    async def sleep(wait: float | int) -> None:
+        ...
 
     @staticmethod
-    def time() -> float: ...  # noqa: E704
+    def time() -> float:
+        ...
 
 
 class TaskGroup(Protocol):
@@ -293,21 +308,23 @@ class TaskGroup(Protocol):
         app: AppWrapper,
         config: Config,
         scope: Scope,
-        send: Callable[[Optional[ASGISendEvent]], Awaitable[None]],
-    ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]: ...  # noqa: E704
+        send: Callable[[ASGISendEvent | None], Awaitable[None]],
+    ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]:
+        ...
 
-    def spawn(self, func: Callable, *args: Any) -> None: ...  # noqa: E704
+    def spawn(self, func: Callable, *args: Any) -> None:
+        ...
 
-    async def __aenter__(self) -> TaskGroup: ...  # noqa: E704
+    async def __aenter__(self) -> TaskGroup:
+        ...
 
-    async def __aexit__(
-        self, exc_type: type, exc_value: BaseException, tb: TracebackType
-    ) -> None: ...  # noqa: E704
+    async def __aexit__(self, exc_type: type, exc_value: BaseException, tb: TracebackType) -> None:
+        ...
 
 
 class ResponseSummary(TypedDict):
     status: int
-    headers: Iterable[Tuple[bytes, bytes]]
+    headers: Iterable[tuple[bytes, bytes]]
 
 
 class AppWrapper(Protocol):
@@ -318,4 +335,5 @@ class AppWrapper(Protocol):
         send: ASGISendCallable,
         sync_spawn: Callable,
         call_soon: Callable,
-    ) -> None: ...  # noqa: E704
+    ) -> None:
+        ...

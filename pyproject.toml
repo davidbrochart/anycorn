@@ -1,8 +1,16 @@
-[tool.poetry]
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
 name = "anycorn"
-version = "0.16.0"
+dynamic = ["version"]
+requires-python = ">=3.8"
 description = "A fork of Hypercorn that uses AnyIO"
-authors = ["pgjones <philip.graham.jones@googlemail.com>", "David Brochart <david.brochart@gmail.com>"]
+authors = [
+    { name = "Philip Graham Jones", email = "philip.graham.jones@googlemail.com" },
+    { name = "David Brochart", email = "david.brochart@gmail.com" },
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
@@ -23,53 +31,30 @@ include = ["src/anycorn/py.typed"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/davidbrochart/anycorn/"
-documentation = "https://hypercorn.readthedocs.io"
 
-[tool.poetry.dependencies]
-python = ">=3.8"
-aioquic = { version = ">= 0.9.0, < 1.0", optional = true }
-exceptiongroup = ">= 1.1.0"
-h11 = "*"
-h2 = ">=3.1.0"
-anyio = ">=4.0, <5.0"
-priority = "*"
-pydata_sphinx_theme = { version = "*", optional = true }
-sphinxcontrib_mermaid = { version = "*", optional = true }
-taskgroup = { version = "*", python = "<3.11", allow-prereleases = true }
-tomli = { version = "*", python = "<3.11" }
-uvloop = { version = "*", markers = "platform_system != 'Windows'", optional = true }
-wsproto = ">=0.14.0"
+dependencies = [
+    "exceptiongroup >= 1.2.0, <2.0; python_version<'3.11'",
+    "h11",
+    "h2 >=3.1.0",
+    "anyio >=4.0, <5.0",
+    "priority",
+    "taskgroup >=0.0.0a4; python_version<'3.11'",
+    "tomli; python_version<'3.11'",
+    "wsproto >=0.14.0",
+]
 
-[tool.poetry.dev-dependencies]
-hypothesis = "*"
-mock = "*"
-pytest = "*"
-trio = "*"
-exceptiongroup = { version = ">=1.2.0, <2.0", python = "<3.11" }
+[project.optional-dependencies]
+h3 = [
+    "aioquic >= 0.9.0, < 1.0",
+]
+test = [
+    "pytest",
+    "mock",
+    "trio",
+]
 
-[tool.poetry.scripts]
+[project.scripts]
 anycorn = "anycorn.__main__:main"
-
-[tool.poetry.extras]
-docs = ["pydata_sphinx_theme", "sphinxcontrib_mermaid"]
-h3 = ["aioquic"]
-trio = ["exceptiongroup", "trio"]
-uvloop = ["uvloop"]
-
-[tool.black]
-line-length = 100
-target-version = ["py38"]
-
-[tool.isort]
-combine_as_imports = true
-force_grid_wrap = 0
-include_trailing_comma = true
-known_first_party = "anycorn, tests"
-line_length = 100
-multi_line_output = 3
-no_lines_before = "LOCALFOLDER"
-order_by_type = false
-reverse_relative = true
 
 [tool.mypy]
 allow_redefinition = true
@@ -89,13 +74,25 @@ warn_unused_configs = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module =["aioquic.*", "cryptography.*", "h11.*", "h2.*", "priority.*", "pytest_asyncio.*", "trio.*", "uvloop.*"]
+module =["aioquic.*", "cryptography.*", "h11.*", "h2.*", "priority.*", "trio.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "--no-cov-on-fail --showlocals --strict-markers --color=yes -v"
 testpaths = ["tests"]
 
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+[tool.ruff]
+line-length = 100
+lint.select = [
+    "ASYNC",        # flake8-async
+    "E", "F", "W",  # default Flake8
+    "G",            # flake8-logging-format
+    "I",            # isort
+    "ISC",          # flake8-implicit-str-concat
+    "PGH",          # pygrep-hooks
+    "RUF100",       # unused noqa (yesqa)
+    "UP",           # pyupgrade
+]
+
+[tool.hatch.version]
+path = "src/anycorn/__init__.py"

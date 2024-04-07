@@ -3,7 +3,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-
 from anycorn.middleware import ProxyFixMiddleware
 from anycorn.typing import HTTPScope
 

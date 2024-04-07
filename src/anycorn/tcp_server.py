@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from math import inf
 from ssl import SSLError, SSLZeroReturnError
-from typing import Any, Callable, Generator, Optional
+from typing import Any, Callable, Generator
 
 import anyio
 
@@ -33,7 +33,7 @@ class TCPServer:
         self.idle_lock = anyio.Lock()
         self.stream = stream
 
-        self._idle_handle: Optional[anyio.CancelScope] = None
+        self._idle_handle: anyio.CancelScope | None = None
 
     def __await__(self) -> Generator[Any, None, None]:
         return self.run().__await__()

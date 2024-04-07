@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from contextlib import AsyncExitStack
 from types import TracebackType
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable
 
 import anyio
 
@@ -19,7 +19,7 @@ async def _handle(
     config: Config,
     scope: Scope,
     receive: ASGIReceiveCallable,
-    send: Callable[[Optional[ASGISendEvent]], Awaitable[None]],
+    send: Callable[[ASGISendEvent | None], Awaitable[None]],
     sync_spawn: Callable,
     call_soon: Callable,
 ) -> None:
@@ -42,14 +42,14 @@ async def _handle(
 
 class TaskGroup:
     def __init__(self) -> None:
-        self._task_group: Optional[anyio.abc.TaskGroup] = None
+        self._task_group: anyio.abc.TaskGroup | None = None
 
     async def spawn_app(
         self,
         app: AppWrapper,
         config: Config,
         scope: Scope,
-        send: Callable[[Optional[ASGISendEvent]], Awaitable[None]],
+        send: Callable[[ASGISendEvent | None], Awaitable[None]],
     ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]:
         app_send_channel, app_receive_channel = anyio.create_memory_object_stream[Any](
             config.max_app_queue_size

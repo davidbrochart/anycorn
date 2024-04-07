@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Awaitable, Callable, Dict, Optional, Tuple
+from typing import Awaitable, Callable
 
 from aioquic.buffer import Buffer
 from aioquic.h3.connection import H3_ALPN
@@ -14,15 +14,15 @@ from aioquic.quic.events import (
     ProtocolNegotiated,
 )
 from aioquic.quic.packet import (
-    encode_quic_version_negotiation,
     PACKET_TYPE_INITIAL,
+    encode_quic_version_negotiation,
     pull_quic_header,
 )
 
-from .h3 import H3Protocol
 from ..config import Config
 from ..events import Closed, Event, RawData
 from ..typing import AppWrapper, TaskGroup, WorkerContext
+from .h3 import H3Protocol
 
 
 class QuicProtocol:
@@ -32,14 +32,14 @@ class QuicProtocol:
         config: Config,
         context: WorkerContext,
         task_group: TaskGroup,
-        server: Optional[Tuple[str, int]],
+        server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
     ) -> None:
         self.app = app
         self.config = config
         self.context = context
-        self.connections: Dict[bytes, QuicConnection] = {}
-        self.http_connections: Dict[QuicConnection, H3Protocol] = {}
+        self.connections: dict[bytes, QuicConnection] = {}
+        self.http_connections: dict[QuicConnection, H3Protocol] = {}
         self.send = send
         self.server = server
         self.task_group = task_group
@@ -94,7 +94,7 @@ class QuicProtocol:
             await self.send(RawData(data=data, address=address))
 
     async def _handle_events(
-        self, connection: QuicConnection, client: Optional[Tuple[str, int]] = None
+        self, connection: QuicConnection, client: tuple[str, int] | None = None
     ) -> None:
         event = connection.next_event()
         while event is not None:

@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, cast, Dict, List
+from typing import Any, Callable, Dict, cast
 
 import anyio
 import pytest
-
-from anycorn.app_wrappers import _build_environ, ASGIReceiveCallable, InvalidPathError, WSGIWrapper
+from anycorn.app_wrappers import ASGIReceiveCallable, InvalidPathError, WSGIWrapper, _build_environ
 from anycorn.typing import ASGISendEvent, HTTPScope
 
 
-def echo_body(environ: dict, start_response: Callable) -> List[bytes]:
+def echo_body(environ: dict, start_response: Callable) -> list[bytes]:
     status = "200 OK"
     output = environ["wsgi.input"].read()
     headers = [
@@ -52,7 +51,10 @@ async def test_wsgi() -> None:
     await app(scope, receive, _send, anyio.to_thread.run_sync, anyio.from_thread.run)
     assert messages == [
         {
-            "headers": [(b"content-type", b"text/plain; charset=utf-8"), (b"content-length", b"0")],
+            "headers": [
+                (b"content-type", b"text/plain; charset=utf-8"),
+                (b"content-length", b"0"),
+            ],
             "status": 200,
             "type": "http.response.start",
         },
@@ -61,7 +63,7 @@ async def test_wsgi() -> None:
     ]
 
 
-async def _run_app(app: WSGIWrapper, scope: HTTPScope, body: bytes = b"") -> List[ASGISendEvent]:
+async def _run_app(app: WSGIWrapper, scope: HTTPScope, body: bytes = b"") -> list[ASGISendEvent]:
     send_stream, recv_stream = anyio.create_memory_object_stream[dict](math.inf)
     await send_stream.send({"type": "http.request", "body": body})
 
@@ -100,7 +102,10 @@ async def test_wsgi2() -> None:
     messages = await _run_app(app, scope)
     assert messages == [
         {
-            "headers": [(b"content-type", b"text/plain; charset=utf-8"), (b"content-length", b"0")],
+            "headers": [
+                (b"content-type", b"text/plain; charset=utf-8"),
+                (b"content-length", b"0"),
+            ],
             "status": 200,
             "type": "http.response.start",
         },
@@ -134,7 +139,7 @@ async def test_max_body_size() -> None:
     ]
 
 
-def no_start_response(environ: dict, start_response: Callable) -> List[bytes]:
+def no_start_response(environ: dict, start_response: Callable) -> list[bytes]:
     return [b"result"]
 
 
@@ -177,8 +182,8 @@ def test_build_environ_encoding() -> None:
         "extensions": {},
     }
     environ = _build_environ(scope, b"")
-    assert environ["SCRIPT_NAME"] == "/中".encode("utf8").decode("latin-1")
-    assert environ["PATH_INFO"] == "/文".encode("utf8").decode("latin-1")
+    assert environ["SCRIPT_NAME"] == "/中".encode().decode("latin-1")
+    assert environ["PATH_INFO"] == "/文".encode().decode("latin-1")
 
 
 def test_build_environ_root_path() -> None:

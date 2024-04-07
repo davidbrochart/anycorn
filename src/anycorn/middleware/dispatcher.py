@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict
 
 from ..typing import ASGIFramework, Scope
 
@@ -9,7 +9,7 @@ MAX_QUEUE_SIZE = 10
 
 
 class _DispatcherMiddleware:
-    def __init__(self, mounts: Dict[str, ASGIFramework]) -> None:
+    def __init__(self, mounts: dict[str, ASGIFramework]) -> None:
         self.mounts = mounts
 
     async def __call__(self, scope: Scope, receive: Callable, send: Callable) -> None:
@@ -37,9 +37,9 @@ class DispatcherMiddleware(_DispatcherMiddleware):
     async def _handle_lifespan(self, scope: Scope, receive: Callable, send: Callable) -> None:
         import anyio
 
-        self.app_queues: Dict[
+        self.app_queues: dict[
             str,
-            Tuple[
+            tuple[
                 anyio.streams.memory.MemoryObjectSendStream,
                 anyio.streams.memory.MemoryObjectReceiveStream,
             ],
