@@ -53,7 +53,7 @@ def test_is_asgi(app: Any, expected: bool) -> None:
 
 def test_build_and_validate_headers_validate() -> None:
     with pytest.raises(TypeError):
-        build_and_validate_headers([("string", "string")])
+        build_and_validate_headers([("string", "string")])  # type: ignore[list-item]
 
 
 def test_build_and_validate_headers_pseudo() -> None:

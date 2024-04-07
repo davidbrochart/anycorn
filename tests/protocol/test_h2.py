@@ -80,8 +80,8 @@ async def test_protocol_handle_protocol_error() -> None:
         Mock(), Config(), WorkerContext(None), AsyncMock(), False, None, None, AsyncMock()
     )
     await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
-    protocol.send.assert_awaited()
-    assert protocol.send.call_args_list == [call(Closed())]
+    protocol.send.assert_awaited()  # type: ignore[attr-defined]
+    assert protocol.send.call_args_list == [call(Closed())]  # type: ignore[attr-defined]
 
 
 @pytest.mark.anyio
@@ -100,6 +100,6 @@ async def test_protocol_keep_alive_max_requests() -> None:
     ]
     client.send_headers(1, headers, end_stream=True)
     await protocol.handle(RawData(data=client.data_to_send()))
-    protocol.send.assert_awaited()
-    events = client.receive_data(protocol.send.call_args_list[1].args[0].data)
+    protocol.send.assert_awaited()  # type: ignore[attr-defined]
+    events = client.receive_data(protocol.send.call_args_list[1].args[0].data)  # type: ignore[attr-defined]
     assert isinstance(events[-1], ConnectionTerminated)

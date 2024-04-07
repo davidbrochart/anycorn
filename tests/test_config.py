@@ -82,10 +82,10 @@ def test_create_sockets_ip(
     sockets = config.create_sockets()
     sock = sockets.insecure_sockets[0]
     mock_socket.assert_called_with(expected_family, socket.SOCK_STREAM)
-    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind.assert_called_with(expected_binding)
-    sock.setblocking.assert_called_with(False)
-    sock.set_inheritable.assert_called_with(True)
+    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
+    sock.bind.assert_called_with(expected_binding)  # type: ignore[attr-defined]
+    sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]
+    sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]
 
 
 def test_create_sockets_unix(monkeypatch: MonkeyPatch) -> None:
@@ -97,15 +97,15 @@ def test_create_sockets_unix(monkeypatch: MonkeyPatch) -> None:
     sockets = config.create_sockets()
     sock = sockets.insecure_sockets[0]
     mock_socket.assert_called_with(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind.assert_called_with("/tmp/anycorn.sock")
-    sock.setblocking.assert_called_with(False)
-    sock.set_inheritable.assert_called_with(True)
+    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
+    sock.bind.assert_called_with("/tmp/anycorn.sock")  # type: ignore[attr-defined]
+    sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]
+    sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]
 
 
 def test_create_sockets_fd(monkeypatch: MonkeyPatch) -> None:
     mock_sock_class = Mock(
-        return_value=NonCallableMock(**{"getsockopt.return_value": socket.SOCK_STREAM})
+        return_value=NonCallableMock(**{"getsockopt.return_value": socket.SOCK_STREAM})  # type: ignore[arg-type]
     )
     monkeypatch.setattr(socket, "socket", mock_sock_class)
     config = Config()
@@ -113,10 +113,10 @@ def test_create_sockets_fd(monkeypatch: MonkeyPatch) -> None:
     sockets = config.create_sockets()
     sock = sockets.insecure_sockets[0]
     mock_sock_class.assert_called_with(fileno=2)
-    sock.getsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_TYPE)
-    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.setblocking.assert_called_with(False)
-    sock.set_inheritable.assert_called_with(True)
+    sock.getsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_TYPE)  # type: ignore[attr-defined]
+    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
+    sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]
+    sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]
 
 
 def test_create_sockets_multiple(monkeypatch: MonkeyPatch) -> None:
