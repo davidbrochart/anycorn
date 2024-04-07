@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import socket
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import anyio
 
@@ -20,7 +20,7 @@ HISTOGRAM_TYPE = "histogram"
 
 
 class BaseStatsdLogger(Logger):
-    def __init__(self, config: "Config") -> None:
+    def __init__(self, config: Config) -> None:
         super().__init__(config)
         self.dogstatsd_tags = config.dogstatsd_tags
         self.prefix = config.statsd_prefix
@@ -70,7 +70,7 @@ class BaseStatsdLogger(Logger):
             await super().warning("Failed to log to statsd", exc_info=True)
 
     async def access(
-        self, request: "WWWScope", response: "ResponseSummary", request_time: float
+        self, request: WWWScope, response: ResponseSummary, request_time: float
     ) -> None:
         await super().access(request, response, request_time)
         await self.histogram("anycorn.request.duration", request_time * 1_000)
@@ -101,7 +101,7 @@ class BaseStatsdLogger(Logger):
 class StatsdLogger(BaseStatsdLogger):
     socket: anyio.abc.ConnectedUDPSocket | None
 
-    def __init__(self, config: "Config") -> None:
+    def __init__(self, config: Config) -> None:
         super().__init__(config)
         self.address = tuple(config.statsd_host.rsplit(":", 1))
         self.socket = None

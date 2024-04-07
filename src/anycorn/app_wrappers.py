@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from functools import partial
 from io import BytesIO
-from typing import Callable, List, Optional, Tuple
+from typing import Callable
 
 from .typing import (
     ASGIFramework,
@@ -50,7 +50,7 @@ class WSGIWrapper:
         if scope["type"] == "http":
             await self.handle_http(scope, receive, send, sync_spawn, call_soon)
         elif scope["type"] == "websocket":
-            await send({"type": "websocket.close"})  # type: ignore
+            await send({"type": "websocket.close"})  # type: ignore[arg-type, misc]
         elif scope["type"] == "lifespan":
             return
         else:
@@ -67,7 +67,7 @@ class WSGIWrapper:
         body = bytearray()
         while True:
             message = await receive()
-            body.extend(message.get("body", b""))  # type: ignore
+            body.extend(message.get("body", b""))  # type: ignore[arg-type]
             if len(body) > self.max_body_size:
                 await send({"type": "http.response.start", "status": 400, "headers": []})
                 await send({"type": "http.response.body", "body": b"", "more_body": False})
@@ -84,15 +84,15 @@ class WSGIWrapper:
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
     def run_app(self, environ: dict, send: Callable) -> None:
-        headers: List[Tuple[bytes, bytes]]
+        headers: list[tuple[bytes, bytes]] = []
         headers_sent = False
         response_started = False
-        status_code: Optional[int] = None
+        status_code: int | None = None
 
         def start_response(
             status: str,
-            response_headers: List[Tuple[str, str]],
-            exc_info: Optional[Exception] = None,
+            response_headers: list[tuple[str, str]],
+            exc_info: Exception | None = None,
         ) -> None:
             nonlocal headers, response_started, status_code
 
@@ -162,6 +162,6 @@ def _build_environ(scope: HTTPScope, body: bytes) -> dict:
         # HTTPbis say only ASCII chars are allowed in headers, but we latin1 just in case
         value = raw_value.decode("latin1")
         if corrected_name in environ:
-            value = environ[corrected_name] + "," + value  # type: ignore
+            value = environ[corrected_name] + "," + value  # type: ignore[operator]
         environ[corrected_name] = value
     return environ

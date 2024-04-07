@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from typing import Awaitable, Callable, List, Literal, Optional
+from typing import Awaitable, Callable, Literal
 
 import anyio
 
@@ -11,15 +11,16 @@ from .typing import Framework
 from .utils import wrap_app
 
 __all__ = ("Config", "serve")
+__version__ = "0.16.0"
 
 
 async def serve(
     app: Framework,
     config: Config,
     *,
-    shutdown_trigger: Optional[Callable[..., Awaitable[None]]] = None,
-    task_status: anyio.abc.TaskStatus[List[str]] = anyio.TASK_STATUS_IGNORED,
-    mode: Optional[Literal["asgi", "wsgi"]] = None,
+    shutdown_trigger: Callable[..., Awaitable[None]] | None = None,
+    task_status: anyio.abc.TaskStatus[list[str]] = anyio.TASK_STATUS_IGNORED,
+    mode: Literal["asgi", "wsgi"] | None = None,
 ) -> None:
     """Serve an ASGI framework app given the config.
 

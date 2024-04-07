@@ -7,6 +7,26 @@ on:
   workflow_dispatch:
 
 jobs:
+  pre-commit:
+    name: pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+      - uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: --all-files --hook-stage=manual
+      - name: Help message if pre-commit fail
+        if: ${{ failure() }}
+        run: |
+          echo "You can install pre-commit hooks to automatically run formatting"
+          echo "on each commit with:"
+          echo "    pre-commit install"
+          echo "or you can run by hand on staged files with"
+          echo "    pre-commit run"
+          echo "or after-the-fact on already committed files with"
+          echo "    pre-commit run --all-files --hook-stage=manual"
+
   tox:
     runs-on: ubuntu-latest
     strategy:
@@ -18,9 +38,7 @@ jobs:
           - {name: '3.10', python: '3.10', tox: py310}
           - {name: '3.9', python: '3.9', tox: py39}
           - {name: '3.8', python: '3.8', tox: py38}
-          # - {name: 'format', python: '3.12', tox: format}
           - {name: 'mypy', python: '3.12', tox: mypy}
-          # - {name: 'pep8', python: '3.12', tox: pep8}
           - {name: 'package', python: '3.12', tox: package}
 
     steps:
@@ -61,7 +79,7 @@ jobs:
 
       - name: Run server
         working-directory: compliance/h2spec
-        run: nohup anycorn --keyfile key.pem --certfile cert.pem server:app &
+        run: nohup anycorn --keyfile key.pem --certfile cert.pem http_server:app &
 
       - name: Download h2spec
         run: |
@@ -91,7 +109,7 @@ jobs:
       - run: python3 -m pip install trio .
       - name: Run server
         working-directory: compliance/autobahn
-        run: nohup anycorn server:app &
+        run: nohup anycorn ws_server:app &
 
       - name: Run Unit Tests
         working-directory: compliance/autobahn

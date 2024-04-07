@@ -4,10 +4,9 @@ import inspect
 import os
 from unittest.mock import Mock
 
+import anycorn.__main__
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
-
-import anycorn.__main__
 from anycorn.config import Config
 
 

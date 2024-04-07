@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Callable, Iterable
 
 import pytest
-
 from anycorn.typing import Scope
 from anycorn.utils import build_and_validate_headers, filter_pseudo_headers, is_asgi, suppress_body
 
@@ -54,7 +53,7 @@ def test_is_asgi(app: Any, expected: bool) -> None:
 
 def test_build_and_validate_headers_validate() -> None:
     with pytest.raises(TypeError):
-        build_and_validate_headers([("string", "string")])  # type: ignore
+        build_and_validate_headers([("string", "string")])
 
 
 def test_build_and_validate_headers_pseudo() -> None:

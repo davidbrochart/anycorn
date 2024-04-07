@@ -1,26 +1,28 @@
 from __future__ import annotations
 
 from itertools import chain
-from typing import Awaitable, Callable, cast, Optional, Tuple, Type, Union
+from typing import Awaitable, Callable, cast
 
 import h11
 
+from ..config import Config
+from ..events import Closed, Event, RawData, Updated
+from ..typing import AppWrapper, H11SendableEvent, TaskGroup, WorkerContext
 from .events import (
     Body,
     Data,
     EndBody,
     EndData,
-    Event as StreamEvent,
     InformationalResponse,
     Request,
     Response,
     StreamClosed,
 )
+from .events import (
+    Event as StreamEvent,
+)
 from .http_stream import HTTPStream
 from .ws_stream import WSStream
-from ..config import Config
-from ..events import Closed, Event, RawData, Updated
-from ..typing import AppWrapper, H11SendableEvent, TaskGroup, WorkerContext
 
 STREAM_ID = 1
 
@@ -62,7 +64,7 @@ class H11WSConnection:
     def receive_data(self, data: bytes) -> None:
         self.buffer.extend(data)
 
-    def next_event(self) -> Union[Data, Type[h11.NEED_DATA]]:
+    def next_event(self) -> Data | type[h11.NEED_DATA]:
         if self.buffer:
             event = Data(stream_id=STREAM_ID, data=bytes(self.buffer))
             self.buffer = bytearray()
@@ -85,15 +87,15 @@ class H11Protocol:
         context: WorkerContext,
         task_group: TaskGroup,
         ssl: bool,
-        client: Optional[Tuple[str, int]],
-        server: Optional[Tuple[str, int]],
+        client: tuple[str, int] | None,
+        server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
     ) -> None:
         self.app = app
         self.can_read = context.event_class()
         self.client = client
         self.config = config
-        self.connection: Union[h11.Connection, H11WSConnection] = h11.Connection(
+        self.connection: h11.Connection | H11WSConnection = h11.Connection(
             h11.SERVER, max_incomplete_event_size=self.config.h11_max_incomplete_size
         )
         self.context = context
@@ -101,7 +103,7 @@ class H11Protocol:
         self.send = send
         self.server = server
         self.ssl = ssl
-        self.stream: Optional[Union[HTTPStream, WSStream]] = None
+        self.stream: HTTPStream | WSStream | None = None
         self.task_group = task_group
 
     async def initiate(self) -> None:

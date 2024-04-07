@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import pytest
-
 from anycorn.middleware import HTTPToHTTPSRedirectMiddleware
 from anycorn.typing import HTTPScope, WebsocketScope
+
 from ..helpers import empty_framework
 
 

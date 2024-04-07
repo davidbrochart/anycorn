@@ -17,7 +17,7 @@ from __future__ import annotations
 #     from unittest.mock import AsyncMock
 # except ImportError:
 #     # Python < 3.8
-#     from mock import AsyncMock  # type: ignore
+#     from mock import AsyncMock
 
 
 # FIXME

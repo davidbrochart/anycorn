@@ -12,7 +12,7 @@ from multiprocessing.process import BaseProcess
 from multiprocessing.synchronize import Event as EventType
 from pickle import PicklingError
 from random import randint
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable
 
 import anyio
 
@@ -21,15 +21,16 @@ from .lifespan import Lifespan
 from .statsd import StatsdLogger
 from .tcp_server import tcp_server_handler
 from .typing import AppWrapper, WorkerFunc
+
 # from .udp_server import UDPServer
 from .utils import (
+    ShutdownError,
     check_for_updates,
     check_multiprocess_shutdown_event,
     files_to_watch,
     load_application,
     raise_shutdown,
     repr_socket_addr,
-    ShutdownError,
     write_pid_file,
 )
 from .worker_context import WorkerContext
@@ -69,7 +70,7 @@ def run(config: Config) -> int:
             shutdown_event.set()
             active = False
 
-        processes: List[BaseProcess] = []
+        processes: list[BaseProcess] = []
         while active:
             # Ignore SIGINT before creating the processes, so that they
             # inherit the signal handling. This means that the shutdown
@@ -118,7 +119,7 @@ def run(config: Config) -> int:
 
 
 def _populate(
-    processes: List[BaseProcess],
+    processes: list[BaseProcess],
     config: Config,
     worker_func: WorkerFunc,
     sockets: Sockets,
@@ -126,7 +127,7 @@ def _populate(
     ctx: BaseContext,
 ) -> None:
     for _ in range(config.workers - len(processes)):
-        process = ctx.Process(  # type: ignore
+        process = ctx.Process(  # type: ignore[attr-defined]
             target=worker_func,
             kwargs={"config": config, "shutdown_event": shutdown_event, "sockets": sockets},
         )
@@ -135,14 +136,14 @@ def _populate(
             process.start()
         except PicklingError as error:
             raise RuntimeError(
-                "Cannot pickle the config, see https://docs.python.org/3/library/pickle.html#pickle-picklable"  # noqa: E501
+                "Cannot pickle the config, see https://docs.python.org/3/library/pickle.html#pickle-picklable"
             ) from error
         processes.append(process)
         if platform.system() == "Windows":
             time.sleep(0.1)
 
 
-def _join_exited(processes: List[BaseProcess]) -> int:
+def _join_exited(processes: list[BaseProcess]) -> int:
     exitcode = 0
     for index in reversed(range(len(processes))):
         worker = processes[index]
@@ -158,9 +159,9 @@ async def worker_serve(
     app: AppWrapper,
     config: Config,
     *,
-    sockets: Optional[Sockets] = None,
-    shutdown_trigger: Optional[Callable[..., Awaitable[None]]] = None,
-    task_status: anyio.abc.TaskStatus[List[str]] = anyio.TASK_STATUS_IGNORED,
+    sockets: Sockets | None = None,
+    shutdown_trigger: Callable[..., Awaitable[None]] | None = None,
+    task_status: anyio.abc.TaskStatus[list[str]] = anyio.TASK_STATUS_IGNORED,
 ) -> None:
     config.set_statsd_logger_class(StatsdLogger)
 
@@ -183,25 +184,30 @@ async def worker_serve(
                     sock.listen(config.backlog)
 
             ssl_context = config.create_ssl_context()
-            listeners: List[anyio.abc.SocketListener | anyio.streams.tls.TLSListener] = []
+            listeners: list[anyio.abc.SocketListener | anyio.streams.tls.TLSListener] = []
             binds = []
             for secure_sock in sockets.secure_sockets:
                 asynclib = anyio._core._eventloop.get_async_backend()
                 secure_listener = anyio.streams.tls.TLSListener(
-                    asynclib.create_tcp_listener(secure_sock), ssl_context, True, config.ssl_handshake_timeout
+                    asynclib.create_tcp_listener(secure_sock),
+                    ssl_context,
+                    True,
+                    config.ssl_handshake_timeout,
                 )
                 listeners.append(secure_listener)
                 bind = repr_socket_addr(secure_sock.family, secure_sock.getsockname())
-                binds.append(f"https://{bind}")
-                await config.log.info(f"Running on https://{bind} (CTRL + C to quit)")
+                url = f"https://{bind}"
+                binds.append(url)
+                await config.log.info("Running on %s (CTRL + C to quit)", url)
 
             for insecure_sock in sockets.insecure_sockets:
                 asynclib = anyio._core._eventloop.get_async_backend()
                 insecure_listener = asynclib.create_tcp_listener(insecure_sock)
                 listeners.append(insecure_listener)
                 bind = repr_socket_addr(insecure_sock.family, insecure_sock.getsockname())
-                binds.append(f"http://{bind}")
-                await config.log.info(f"Running on http://{bind} (CTRL + C to quit)")
+                url = f"http://{bind}"
+                binds.append(url)
+                await config.log.info("Running on %s (CTRL + C to quit)", url)
 
             # FIXME
             # for quic_sock in sockets.quic_sockets:
@@ -238,7 +244,7 @@ async def worker_serve(
 
 
 def anyio_worker(
-    config: Config, sockets: Optional[Sockets] = None, shutdown_event: Optional[EventType] = None
+    config: Config, sockets: Sockets | None = None, shutdown_event: EventType | None = None
 ) -> None:
     if sockets is not None:
         for sock in sockets.secure_sockets:

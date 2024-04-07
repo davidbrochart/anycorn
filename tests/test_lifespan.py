@@ -4,12 +4,12 @@ import sys
 
 import anyio
 import pytest
-
 from anycorn.app_wrappers import ASGIWrapper
 from anycorn.config import Config
 from anycorn.lifespan import Lifespan
 from anycorn.utils import LifespanFailureError, LifespanTimeoutError
-from .helpers import lifespan_failure, SlowLifespanFramework
+
+from .helpers import SlowLifespanFramework, lifespan_failure
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup

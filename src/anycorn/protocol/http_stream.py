@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from enum import auto, Enum
+from enum import Enum, auto
 from time import time
-from typing import Awaitable, Callable, Optional, Tuple
+from typing import Awaitable, Callable
 from urllib.parse import unquote
 
-from .events import Body, EndBody, Event, InformationalResponse, Request, Response, StreamClosed
 from ..config import Config
 from ..typing import (
     AppWrapper,
@@ -16,11 +15,12 @@ from ..typing import (
     WorkerContext,
 )
 from ..utils import (
+    UnexpectedMessageError,
     build_and_validate_headers,
     suppress_body,
-    UnexpectedMessageError,
     valid_server_name,
 )
+from .events import Body, EndBody, Event, InformationalResponse, Request, Response, StreamClosed
 
 PUSH_VERSIONS = {"2", "3"}
 EARLY_HINTS_VERSIONS = {"2", "3"}
@@ -43,8 +43,8 @@ class HTTPStream:
         context: WorkerContext,
         task_group: TaskGroup,
         ssl: bool,
-        client: Optional[Tuple[str, int]],
-        server: Optional[Tuple[str, int]],
+        client: tuple[str, int] | None,
+        server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
         stream_id: int,
     ) -> None:
@@ -114,7 +114,7 @@ class HTTPStream:
             if self.app_put is not None:
                 await self.app_put({"type": "http.disconnect"})
 
-    async def app_send(self, message: Optional[ASGISendEvent]) -> None:
+    async def app_send(self, message: ASGISendEvent | None) -> None:
         if message is None:  # ASGI App has finished sending messages
             if not self.closed:
                 # Cleanup if required

@@ -7,7 +7,7 @@ import sys
 import time
 from http import HTTPStatus
 from logging.config import dictConfig, fileConfig
-from typing import Any, IO, Mapping, Optional, TYPE_CHECKING, Union
+from typing import IO, TYPE_CHECKING, Any, Mapping
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -22,19 +22,19 @@ if TYPE_CHECKING:
 
 def _create_logger(
     name: str,
-    target: Union[logging.Logger, str, None],
-    level: Optional[str],
+    target: logging.Logger | str | None,
+    level: str | None,
     sys_default: IO,
     *,
     propagate: bool = True,
-) -> Optional[logging.Logger]:
+) -> logging.Logger | None:
     if isinstance(target, logging.Logger):
         return target
 
     if target:
         logger = logging.getLogger(name)
         logger.handlers = [
-            logging.StreamHandler(sys_default) if target == "-" else logging.FileHandler(target)  # type: ignore # noqa: E501
+            logging.StreamHandler(sys_default) if target == "-" else logging.FileHandler(target)  # type: ignore[list-item]
         ]
         logger.propagate = propagate
         formatter = logging.Formatter(
@@ -50,7 +50,7 @@ def _create_logger(
 
 
 class Logger:
-    def __init__(self, config: "Config") -> None:
+    def __init__(self, config: Config) -> None:
         self.access_log_format = config.access_log_format
 
         self.access_logger = _create_logger(
@@ -82,7 +82,7 @@ class Logger:
                 dictConfig(config.logconfig_dict)
 
     async def access(
-        self, request: "WWWScope", response: "ResponseSummary", request_time: float
+        self, request: WWWScope, response: ResponseSummary, request_time: float
     ) -> None:
         if self.access_logger is not None:
             self.access_logger.info(
@@ -118,7 +118,7 @@ class Logger:
             self.error_logger.log(level, message, *args, **kwargs)
 
     def atoms(
-        self, request: "WWWScope", response: Optional["ResponseSummary"], request_time: float
+        self, request: WWWScope, response: ResponseSummary | None, request_time: float
     ) -> Mapping[str, str]:
         """Create and return an access log atoms dictionary.
 
@@ -133,7 +133,7 @@ class Logger:
 
 class AccessLogAtoms(dict):
     def __init__(
-        self, request: "WWWScope", response: Optional["ResponseSummary"], request_time: float
+        self, request: WWWScope, response: ResponseSummary | None, request_time: float
     ) -> None:
         for name, value in request["headers"]:
             self[f"{{{name.decode('latin1').lower()}}}i"] = value.decode("latin1")
@@ -159,8 +159,8 @@ class AccessLogAtoms(dict):
         status_code = "-"
         status_phrase = "-"
         if response is not None:
-            for name, value in response.get("headers", []):  # type: ignore
-                self[f"{{{name.decode('latin1').lower()}}}o"] = value.decode("latin1")  # type: ignore # noqa: E501
+            for name, value in response.get("headers", []):  # type: ignore[assignment]
+                self[f"{{{name.decode('latin1').lower()}}}o"] = value.decode("latin1")  # type: ignore[attr-defined]
             status_code = str(response["status"])
             try:
                 status_phrase = HTTPStatus(response["status"]).phrase
