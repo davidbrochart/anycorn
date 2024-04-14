@@ -11,7 +11,7 @@ from .typing import Framework
 from .utils import wrap_app
 
 __all__ = ("Config", "serve")
-__version__ = "0.16.0"
+__version__ = "0.17.0"
 
 
 async def serve(
