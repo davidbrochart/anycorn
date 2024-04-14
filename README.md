@@ -35,14 +35,3 @@ anyio.run(serve, app, Config())
 See Hypercorn's
 [documentation](https://hypercorn.readthedocs.io/en/latest/how_to_guides/api_usage.html) for more
 details.
-
-## Testing
-
-The best way to test Anycorn is with [Tox](https://tox.readthedocs.io):
-
-```bash
-pipenv install tox
-tox
-```
-
-This will check the code style and run the tests.
