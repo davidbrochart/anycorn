@@ -51,6 +51,7 @@ test = [
     "pytest",
     "mock",
     "trio",
+    "mypy",
 ]
 
 [project.scripts]
@@ -78,7 +79,7 @@ module =["aioquic.*", "cryptography.*", "h11.*", "h2.*", "priority.*", "trio.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-addopts = "--no-cov-on-fail --showlocals --strict-markers --color=yes -v"
+addopts = "--showlocals --strict-markers --color=yes -v"
 testpaths = ["tests"]
 
 [tool.ruff]

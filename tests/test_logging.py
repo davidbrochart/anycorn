@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from pathlib import Path
 
 import pytest
 from anycorn.config import Config
@@ -14,7 +15,7 @@ from anycorn.typing import HTTPScope, ResponseSummary
     "target, expected_name, expected_handler_type",
     [
         ("-", "anycorn.access", logging.StreamHandler),
-        ("/tmp/path", "anycorn.access", logging.FileHandler),
+        ("", "anycorn.access", logging.FileHandler),
         (logging.getLogger("test_special"), "test_special", None),
         (None, None, None),
     ],
@@ -23,7 +24,10 @@ def test_access_logger_init(
     target: logging.Logger | str | None,
     expected_name: str | None,
     expected_handler_type: type[logging.Handler] | None,
+    tmp_path: Path,
 ) -> None:
+    if target == "":
+        target = str(tmp_path / "path")
     config = Config()
     config.accesslog = target
     config.access_log_format = "%h"

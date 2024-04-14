@@ -99,6 +99,7 @@ def test_create_sockets_ip(
     sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows is not Unix.")
 def test_create_sockets_unix(monkeypatch: MonkeyPatch) -> None:
     mock_socket = Mock()
     monkeypatch.setattr(socket, "socket", mock_socket)
@@ -130,6 +131,7 @@ def test_create_sockets_fd(monkeypatch: MonkeyPatch) -> None:
     sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows is not Unix.")
 def test_create_sockets_multiple(monkeypatch: MonkeyPatch) -> None:
     mock_socket = Mock()
     monkeypatch.setattr(socket, "socket", mock_socket)
