@@ -2,6 +2,7 @@ import subprocess
 
 import httpx
 import pytest
+import sniffio
 from anyio import CancelScope, create_task_group, sleep
 
 from .helpers import ensure_server_running
@@ -18,12 +19,12 @@ async def wait(seconds: int, cancel_scope: CancelScope, proc: subprocess.Popen) 
 
 @pytest.mark.parametrize("server", ["anycorn", "hypercorn"])
 async def test_http_performances(server: str, unused_tcp_port: int) -> None:
+    backend = sniffio.current_async_library()
     host = "127.0.0.1"
     url = f"http://{host}:{unused_tcp_port}"
-
     get_nb = 0
     proc = subprocess.Popen(  # noqa: ASYNC101
-        [server, "tests.helpers:app", "--bind", f"{host}:{unused_tcp_port}"]
+        ["python", "tests/run_server.py", host, str(unused_tcp_port), backend, server]
     )
     try:
         async with create_task_group() as tg:
