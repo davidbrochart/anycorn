@@ -3,9 +3,10 @@ from __future__ import annotations
 from copy import deepcopy
 from json import dumps
 from socket import AF_INET
-from typing import Callable, cast
+from typing import Awaitable, Callable, cast
 
 from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWScope
+from anyio import connect_tcp
 
 SANITY_BODY = b"Hello Anycorn"
 
@@ -107,3 +108,49 @@ async def sanity_framework(
         elif event["type"] == "websocket.receive":
             assert event["bytes"] == SANITY_BODY
             await send({"type": "websocket.send", "text": "Hello & Goodbye"})  # type: ignore[arg-type]
+
+
+async def ensure_server_running(host: str, port: int) -> None:
+    # Try to connect until we succeed – then we know the server has started
+    while True:
+        try:
+            await connect_tcp(host, port)
+        except OSError:
+            pass
+        else:
+            break
+
+
+async def app(
+    scope: dict, receive: Callable[[], Awaitable], send: Callable[[dict], Awaitable]
+) -> None:
+    while True:
+        event = await receive()
+        event_type = event["type"]
+        if event_type == "http.request" and not event.get("more_body", False):
+            await send_data(send)
+            break
+        elif event_type == "http.disconnect":
+            break
+        elif event_type == "lifespan.startup":
+            await send({"type": "lifespan.startup.complete"})
+        elif event_type == "lifespan.shutdown":
+            await send({"type": "lifespan.shutdown.complete"})
+            break
+
+
+async def send_data(send: Callable[[dict], Awaitable]) -> None:
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-length", b"5")],
+        }
+    )
+    await send(
+        {
+            "type": "http.response.body",
+            "body": b"Hello",
+            "more_body": False,
+        }
+    )

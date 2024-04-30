@@ -54,6 +54,8 @@ test = [
     "mock",
     "trio",
     "mypy",
+    "httpx",
+    "hypercorn",
 ]
 
 [project.scripts]

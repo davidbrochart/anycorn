@@ -50,7 +50,9 @@ jobs:
         run: mypy src/anycorn/ tests/
 
       - name: Run tests
-        run: pytest
+        run: |
+          pytest -k "not test_performances"
+          pytest -k "test_performances" -s
 
 
   h2spec:
