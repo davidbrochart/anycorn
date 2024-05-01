@@ -44,7 +44,7 @@ if server == "anycorn":
     import anyio
     from anycorn import serve as anycorn_serve
     from anycorn.config import Config as AnycornConfig
-    from anyio import run as anycorn_run
+    from anyio import run as anycorn_anyio_run
     from anyio.abc import AsyncBackend
 
     modulename = "anyio._backends._" + backend
@@ -59,7 +59,7 @@ if server == "anycorn":
     anycorn_config = AnycornConfig()
     anycorn_config.bind = [f"{host}:{port}"]
 
-    anycorn_run(anycorn_serve, app, anycorn_config)  # type: ignore[arg-type]
+    anycorn_anyio_run(anycorn_serve, app, anycorn_config)  # type: ignore[arg-type]
 else:
     from hypercorn import Config as HypercornConfig
 

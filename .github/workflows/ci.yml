@@ -52,6 +52,7 @@ jobs:
       - name: Run tests
         run: |
           pytest -k "not test_performances"
+          python -m pip install git+https://github.com/agronholm/anyio.git@master
           pytest -k "test_performances" -s
 
 
