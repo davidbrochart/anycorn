@@ -105,6 +105,13 @@ def main(sys_args: list[str] | None = None) -> int:
         "-g", "--group", help="Group to own any unix sockets.", default=sentinel, type=int
     )
     parser.add_argument(
+        "-k",
+        "--worker-class",
+        dest="worker_class",
+        help="The type of worker to use. Options include asyncio and trio.",
+        default=sentinel,
+    )
+    parser.add_argument(
         "--keep-alive",
         help="Seconds to keep inactive connections alive for",
         default=sentinel,
@@ -274,6 +281,8 @@ def main(sys_args: list[str] | None = None) -> int:
         config.umask = args.umask
     if args.user is not sentinel:
         config.user = args.user
+    if args.worker_class is not sentinel:
+        config.worker_class = args.worker_class
     if args.verify_mode is not sentinel:
         config.verify_mode = args.verify_mode
     if args.websocket_ping_interval is not sentinel:
