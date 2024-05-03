@@ -108,6 +108,7 @@ class Config:
     verify_mode: VerifyMode | None = None
     websocket_max_message_size = 16 * 1024 * 1024 * BYTES
     websocket_ping_interval: float | None = None
+    worker_class = "asyncio"
     workers = 1
     wsgi_max_body_size = 16 * 1024 * 1024 * BYTES
 
