@@ -50,7 +50,10 @@ jobs:
         run: mypy src/anycorn/ tests/
 
       - name: Run tests
-        run: pytest
+        run: |
+          pytest -k "not test_performances"
+          python -m pip install git+https://github.com/agronholm/anyio.git@master
+          pytest -k "test_performances" -s
 
 
   h2spec:

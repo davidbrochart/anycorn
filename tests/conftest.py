@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from socket import socket
+
 import anycorn.config
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
@@ -32,3 +34,10 @@ def _http_scope() -> HTTPScope:
         "server": None,
         "extensions": {},
     }
+
+
+@pytest.fixture
+def unused_tcp_port() -> int:
+    with socket() as sock:
+        sock.bind(("localhost", 0))
+        return sock.getsockname()[1]
