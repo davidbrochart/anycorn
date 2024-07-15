@@ -15,6 +15,10 @@ from random import randint
 from typing import Any, Awaitable, Callable
 
 import anyio
+from anyio import TASK_STATUS_IGNORED, Event, create_task_group, current_time, sleep
+from anyio._core._eventloop import get_async_backend
+from anyio.abc import SocketListener, TaskStatus
+from anyio.streams.tls import TLSListener
 
 from .config import Config, Sockets
 from .lifespan import Lifespan
@@ -161,7 +165,7 @@ async def worker_serve(
     *,
     sockets: Sockets | None = None,
     shutdown_trigger: Callable[..., Awaitable[None]] | None = None,
-    task_status: anyio.abc.TaskStatus[list[str]] = anyio.TASK_STATUS_IGNORED,
+    task_status: TaskStatus[list[str]] = TASK_STATUS_IGNORED,
 ) -> None:
     config.set_statsd_logger_class(StatsdLogger)
 
@@ -172,11 +176,11 @@ async def worker_serve(
         max_requests = config.max_requests + randint(0, config.max_requests_jitter)
     context = WorkerContext(max_requests)
 
-    async with anyio.create_task_group() as lifespan_tg:
+    async with create_task_group() as lifespan_tg:
         await lifespan_tg.start(lifespan.handle_lifespan)
         await lifespan.wait_for_startup()
 
-        async with anyio.create_task_group() as server_tg:
+        async with create_task_group() as server_tg:
             if sockets is None:
                 sockets = config.create_sockets()
                 for sock in sockets.secure_sockets:
@@ -185,11 +189,11 @@ async def worker_serve(
                     sock.listen(config.backlog)
 
             ssl_context = config.create_ssl_context()
-            listeners: list[anyio.abc.SocketListener | anyio.streams.tls.TLSListener] = []
+            listeners: list[SocketListener | TLSListener] = []
             binds = []
+            asynclib = get_async_backend()
             for secure_sock in sockets.secure_sockets:
-                asynclib = anyio._core._eventloop.get_async_backend()
-                secure_listener = anyio.streams.tls.TLSListener(
+                secure_listener = TLSListener(
                     asynclib.create_tcp_listener(secure_sock),
                     ssl_context,
                     True,
@@ -202,7 +206,6 @@ async def worker_serve(
                 await config.log.info("Running on %s (CTRL + C to quit)", url)
 
             for insecure_sock in sockets.insecure_sockets:
-                asynclib = anyio._core._eventloop.get_async_backend()
                 insecure_listener = asynclib.create_tcp_listener(insecure_sock)
                 listeners.append(insecure_listener)
                 bind = repr_socket_addr(insecure_sock.family, insecure_sock.getsockname())
@@ -218,7 +221,7 @@ async def worker_serve(
 
             task_status.started(binds)
             try:
-                async with anyio.create_task_group() as tg:
+                async with create_task_group() as tg:
                     if shutdown_trigger is not None:
                         tg.start_soon(raise_shutdown, shutdown_trigger)
                     tg.start_soon(raise_shutdown, context.terminate.wait)
@@ -233,14 +236,14 @@ async def worker_serve(
                             ),
                         )
 
-                    await anyio.Event().wait()
+                    await Event().wait()
             except BaseExceptionGroup as error:
                 _, other_errors = error.split((ShutdownError, KeyboardInterrupt))
                 if other_errors is not None:
                     raise other_errors
             finally:
                 await context.terminated.set()
-                server_tg.cancel_scope.deadline = anyio.current_time() + config.graceful_timeout
+                server_tg.cancel_scope.deadline = current_time() + config.graceful_timeout
 
         await lifespan.wait_for_shutdown()
         lifespan_tg.cancel_scope.cancel()
@@ -258,7 +261,7 @@ def anyio_worker(
 
     shutdown_trigger = None
     if shutdown_event is not None:
-        shutdown_trigger = partial(check_multiprocess_shutdown_event, shutdown_event, anyio.sleep)
+        shutdown_trigger = partial(check_multiprocess_shutdown_event, shutdown_event, sleep)
 
     anyio.run(
         partial(worker_serve, app, config, sockets=sockets, shutdown_trigger=shutdown_trigger),

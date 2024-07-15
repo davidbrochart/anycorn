@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 
 import anyio
+from anyio import TASK_STATUS_IGNORED, Event, create_memory_object_stream
+from anyio.abc import TaskStatus
 
 from .config import Config
 from .typing import AppWrapper, ASGIReceiveEvent, ASGISendEvent, LifespanScope, LifespanState
@@ -20,17 +22,15 @@ class Lifespan:
     def __init__(self, app: AppWrapper, config: Config, state: LifespanState) -> None:
         self.app = app
         self.config = config
-        self.startup = anyio.Event()
-        self.shutdown = anyio.Event()
-        self.app_send_channel, self.app_receive_channel = anyio.create_memory_object_stream[
+        self.startup = Event()
+        self.shutdown = Event()
+        self.app_send_channel, self.app_receive_channel = create_memory_object_stream[
             ASGIReceiveEvent
         ](config.max_app_queue_size)
         self.state = state
         self.supported = True
 
-    async def handle_lifespan(
-        self, *, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED
-    ) -> None:
+    async def handle_lifespan(self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED) -> None:
         task_status.started()
         scope: LifespanScope = {
             "type": "lifespan",

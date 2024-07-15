@@ -4,6 +4,7 @@ from functools import wraps
 from typing import Awaitable, Callable
 
 import anyio
+from anyio import current_time, sleep
 
 from .typing import Event, SingleTask, TaskGroup
 
@@ -76,8 +77,8 @@ class WorkerContext:
 
     @staticmethod
     async def sleep(wait: float | int) -> None:
-        return await anyio.sleep(wait)
+        return await sleep(wait)
 
     @staticmethod
     def time() -> float:
-        return anyio.current_time()
+        return current_time()

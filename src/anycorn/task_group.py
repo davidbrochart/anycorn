@@ -5,6 +5,7 @@ from types import TracebackType
 from typing import Any, Awaitable, Callable
 
 import anyio
+from anyio import create_memory_object_stream, create_task_group, get_cancelled_exc_class
 
 from .config import Config
 from .typing import AppWrapper, ASGIReceiveCallable, ASGIReceiveEvent, ASGISendEvent, Scope
@@ -24,10 +25,10 @@ async def _handle(
 ) -> None:
     try:
         await app(scope, receive, send, sync_spawn, call_soon)
-    except anyio.get_cancelled_exc_class():
+    except get_cancelled_exc_class():
         raise
     except BaseExceptionGroup as error:
-        _, other_errors = error.split(anyio.get_cancelled_exc_class())
+        _, other_errors = error.split(get_cancelled_exc_class())
         if other_errors is not None:
             await config.log.exception("Error in ASGI Framework")
             await send(None)
@@ -50,7 +51,7 @@ class TaskGroup:
         scope: Scope,
         send: Callable[[ASGISendEvent | None], Awaitable[None]],
     ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]:
-        app_send_channel, app_receive_channel = anyio.create_memory_object_stream[ASGIReceiveEvent](
+        app_send_channel, app_receive_channel = create_memory_object_stream[ASGIReceiveEvent](
             config.max_app_queue_size
         )
         self._task_group.start_soon(
@@ -69,7 +70,7 @@ class TaskGroup:
         self._task_group.start_soon(func, *args)
 
     async def __aenter__(self) -> TaskGroup:
-        tg = anyio.create_task_group()
+        tg = create_task_group()
         self._task_group = await tg.__aenter__()
         return self
 

@@ -1,6 +1,6 @@
+import os
 import sys
-from importlib import import_module
-from typing import Awaitable, Callable, Optional
+from typing import Awaitable, Callable
 
 host, port, backend, server = sys.argv[1:]
 
@@ -41,20 +41,11 @@ async def send_data(send: Callable[[dict], Awaitable]) -> None:
 
 
 if server == "anycorn":
-    import anyio
     from anycorn import serve as anycorn_serve
     from anycorn.config import Config as AnycornConfig
     from anyio import run as anycorn_anyio_run
-    from anyio.abc import AsyncBackend
 
-    modulename = "anyio._backends._" + backend
-    module = import_module(modulename)
-    async_backend = getattr(module, "backend_class")
-
-    def get_async_backend(asynclib_name: Optional[str] = None) -> AsyncBackend:
-        return async_backend
-
-    anyio._core._eventloop.get_async_backend = get_async_backend
+    os.environ["ANYIO_BACKEND"] = backend
 
     anycorn_config = AnycornConfig()
     anycorn_config.bind = [f"{host}:{port}"]
@@ -70,7 +61,7 @@ else:
         from hypercorn.trio import serve as hypercorn_trio_serve
         from trio import run as hypercorn_trio_run
 
-        hypercorn_trio_run(hypercorn_trio_serve, app, hypercorn_config)
+        hypercorn_trio_run(hypercorn_trio_serve, app, hypercorn_config)  # type: ignore[arg-type]
     else:
         from asyncio import run as hypercorn_asyncio_run
 
