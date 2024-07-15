@@ -8,6 +8,7 @@ from anycorn.events import Closed, RawData
 
 # from anycorn.protocol.h2 import BUFFER_HIGH_WATER
 from anycorn.protocol.h2 import BufferCompleteError, H2Protocol, StreamBuffer
+from anycorn.typing import ConnectionState
 from anycorn.worker_context import EventWrapper, WorkerContext
 from h2.connection import H2Connection
 from h2.events import ConnectionTerminated
@@ -77,7 +78,15 @@ async def test_stream_buffer_complete() -> None:
 @pytest.mark.anyio
 async def test_protocol_handle_protocol_error() -> None:
     protocol = H2Protocol(
-        Mock(), Config(), WorkerContext(None), AsyncMock(), False, None, None, AsyncMock()
+        Mock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        ConnectionState({}),
+        False,
+        None,
+        None,
+        AsyncMock(),
     )
     await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
     protocol.send.assert_awaited()  # type: ignore[attr-defined]
@@ -87,7 +96,15 @@ async def test_protocol_handle_protocol_error() -> None:
 @pytest.mark.anyio
 async def test_protocol_keep_alive_max_requests() -> None:
     protocol = H2Protocol(
-        Mock(), Config(), WorkerContext(None), AsyncMock(), False, None, None, AsyncMock()
+        Mock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        ConnectionState({}),
+        False,
+        None,
+        None,
+        AsyncMock(),
     )
     protocol.config.keep_alive_max_requests = 0
     client = H2Connection()

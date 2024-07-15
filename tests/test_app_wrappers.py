@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, Dict, cast
+from typing import Any, Callable, cast
 
 import anyio
 import pytest
 from anycorn.app_wrappers import ASGIReceiveCallable, InvalidPathError, WSGIWrapper, _build_environ
-from anycorn.typing import ASGISendEvent, HTTPScope
+from anycorn.typing import ASGIReceiveEvent, ASGISendEvent, ConnectionState, HTTPScope
 
 
 def echo_body(environ: dict, start_response: Callable) -> list[bytes]:
@@ -37,9 +37,10 @@ async def test_wsgi() -> None:
         "client": ("localhost", 80),
         "server": None,
         "extensions": {},
+        "state": ConnectionState({}),
     }
-    send_channel, receive_channel = anyio.create_memory_object_stream[Dict[str, Any]](1)
-    await send_channel.send({"type": "http.request"})
+    send_channel, receive_channel = anyio.create_memory_object_stream[ASGIReceiveEvent](1)
+    await send_channel.send({"type": "http.request"})  # type: ignore[arg-type, misc]
 
     messages = []
 
@@ -58,8 +59,8 @@ async def test_wsgi() -> None:
             "status": 200,
             "type": "http.response.start",
         },
-        {"body": bytearray(b""), "type": "http.response.body", "more_body": True},
-        {"body": bytearray(b""), "type": "http.response.body", "more_body": False},
+        {"body": b"", "type": "http.response.body", "more_body": True},
+        {"body": b"", "type": "http.response.body", "more_body": False},
     ]
 
 
@@ -98,6 +99,7 @@ async def test_wsgi2() -> None:
         "client": ("localhost", 80),
         "server": None,
         "extensions": {},
+        "state": ConnectionState({}),
     }
     messages = await _run_app(app, scope)
     assert messages == [
@@ -109,8 +111,8 @@ async def test_wsgi2() -> None:
             "status": 200,
             "type": "http.response.start",
         },
-        {"body": bytearray(b""), "type": "http.response.body", "more_body": True},
-        {"body": bytearray(b""), "type": "http.response.body", "more_body": False},
+        {"body": b"", "type": "http.response.body", "more_body": True},
+        {"body": b"", "type": "http.response.body", "more_body": False},
     ]
 
 
@@ -131,6 +133,7 @@ async def test_max_body_size() -> None:
         "client": ("localhost", 80),
         "server": None,
         "extensions": {},
+        "state": ConnectionState({}),
     }
     messages = await _run_app(app, scope, b"abcde")
     assert messages == [
@@ -160,6 +163,7 @@ async def test_no_start_response() -> None:
         "client": ("localhost", 80),
         "server": None,
         "extensions": {},
+        "state": ConnectionState({}),
     }
     with pytest.raises(RuntimeError):
         await _run_app(app, scope)
@@ -180,6 +184,7 @@ def test_build_environ_encoding() -> None:
         "client": ("localhost", 80),
         "server": None,
         "extensions": {},
+        "state": ConnectionState({}),
     }
     environ = _build_environ(scope, b"")
     assert environ["SCRIPT_NAME"] == "/中".encode().decode("latin-1")
@@ -201,6 +206,7 @@ def test_build_environ_root_path() -> None:
         "client": ("localhost", 80),
         "server": None,
         "extensions": {},
+        "state": ConnectionState({}),
     }
     with pytest.raises(InvalidPathError):
         _build_environ(scope, b"")

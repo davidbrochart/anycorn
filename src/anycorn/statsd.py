@@ -70,12 +70,13 @@ class BaseStatsdLogger(Logger):
             await super().warning("Failed to log to statsd", exc_info=True)
 
     async def access(
-        self, request: WWWScope, response: ResponseSummary, request_time: float
+        self, request: WWWScope, response: ResponseSummary | None, request_time: float
     ) -> None:
         await super().access(request, response, request_time)
         await self.histogram("anycorn.request.duration", request_time * 1_000)
         await self.increment("anycorn.requests", 1)
-        await self.increment(f"anycorn.request.status.{response['status']}", 1)
+        if response is not None:
+            await self.increment(f"anycorn.request.status.{response['status']}", 1)
 
     async def gauge(self, name: str, value: int) -> None:
         await self._send(f"{self.prefix}{name}:{value}|g")

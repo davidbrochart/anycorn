@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from math import inf
 from ssl import SSLError, SSLZeroReturnError
-from typing import Any, Callable, Generator
 
 import anyio
 
@@ -10,9 +9,9 @@ from .config import Config
 from .events import Closed, Event, RawData, Updated
 from .protocol import ProtocolWrapper
 from .task_group import TaskGroup
-from .typing import AppWrapper
+from .typing import AppWrapper, ConnectionState, LifespanState
 from .utils import parse_socket_addr
-from .worker_context import WorkerContext
+from .worker_context import AnyioSingleTask, WorkerContext
 
 MAX_RECV = 2**16
 
@@ -23,22 +22,20 @@ class TCPServer:
         app: AppWrapper,
         config: Config,
         context: WorkerContext,
-        stream: anyio.abc.SocketStream,
+        state: LifespanState,
     ) -> None:
         self.app = app
         self.config = config
         self.context = context
         self.protocol: ProtocolWrapper
         self.send_lock = anyio.Lock()
-        self.idle_lock = anyio.Lock()
-        self.stream = stream
+        self.idle_task = AnyioSingleTask()
+        self.state = state
 
         self._idle_handle: anyio.CancelScope | None = None
 
-    def __await__(self) -> Generator[Any, None, None]:
-        return self.run().__await__()
-
-    async def run(self) -> None:
+    async def run(self, stream: anyio.abc.SocketStream) -> None:
+        self.stream = stream
         try:
             alpn_protocol = self.stream.extra(anyio.streams.tls.TLSAttribute.alpn_protocol)
             ssl = True
@@ -58,6 +55,7 @@ class TCPServer:
                     self.config,
                     self.context,
                     task_group,
+                    ConnectionState(self.state.copy()),
                     ssl,
                     client,
                     server,
@@ -65,7 +63,7 @@ class TCPServer:
                     alpn_protocol,
                 )
                 await self.protocol.initiate()
-                await self._start_idle()
+                await self.idle_task.restart(self._task_group, self._idle_timeout)
                 await self._read_data()
         except OSError:
             pass
@@ -86,9 +84,9 @@ class TCPServer:
             await self.protocol.handle(Closed())
         elif isinstance(event, Updated):
             if event.idle:
-                await self._start_idle()
+                await self.idle_task.restart(self._task_group, self._idle_timeout)
             else:
-                await self._stop_idle()
+                await self.idle_task.stop()
 
     async def _read_data(self) -> None:
         while True:
@@ -128,44 +126,16 @@ class TCPServer:
         except (SSLError, anyio.ClosedResourceError, anyio.BrokenResourceError):
             pass
 
+    async def _idle_timeout(self) -> None:
+        with anyio.move_on_after(self.config.keep_alive_timeout):
+            await self.context.terminated.wait()
+
+        with anyio.CancelScope(shield=True):
+            await self._initiate_server_close()
+
     async def _initiate_server_close(self) -> None:
         await self.protocol.handle(Closed())
         try:
             await self.stream.aclose()
         except (SSLError, anyio.BrokenResourceError, anyio.BusyResourceError):
             pass
-
-    async def _start_idle(self) -> None:
-        async with self.idle_lock:
-            if self._idle_handle is None:
-                if self._task_group._task_group is not None:
-                    self._idle_handle = await self._task_group._task_group.start(self._run_idle)
-
-    async def _stop_idle(self) -> None:
-        async with self.idle_lock:
-            if self._idle_handle is not None:
-                self._idle_handle.cancel()
-            self._idle_handle = None
-
-    async def _run_idle(
-        self,
-        *,
-        task_status: anyio.abc.TaskStatus[anyio.CancelScope] = anyio.TASK_STATUS_IGNORED,
-    ) -> None:
-        cancel_scope = anyio.CancelScope()
-        task_status.started(cancel_scope)
-        with cancel_scope:
-            with anyio.move_on_after(self.config.keep_alive_timeout):
-                await self.context.terminated.wait()
-
-            with anyio.CancelScope(shield=True):  # as cancel_scope:
-                # cancel_scope.shield = True
-                await self._initiate_server_close()
-
-
-def tcp_server_handler(app: AppWrapper, config: Config, context: WorkerContext) -> Callable:
-    async def handler(stream: anyio.abc.SocketStream) -> None:
-        tcp_server = TCPServer(app, config, context, stream)
-        await tcp_server.run()
-
-    return handler

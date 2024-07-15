@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from anycorn.middleware import ProxyFixMiddleware
-from anycorn.typing import HTTPScope
+from anycorn.typing import ConnectionState, HTTPScope
 
 
 @pytest.mark.anyio
@@ -30,6 +30,7 @@ async def test_proxy_fix_legacy() -> None:
         "client": ("127.0.0.3", 80),
         "server": None,
         "extensions": {},
+        "state": ConnectionState({}),
     }
     await app(scope, None, None)
     mock.assert_called()
@@ -60,6 +61,7 @@ async def test_proxy_fix_modern() -> None:
         "client": ("127.0.0.3", 80),
         "server": None,
         "extensions": {},
+        "state": ConnectionState({}),
     }
     await app(scope, None, None)
     mock.assert_called()

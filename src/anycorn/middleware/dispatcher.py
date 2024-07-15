@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Any, Callable, Dict
+from typing import Callable
 
-from ..typing import ASGIFramework, Scope
+from ..typing import ASGIFramework, ASGIReceiveEvent, Scope
 
 MAX_QUEUE_SIZE = 10
 
@@ -44,7 +44,7 @@ class DispatcherMiddleware(_DispatcherMiddleware):
                 anyio.streams.memory.MemoryObjectReceiveStream,
             ],
         ] = {
-            path: anyio.create_memory_object_stream[Dict[str, Any]](MAX_QUEUE_SIZE)
+            path: anyio.create_memory_object_stream[ASGIReceiveEvent](MAX_QUEUE_SIZE)
             for path in self.mounts
         }
         self.startup_complete = {path: False for path in self.mounts}

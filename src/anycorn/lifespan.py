@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import sys
+
 import anyio
 
 from .config import Config
-from .typing import AppWrapper, ASGIReceiveEvent, ASGISendEvent, LifespanScope
+from .typing import AppWrapper, ASGIReceiveEvent, ASGISendEvent, LifespanScope, LifespanState
 from .utils import LifespanFailureError, LifespanTimeoutError
+
+if sys.version_info < (3, 11):
+    from exceptiongroup import BaseExceptionGroup
 
 
 class UnexpectedMessageError(Exception):
@@ -12,7 +17,7 @@ class UnexpectedMessageError(Exception):
 
 
 class Lifespan:
-    def __init__(self, app: AppWrapper, config: Config) -> None:
+    def __init__(self, app: AppWrapper, config: Config, state: LifespanState) -> None:
         self.app = app
         self.config = config
         self.startup = anyio.Event()
@@ -20,6 +25,7 @@ class Lifespan:
         self.app_send_channel, self.app_receive_channel = anyio.create_memory_object_stream[
             ASGIReceiveEvent
         ](config.max_app_queue_size)
+        self.state = state
         self.supported = True
 
     async def handle_lifespan(
@@ -29,6 +35,7 @@ class Lifespan:
         scope: LifespanScope = {
             "type": "lifespan",
             "asgi": {"spec_version": "2.0", "version": "3.0"},
+            "state": self.state,
         }
         try:
             await self.app(
@@ -38,10 +45,16 @@ class Lifespan:
                 anyio.to_thread.run_sync,
                 anyio.from_thread.run,
             )
-        except LifespanFailureError:
-            # Lifespan failures should crash the server
+        except (LifespanFailureError, anyio.get_cancelled_exc_class()):
             raise
-        except Exception:
+        except (BaseExceptionGroup, Exception) as error:
+            if isinstance(error, BaseExceptionGroup):
+                reraise_error = error.subgroup(
+                    (LifespanFailureError, anyio.get_cancelled_exc_class())
+                )
+                if reraise_error is not None:
+                    raise reraise_error
+
             self.supported = False
             if not self.startup.is_set():
                 await self.config.log.warning(

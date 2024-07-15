@@ -19,8 +19,8 @@ import anyio
 from .config import Config, Sockets
 from .lifespan import Lifespan
 from .statsd import StatsdLogger
-from .tcp_server import tcp_server_handler
-from .typing import AppWrapper, WorkerFunc
+from .tcp_server import TCPServer
+from .typing import AppWrapper, ConnectionState, LifespanState, WorkerFunc
 
 # from .udp_server import UDPServer
 from .utils import (
@@ -165,7 +165,8 @@ async def worker_serve(
 ) -> None:
     config.set_statsd_logger_class(StatsdLogger)
 
-    lifespan = Lifespan(app, config)
+    lifespan_state: LifespanState = {}
+    lifespan = Lifespan(app, config, lifespan_state)
     max_requests = None
     if config.max_requests is not None:
         max_requests = config.max_requests + randint(0, config.max_requests_jitter)
@@ -223,10 +224,16 @@ async def worker_serve(
                     tg.start_soon(raise_shutdown, context.terminate.wait)
 
                     for listener in listeners:
+                        tcp_server = TCPServer(
+                            app,
+                            config,
+                            context,
+                            ConnectionState(lifespan_state.copy()),
+                        )
                         tg.start_soon(
                             partial(
                                 listener.serve,
-                                tcp_server_handler(app, config, context),
+                                tcp_server.run,
                             ),
                         )
 

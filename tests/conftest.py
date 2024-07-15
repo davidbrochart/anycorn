@@ -3,7 +3,7 @@ from __future__ import annotations
 import anycorn.config
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
-from anycorn.typing import HTTPScope
+from anycorn.typing import ConnectionState, HTTPScope
 
 
 @pytest.fixture(autouse=True)
@@ -31,4 +31,5 @@ def _http_scope() -> HTTPScope:
         "client": ("127.0.0.1", 80),
         "server": None,
         "extensions": {},
+        "state": ConnectionState({}),
     }

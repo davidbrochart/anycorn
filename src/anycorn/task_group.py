@@ -51,7 +51,7 @@ class TaskGroup:
         scope: Scope,
         send: Callable[[ASGISendEvent | None], Awaitable[None]],
     ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]:
-        app_send_channel, app_receive_channel = anyio.create_memory_object_stream[Any](
+        app_send_channel, app_receive_channel = anyio.create_memory_object_stream[ASGIReceiveEvent](
             config.max_app_queue_size
         )
         self._task_group.start_soon(

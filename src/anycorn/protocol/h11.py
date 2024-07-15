@@ -7,7 +7,7 @@ import h11
 
 from ..config import Config
 from ..events import Closed, Event, RawData, Updated
-from ..typing import AppWrapper, H11SendableEvent, TaskGroup, WorkerContext
+from ..typing import AppWrapper, ConnectionState, H11SendableEvent, TaskGroup, WorkerContext
 from .events import (
     Body,
     Data,
@@ -86,6 +86,7 @@ class H11Protocol:
         config: Config,
         context: WorkerContext,
         task_group: TaskGroup,
+        connection_state: ConnectionState,
         ssl: bool,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
@@ -105,6 +106,7 @@ class H11Protocol:
         self.ssl = ssl
         self.stream: HTTPStream | WSStream | None = None
         self.task_group = task_group
+        self.connection_state = connection_state
 
     async def initiate(self) -> None:
         pass
@@ -120,9 +122,12 @@ class H11Protocol:
     async def stream_send(self, event: StreamEvent) -> None:
         if isinstance(event, Response):
             if event.status_code >= 200:
+                headers = list(chain(event.headers, self.config.response_headers("h11")))
+                if self.keep_alive_requests >= self.config.keep_alive_max_requests:
+                    headers.append((b"connection", b"close"))
                 await self._send_h11_event(
                     h11.Response(
-                        headers=list(chain(event.headers, self.config.response_headers("h11"))),
+                        headers=headers,
                         status_code=event.status_code,
                     )
                 )
@@ -235,6 +240,7 @@ class H11Protocol:
                 http_version=request.http_version.decode(),
                 method=request.method.decode("ascii").upper(),
                 raw_path=request.target,
+                state=self.connection_state,
             )
         )
         self.keep_alive_requests += 1

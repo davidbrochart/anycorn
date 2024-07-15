@@ -1,8 +1,42 @@
 from __future__ import annotations
 
+from functools import wraps
+from typing import Awaitable, Callable
+
 import anyio
 
-from .typing import Event
+from .typing import Event, SingleTask, TaskGroup
+
+
+def _cancel_wrapper(func: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]]:
+    @wraps(func)
+    async def wrapper(
+        task_status: anyio.abc.TaskStatus[anyio.CancelScope] = anyio.TASK_STATUS_IGNORED,
+    ) -> None:
+        cancel_scope = anyio.CancelScope()
+        task_status.started(cancel_scope)
+        with cancel_scope:
+            await func()
+
+    return wrapper
+
+
+class AnyioSingleTask:
+    def __init__(self) -> None:
+        self._handle: anyio.CancelScope | None = None
+        self._lock = anyio.Lock()
+
+    async def restart(self, task_group: TaskGroup, action: Callable) -> None:
+        async with self._lock:
+            if self._handle is not None:
+                self._handle.cancel()
+            self._handle = await task_group._task_group.start(_cancel_wrapper(action))  # type: ignore[attr-defined]
+
+    async def stop(self) -> None:
+        async with self._lock:
+            if self._handle is not None:
+                self._handle.cancel()
+            self._handle = None
 
 
 class EventWrapper:
@@ -24,6 +58,7 @@ class EventWrapper:
 
 class WorkerContext:
     event_class: type[Event] = EventWrapper
+    single_task_class: type[SingleTask] = AnyioSingleTask
 
     def __init__(self, max_requests: int | None) -> None:
         self.max_requests = max_requests

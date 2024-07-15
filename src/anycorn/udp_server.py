@@ -5,7 +5,7 @@ import anyio
 from .config import Config
 from .events import Event, RawData
 from .task_group import TaskGroup
-from .typing import AppWrapper
+from .typing import AppWrapper, ConnectionState, LifespanState
 from .utils import parse_socket_addr
 from .worker_context import WorkerContext
 
@@ -16,12 +16,14 @@ class UDPServer:
         app: AppWrapper,
         config: Config,
         context: WorkerContext,
+        state: LifespanState,
         socket: anyio.abc.UDPSocket,
     ) -> None:
         self.app = app
         self.config = config
         self.context = context
         self.socket = socket
+        self.state = state
 
     async def run(
         self, *, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED
@@ -35,7 +37,13 @@ class UDPServer:
         )
         async with TaskGroup() as task_group:
             self.protocol = QuicProtocol(
-                self.app, self.config, self.context, task_group, server, self.protocol_send
+                self.app,
+                self.config,
+                self.context,
+                task_group,
+                ConnectionState(self.state.copy()),
+                server,
+                self.protocol_send,
             )
 
             while not self.context.terminated.is_set() or not self.protocol.idle:
