@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable  # , Generator
+from typing import Awaitable, Callable  # , Generator
 
 import anyio
 import h11
@@ -9,24 +9,29 @@ import h11
 # from anycorn.app_wrappers import ASGIWrapper
 # from anycorn.config import Config
 # from anycorn.tcp_server import TCPServer
-from anycorn.typing import Scope
+from anycorn.typing import ASGIReceiveEvent, ASGISendEvent, Scope
 
 # from anycorn.worker_context import WorkerContext
 # from .helpers import MockSocket
+
 
 KEEP_ALIVE_TIMEOUT = 0.01
 REQUEST = h11.Request(method="GET", target="/", headers=[(b"host", b"anycorn")])
 
 
-async def slow_framework(scope: Scope, receive: Callable, send: Callable) -> None:
+async def slow_framework(
+    scope: Scope,
+    receive: Callable[[], Awaitable[ASGIReceiveEvent]],
+    send: Callable[[ASGISendEvent], Awaitable[None]],
+) -> None:
     while True:
         event = await receive()
         if event["type"] == "http.disconnect":
             break
         elif event["type"] == "lifespan.startup":
-            await send({"type": "lifspan.startup.complete"})
+            await send({"type": "lifespan.startup.complete"})
         elif event["type"] == "lifespan.shutdown":
-            await send({"type": "lifspan.shutdown.complete"})
+            await send({"type": "lifespan.shutdown.complete"})
         elif event["type"] == "http.request" and not event.get("more_body", False):
             await anyio.sleep(2 * KEEP_ALIVE_TIMEOUT)
             await send(

@@ -10,7 +10,7 @@ import priority
 
 from ..config import Config
 from ..events import Closed, Event, RawData, Updated
-from ..typing import AppWrapper, TaskGroup, WorkerContext
+from ..typing import AppWrapper, ConnectionState, TaskGroup, WorkerContext
 from ..typing import Event as IOEvent
 from ..utils import filter_pseudo_headers
 from .events import (
@@ -22,6 +22,7 @@ from .events import (
     Request,
     Response,
     StreamClosed,
+    Trailers,
 )
 from .events import (
     Event as StreamEvent,
@@ -87,6 +88,7 @@ class H2Protocol:
         config: Config,
         context: WorkerContext,
         task_group: TaskGroup,
+        connection_state: ConnectionState,
         ssl: bool,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
@@ -98,6 +100,7 @@ class H2Protocol:
         self.config = config
         self.context = context
         self.task_group = task_group
+        self.connection_state = connection_state
 
         self.connection = h2.connection.H2Connection(
             config=h2.config.H2Configuration(client_side=False, header_encoding=None)
@@ -216,6 +219,9 @@ class H2Protocol:
                 self.priority.unblock(event.stream_id)
                 await self.has_data.set()
                 await self.stream_buffers[event.stream_id].drain()
+            elif isinstance(event, Trailers):
+                self.connection.send_headers(event.stream_id, event.headers)
+                await self._flush()
             elif isinstance(event, StreamClosed):
                 await self._close_stream(event.stream_id)
                 idle = len(self.streams) == 0 or all(
@@ -259,7 +265,12 @@ class H2Protocol:
                     event.flow_controlled_length, event.stream_id
                 )
             elif isinstance(event, h2.events.StreamEnded):
-                await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
+                try:
+                    await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
+                except KeyError:
+                    # Response sent before full request received,
+                    # nothing to do already closed.
+                    pass
             elif isinstance(event, h2.events.StreamReset):
                 await self._close_stream(event.stream_id)
                 await self._window_updated(event.stream_id)
@@ -354,6 +365,7 @@ class H2Protocol:
                 http_version="2",
                 method=method,
                 raw_path=raw_path,
+                state=self.connection_state,
             )
         )
         self.keep_alive_requests += 1
