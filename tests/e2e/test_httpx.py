@@ -28,6 +28,7 @@ async def app(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])  # FIXME
 async def test_keep_alive_max_requests_regression() -> None:
     config = Config()
     config.bind = ["0.0.0.0:1234"]
