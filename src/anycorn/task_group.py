@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import sys
-from contextlib import AsyncExitStack
 from types import TracebackType
 from typing import Any, Awaitable, Callable
 
@@ -70,12 +69,10 @@ class TaskGroup:
         self._task_group.start_soon(func, *args)
 
     async def __aenter__(self) -> TaskGroup:
-        async with AsyncExitStack() as exit_stack:
-            tg = anyio.create_task_group()
-            self._task_group = await exit_stack.enter_async_context(tg)
-            self._exit_stack = exit_stack.pop_all()
+        tg = anyio.create_task_group()
+        self._task_group = await tg.__aenter__()
         return self
 
     async def __aexit__(self, exc_type: type, exc_value: BaseException, tb: TracebackType) -> Any:
+        await self._task_group.__aexit__(exc_type, exc_value, tb)
         self._task_group = None
-        return await self._exit_stack.__aexit__(exc_type, exc_value, tb)

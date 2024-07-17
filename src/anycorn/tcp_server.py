@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from math import inf
 from ssl import SSLError, SSLZeroReturnError
+from typing import Callable
 
 import anyio
 
@@ -23,6 +24,7 @@ class TCPServer:
         config: Config,
         context: WorkerContext,
         state: LifespanState,
+        stream: anyio.abc.SocketStream,
     ) -> None:
         self.app = app
         self.config = config
@@ -31,11 +33,11 @@ class TCPServer:
         self.send_lock = anyio.Lock()
         self.idle_task = AnyioSingleTask()
         self.state = state
+        self.stream = stream
 
         self._idle_handle: anyio.CancelScope | None = None
 
-    async def run(self, stream: anyio.abc.SocketStream) -> None:
-        self.stream = stream
+    async def run(self) -> None:
         try:
             alpn_protocol = self.stream.extra(anyio.streams.tls.TLSAttribute.alpn_protocol)
             ssl = True
@@ -123,7 +125,12 @@ class TCPServer:
             pass
         try:
             await self.stream.aclose()
-        except (SSLError, anyio.ClosedResourceError, anyio.BrokenResourceError):
+        except (
+            SSLError,
+            anyio.ClosedResourceError,
+            anyio.BrokenResourceError,
+            anyio.BusyResourceError,
+        ):
             pass
 
     async def _idle_timeout(self) -> None:
@@ -139,3 +146,16 @@ class TCPServer:
             await self.stream.aclose()
         except (SSLError, anyio.BrokenResourceError, anyio.BusyResourceError):
             pass
+
+
+def tcp_server_handler(
+    app: AppWrapper,
+    config: Config,
+    context: WorkerContext,
+    state: LifespanState,
+) -> Callable:
+    async def handler(stream: anyio.abc.SocketStream) -> None:
+        tcp_server = TCPServer(app, config, context, state, stream)
+        await tcp_server.run()
+
+    return handler
