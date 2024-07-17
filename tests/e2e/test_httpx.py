@@ -31,7 +31,7 @@ async def app(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
 @pytest.mark.parametrize("anyio_backend", ["asyncio"])  # FIXME
 async def test_keep_alive_max_requests_regression() -> None:
     config = Config()
-    config.bind = ["0.0.0.0:1234"]
+    config.bind = ["127.0.0.1:1234"]
     config.accesslog = "-"  # Log to stdout/err
     config.errorlog = "-"
     config.keep_alive_max_requests = 2
@@ -51,7 +51,7 @@ async def test_keep_alive_max_requests_regression() -> None:
         # Make sure that we properly clean up connections when `keep_alive_max_requests`
         # is hit such that the client stays good over multiple hangups.
         for _ in range(10):
-            result = await client.post("http://0.0.0.0:1234/test", json={"key": "value"})
+            result = await client.post("http://127.0.0.1:1234/test", json={"key": "value"})
             result.raise_for_status()
 
         shutdown.set()
