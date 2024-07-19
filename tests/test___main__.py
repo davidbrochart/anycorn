@@ -8,6 +8,7 @@ import anycorn.__main__
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
 from anycorn.config import Config
+from click.testing import CliRunner
 
 
 def test_load_config_none() -> None:
@@ -53,12 +54,15 @@ def test_load_config(monkeypatch: MonkeyPatch) -> None:
 def test_main_cli_override(
     flag: str, set_value: str, config_key: str, monkeypatch: MonkeyPatch
 ) -> None:
+    runner = CliRunner()
     run_multiple = Mock()
     monkeypatch.setattr(anycorn.__main__, "run", run_multiple)
     path = os.path.join(os.path.dirname(__file__), "assets/config_ssl.py")
     raw_config = Config.from_pyfile(path)
 
-    anycorn.__main__.main(["--config", f"file:{path}", flag, str(set_value), "asgi:App"])
+    runner.invoke(
+        anycorn.__main__.main, ["--config", f"file:{path}", flag, str(set_value), "asgi:App"]
+    )
     run_multiple.assert_called()
     config = run_multiple.call_args_list[0][0][0]
 
@@ -73,11 +77,12 @@ def test_main_cli_override(
 
 
 def test_verify_mode_conversion(monkeypatch: MonkeyPatch) -> None:
+    runner = CliRunner()
     run_multiple = Mock()
     monkeypatch.setattr(anycorn.__main__, "run", run_multiple)
 
-    with pytest.raises(SystemExit):
-        anycorn.__main__.main(["--verify-mode", "CERT_UNKNOWN", "asgi:App"])
+    result = runner.invoke(anycorn.__main__.main, ["--verify-mode", "CERT_UNKNOWN", "asgi:App"])
+    assert isinstance(result.exception, SystemExit)
 
-    anycorn.__main__.main(["--verify-mode", "CERT_REQUIRED", "asgi:App"])
+    runner.invoke(anycorn.__main__.main, ["--verify-mode", "CERT_REQUIRED", "asgi:App"])
     run_multiple.assert_called()

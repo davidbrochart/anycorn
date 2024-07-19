@@ -41,6 +41,7 @@ dependencies = [
     "tomli; python_version<'3.11'",
     "typing_extensions; python_version<'3.11'",
     "wsproto >=0.14.0",
+    "rich-click >=1.8.3,<2.0.0",
 ]
 
 [project.optional-dependencies]
