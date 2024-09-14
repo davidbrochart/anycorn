@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import anyio
+from anyio import TASK_STATUS_IGNORED
+from anyio.abc import SocketAttribute, TaskStatus, UDPSocket
 
 from .config import Config
 from .events import Event, RawData
@@ -17,7 +18,7 @@ class UDPServer:
         config: Config,
         context: WorkerContext,
         state: LifespanState,
-        socket: anyio.abc.UDPSocket,
+        socket: UDPSocket,
     ) -> None:
         self.app = app
         self.config = config
@@ -25,15 +26,13 @@ class UDPServer:
         self.socket = socket
         self.state = state
 
-    async def run(
-        self, *, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED
-    ) -> None:
+    async def run(self, *, task_status: TaskStatus[None] = TASK_STATUS_IGNORED) -> None:
         from .protocol.quic import QuicProtocol  # h3/Quic is an optional part of Anycorn
 
         task_status.started()
         server = parse_socket_addr(
-            self.socket.extra(anyio.abc.SocketAttribute.raw_socket).family,
-            self.socket.extra(anyio.abc.SocketAttribute.raw_socket).getsockname(),
+            self.socket.extra(SocketAttribute.raw_socket).family,
+            self.socket.extra(SocketAttribute.raw_socket).getsockname(),
         )
         async with TaskGroup() as task_group:
             self.protocol = QuicProtocol(

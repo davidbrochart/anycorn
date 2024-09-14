@@ -47,10 +47,15 @@ jobs:
 
       - name: Check types
         if: ${{ (matrix.python-version == '3.12') && (matrix.os == 'ubuntu-latest') }}
-        run: mypy src/anycorn/ tests/
+        run: |
+          python -m pip install git+https://github.com/agronholm/anyio.git@master
+          mypy src/anycorn/ tests/
 
       - name: Run tests
-        run: pytest
+        run: |
+          python -m pip install git+https://github.com/agronholm/anyio.git@master
+          pytest -k "not test_performances"
+          pytest -k "test_performances" -s
 
 
   h2spec:
@@ -70,7 +75,9 @@ jobs:
           python -m pip install -U wheel
           python -m pip install -U setuptools
           python -m pip install -U pip
-      - run: python -m pip install trio .
+      - run: |
+          python -m pip install git+https://github.com/agronholm/anyio.git@master
+          python -m pip install trio .
 
       - name: Run server
         working-directory: compliance/h2spec
@@ -101,7 +108,9 @@ jobs:
           python -m pip install -U wheel
           python -m pip install -U setuptools
           python -m pip install -U pip
-      - run: python -m pip install trio .
+      - run: |
+          python -m pip install git+https://github.com/agronholm/anyio.git@master
+          python -m pip install trio .
       - name: Run server
         working-directory: compliance/autobahn
         run: nohup anycorn ws_server:app &

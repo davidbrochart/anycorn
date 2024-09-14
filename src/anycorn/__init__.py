@@ -3,7 +3,8 @@ from __future__ import annotations
 import warnings
 from typing import Awaitable, Callable, Literal
 
-import anyio
+from anyio import TASK_STATUS_IGNORED
+from anyio.abc import TaskStatus
 
 from .config import Config
 from .run import worker_serve
@@ -19,7 +20,7 @@ async def serve(
     config: Config,
     *,
     shutdown_trigger: Callable[..., Awaitable[None]] | None = None,
-    task_status: anyio.abc.TaskStatus[list[str]] = anyio.TASK_STATUS_IGNORED,
+    task_status: TaskStatus[list[str]] = TASK_STATUS_IGNORED,
     mode: Literal["asgi", "wsgi"] | None = None,
 ) -> None:
     """Serve an ASGI framework app given the config.

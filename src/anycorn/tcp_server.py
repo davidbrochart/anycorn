@@ -5,6 +5,17 @@ from ssl import SSLError, SSLZeroReturnError
 from typing import Callable
 
 import anyio
+from anyio import (
+    BrokenResourceError,
+    BusyResourceError,
+    CancelScope,
+    ClosedResourceError,
+    EndOfStream,
+    Lock,
+    TypedAttributeLookupError,
+)
+from anyio.abc import SocketAttribute, SocketStream
+from anyio.streams.tls import TLSAttribute
 
 from .config import Config
 from .events import Closed, Event, RawData, Updated
@@ -24,29 +35,29 @@ class TCPServer:
         config: Config,
         context: WorkerContext,
         state: LifespanState,
-        stream: anyio.abc.SocketStream,
+        stream: SocketStream,
     ) -> None:
         self.app = app
         self.config = config
         self.context = context
         self.protocol: ProtocolWrapper
-        self.send_lock = anyio.Lock()
+        self.send_lock = Lock(fast_acquire=True)
         self.idle_task = AnyioSingleTask()
         self.state = state
         self.stream = stream
 
-        self._idle_handle: anyio.CancelScope | None = None
+        self._idle_handle: CancelScope | None = None
 
     async def run(self) -> None:
         try:
-            alpn_protocol = self.stream.extra(anyio.streams.tls.TLSAttribute.alpn_protocol)
+            alpn_protocol = self.stream.extra(TLSAttribute.alpn_protocol)
             ssl = True
-        except anyio.TypedAttributeLookupError:  # Not SSL
+        except TypedAttributeLookupError:  # Not SSL
             alpn_protocol = "http/1.1"
             ssl = False
 
         try:
-            socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
+            socket = self.stream.extra(SocketAttribute.raw_socket)
             client = parse_socket_addr(socket.family, socket.getpeername())
             server = parse_socket_addr(socket.family, socket.getsockname())
 
@@ -76,10 +87,10 @@ class TCPServer:
         if isinstance(event, RawData):
             async with self.send_lock:
                 try:
-                    with anyio.CancelScope(shield=True):  # as cancel_scope:
+                    with CancelScope(shield=True):  # as cancel_scope:
                         # cancel_scope.shield = True
                         await self.stream.send(event.data)
-                except (anyio.ClosedResourceError, anyio.BrokenResourceError, TimeoutError):
+                except (ClosedResourceError, BrokenResourceError, TimeoutError):
                     await self.protocol.handle(Closed())
         elif isinstance(event, Closed):
             await self._close()
@@ -96,9 +107,9 @@ class TCPServer:
                 with anyio.fail_after(self.config.read_timeout or inf):
                     data = await self.stream.receive(MAX_RECV)
             except (
-                anyio.ClosedResourceError,
-                anyio.BrokenResourceError,
-                anyio.EndOfStream,
+                ClosedResourceError,
+                BrokenResourceError,
+                EndOfStream,
                 TimeoutError,
                 SSLZeroReturnError,
             ):
@@ -113,12 +124,12 @@ class TCPServer:
         try:
             await self.stream.send_eof()
         except (
-            anyio.BrokenResourceError,
+            BrokenResourceError,
             AttributeError,
             NotImplementedError,
             TypeError,
-            anyio.BusyResourceError,
-            anyio.ClosedResourceError,
+            BusyResourceError,
+            ClosedResourceError,
         ):
             # They're already gone, nothing to do
             # Or it is a SSL stream
@@ -127,9 +138,9 @@ class TCPServer:
             await self.stream.aclose()
         except (
             SSLError,
-            anyio.ClosedResourceError,
-            anyio.BrokenResourceError,
-            anyio.BusyResourceError,
+            ClosedResourceError,
+            BrokenResourceError,
+            BusyResourceError,
         ):
             pass
 
@@ -144,7 +155,7 @@ class TCPServer:
         await self.protocol.handle(Closed())
         try:
             await self.stream.aclose()
-        except (SSLError, anyio.BrokenResourceError, anyio.BusyResourceError):
+        except (SSLError, BrokenResourceError, BusyResourceError):
             pass
 
 
@@ -154,7 +165,7 @@ def tcp_server_handler(
     context: WorkerContext,
     state: LifespanState,
 ) -> Callable:
-    async def handler(stream: anyio.abc.SocketStream) -> None:
+    async def handler(stream: SocketStream) -> None:
         tcp_server = TCPServer(app, config, context, state, stream)
         await tcp_server.run()
 

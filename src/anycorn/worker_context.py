@@ -4,6 +4,8 @@ from functools import wraps
 from typing import Awaitable, Callable
 
 import anyio
+from anyio import TASK_STATUS_IGNORED, CancelScope, Lock, current_time, sleep
+from anyio.abc import TaskStatus
 
 from .typing import Event, SingleTask, TaskGroup
 
@@ -11,9 +13,9 @@ from .typing import Event, SingleTask, TaskGroup
 def _cancel_wrapper(func: Callable[[], Awaitable[None]]) -> Callable[[], Awaitable[None]]:
     @wraps(func)
     async def wrapper(
-        task_status: anyio.abc.TaskStatus[anyio.CancelScope] = anyio.TASK_STATUS_IGNORED,
+        task_status: TaskStatus[CancelScope] = TASK_STATUS_IGNORED,
     ) -> None:
-        cancel_scope = anyio.CancelScope()
+        cancel_scope = CancelScope()
         task_status.started(cancel_scope)
         with cancel_scope:
             await func()
@@ -23,8 +25,8 @@ def _cancel_wrapper(func: Callable[[], Awaitable[None]]) -> Callable[[], Awaitab
 
 class AnyioSingleTask:
     def __init__(self) -> None:
-        self._handle: anyio.CancelScope | None = None
-        self._lock = anyio.Lock()
+        self._handle: CancelScope | None = None
+        self._lock = Lock(fast_acquire=True)
 
     async def restart(self, task_group: TaskGroup, action: Callable) -> None:
         async with self._lock:
@@ -76,8 +78,8 @@ class WorkerContext:
 
     @staticmethod
     async def sleep(wait: float | int) -> None:
-        return await anyio.sleep(wait)
+        return await sleep(wait)
 
     @staticmethod
     def time() -> float:
-        return anyio.current_time()
+        return current_time()

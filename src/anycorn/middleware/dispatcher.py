@@ -36,6 +36,7 @@ class _DispatcherMiddleware:
 class DispatcherMiddleware(_DispatcherMiddleware):
     async def _handle_lifespan(self, scope: Scope, receive: Callable, send: Callable) -> None:
         import anyio
+        from anyio import create_memory_object_stream, create_task_group
 
         self.app_queues: dict[
             str,
@@ -44,13 +45,13 @@ class DispatcherMiddleware(_DispatcherMiddleware):
                 anyio.streams.memory.MemoryObjectReceiveStream,
             ],
         ] = {
-            path: anyio.create_memory_object_stream[ASGIReceiveEvent](MAX_QUEUE_SIZE)
+            path: create_memory_object_stream[ASGIReceiveEvent](MAX_QUEUE_SIZE)
             for path in self.mounts
         }
         self.startup_complete = {path: False for path in self.mounts}
         self.shutdown_complete = {path: False for path in self.mounts}
 
-        async with anyio.create_task_group() as tg:
+        async with create_task_group() as tg:
             for path, app in self.mounts.items():
                 tg.start_soon(
                     app,

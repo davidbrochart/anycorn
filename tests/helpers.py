@@ -6,6 +6,7 @@ from socket import AF_INET
 from typing import Callable, cast
 
 from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWScope
+from anyio import connect_tcp
 
 SANITY_BODY = b"Hello Anycorn"
 
@@ -107,3 +108,14 @@ async def sanity_framework(
         elif event["type"] == "websocket.receive":
             assert event["bytes"] == SANITY_BODY
             await send({"type": "websocket.send", "text": "Hello & Goodbye"})  # type: ignore[arg-type]
+
+
+async def ensure_server_running(host: str, port: int) -> None:
+    # Try to connect until we succeed – then we know the server has started
+    while True:
+        try:
+            await connect_tcp(host, port)
+        except OSError:
+            pass
+        else:
+            break

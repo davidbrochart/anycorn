@@ -3,7 +3,8 @@ from __future__ import annotations
 import socket
 from typing import TYPE_CHECKING, Any
 
-import anyio
+from anyio import create_connected_udp_socket
+from anyio.abc import ConnectedUDPSocket
 
 from .logging import Logger
 
@@ -100,7 +101,7 @@ class BaseStatsdLogger(Logger):
 
 
 class StatsdLogger(BaseStatsdLogger):
-    socket: anyio.abc.ConnectedUDPSocket | None
+    socket: ConnectedUDPSocket | None
 
     def __init__(self, config: Config) -> None:
         super().__init__(config)
@@ -109,7 +110,7 @@ class StatsdLogger(BaseStatsdLogger):
 
     async def _socket_send(self, message: bytes) -> None:
         if self.socket is None:
-            self.socket = await anyio.create_connected_udp_socket(
+            self.socket = await create_connected_udp_socket(
                 self.address[0], int(self.address[1]), family=socket.AddressFamily.AF_INET
             )
         await self.socket.send(message)
