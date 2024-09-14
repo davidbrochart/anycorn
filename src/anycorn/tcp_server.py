@@ -41,7 +41,7 @@ class TCPServer:
         self.config = config
         self.context = context
         self.protocol: ProtocolWrapper
-        self.send_lock = Lock()
+        self.send_lock = Lock(fast_acquire=True)
         self.idle_task = AnyioSingleTask()
         self.state = state
         self.stream = stream
