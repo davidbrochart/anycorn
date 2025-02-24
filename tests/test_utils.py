@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from typing import Any, Callable
 
 import pytest
+
 from anycorn.typing import Scope
 from anycorn.utils import build_and_validate_headers, filter_pseudo_headers, is_asgi, suppress_body
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable, cast
 
 import pytest
+
 from anycorn.middleware.dispatcher import DispatcherMiddleware
 from anycorn.typing import HTTPScope, Scope
 

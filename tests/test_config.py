@@ -6,9 +6,10 @@ import ssl
 import sys
 from unittest.mock import Mock, NonCallableMock
 
-import anycorn.config
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
+
+import anycorn.config
 from anycorn.config import Config
 
 access_log_format = "bob"

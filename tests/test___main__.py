@@ -4,11 +4,12 @@ import inspect
 import os
 from unittest.mock import Mock
 
-import anycorn.__main__
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
-from anycorn.config import Config
 from click.testing import CliRunner
+
+import anycorn.__main__
+from anycorn.config import Config
 
 
 def test_load_config_none() -> None:

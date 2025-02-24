@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import Mock, call
 
-import anycorn.protocol.h11
 import h11
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
+
+import anycorn.protocol.h11
 from anycorn.config import Config
 from anycorn.events import Closed, RawData, Updated
 from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
