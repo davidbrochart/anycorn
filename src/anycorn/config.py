@@ -9,6 +9,7 @@ import stat
 import sys
 import types
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from ssl import (
     OP_NO_COMPRESSION,
@@ -20,7 +21,7 @@ from ssl import (
     create_default_context,
 )
 from time import time
-from typing import Any, AnyStr, Mapping, Union
+from typing import Any, AnyStr, Union
 from wsgiref.handlers import format_date_time
 
 if sys.version_info >= (3, 11):

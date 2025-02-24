@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable
+from typing import Callable
 
 from aioquic.h3.connection import H3Connection
 from aioquic.h3.events import DataReceived, HeadersReceived

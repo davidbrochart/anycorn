@@ -5,9 +5,10 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Mapping
 from http import HTTPStatus
 from logging.config import dictConfig, fileConfig
-from typing import IO, TYPE_CHECKING, Any, Mapping
+from typing import IO, TYPE_CHECKING, Any
 
 if sys.version_info >= (3, 11):
     import tomllib

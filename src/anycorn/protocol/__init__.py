@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable
+from typing import Callable
 
 from ..config import Config
 from ..events import Event, RawData

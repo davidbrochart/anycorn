@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Iterable
 from multiprocessing.synchronize import Event as EventType
 from types import TracebackType
 from typing import (
     Any,
-    Awaitable,
     Callable,
     Dict,
-    Iterable,
     Literal,
     NewType,
     Optional,

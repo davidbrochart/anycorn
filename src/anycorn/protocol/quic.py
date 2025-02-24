@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from functools import partial
-from typing import Awaitable, Callable
+from typing import Callable
 
 from aioquic.buffer import Buffer
 from aioquic.h3.connection import H3_ALPN

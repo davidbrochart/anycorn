@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import warnings
-from typing import Awaitable, Callable, Literal
+from collections.abc import Awaitable
+from typing import Callable, Literal
 
 import anyio
 

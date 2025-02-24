@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from copy import deepcopy
-from typing import Callable, Iterable, Literal
+from typing import Callable, Literal
 
 from ..typing import ASGIFramework, Scope
 

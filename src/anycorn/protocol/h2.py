@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Awaitable, Callable
+from collections.abc import Awaitable
+from typing import Callable
 
 import h2
 import h2.connection
