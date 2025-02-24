@@ -4,6 +4,7 @@ from typing import Any, cast
 from unittest.mock import call
 
 import pytest
+
 from anycorn.config import Config
 from anycorn.logging import Logger
 from anycorn.protocol.events import (

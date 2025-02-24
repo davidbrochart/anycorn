@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Callable, Iterable
+from collections.abc import Iterable
+from typing import Callable
 
 from ..app_wrappers import WSGIWrapper
 from ..typing import ASGIReceiveCallable, ASGISendCallable, Scope, WSGIFramework

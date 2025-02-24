@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import anycorn.config
 import pytest
 from _pytest.monkeypatch import MonkeyPatch
+
+import anycorn.config
 from anycorn.typing import ConnectionState, HTTPScope
 
 

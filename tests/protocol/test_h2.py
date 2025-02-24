@@ -3,6 +3,9 @@ from __future__ import annotations
 from unittest.mock import Mock, call
 
 import pytest
+from h2.connection import H2Connection
+from h2.events import ConnectionTerminated
+
 from anycorn.config import Config
 from anycorn.events import Closed, RawData
 
@@ -10,8 +13,6 @@ from anycorn.events import Closed, RawData
 from anycorn.protocol.h2 import BufferCompleteError, H2Protocol, StreamBuffer
 from anycorn.typing import ConnectionState
 from anycorn.worker_context import EventWrapper, WorkerContext
-from h2.connection import H2Connection
-from h2.events import ConnectionTerminated
 
 try:
     from unittest.mock import AsyncMock

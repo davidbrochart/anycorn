@@ -5,6 +5,8 @@ from unittest.mock import Mock, call
 
 import anyio
 import pytest
+from wsproto.events import BytesMessage, TextMessage
+
 from anycorn.config import Config
 from anycorn.logging import Logger
 from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
@@ -26,7 +28,6 @@ from anycorn.typing import (
 )
 from anycorn.utils import UnexpectedMessageError
 from anycorn.worker_context import WorkerContext
-from wsproto.events import BytesMessage, TextMessage
 
 try:
     from unittest.mock import AsyncMock

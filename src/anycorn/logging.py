@@ -5,9 +5,10 @@ import logging
 import os
 import sys
 import time
+from collections.abc import Mapping
 from http import HTTPStatus
 from logging.config import dictConfig, fileConfig
-from typing import IO, TYPE_CHECKING, Any, Mapping
+from typing import IO, TYPE_CHECKING, Any
 
 if sys.version_info >= (3, 11):
     import tomllib
@@ -34,7 +35,7 @@ def _create_logger(
     if target:
         logger = logging.getLogger(name)
         logger.handlers = [
-            logging.StreamHandler(sys_default) if target == "-" else logging.FileHandler(target)  # type: ignore[list-item]
+            logging.StreamHandler(sys_default) if target == "-" else logging.FileHandler(target)
         ]
         logger.propagate = propagate
         formatter = logging.Formatter(

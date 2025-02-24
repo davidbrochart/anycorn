@@ -1,13 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Iterable
 from multiprocessing.synchronize import Event as EventType
 from types import TracebackType
 from typing import (
     Any,
-    Awaitable,
     Callable,
-    Dict,
-    Iterable,
     Literal,
     NewType,
     Optional,
@@ -30,9 +28,9 @@ H11SendableEvent = Union[h11.Data, h11.EndOfMessage, h11.InformationalResponse, 
 
 WorkerFunc = Callable[[Config, Optional[Sockets], Optional[EventType]], None]
 
-LifespanState = Dict[str, Any]
+LifespanState = dict[str, Any]
 
-ConnectionState = NewType("ConnectionState", Dict[str, Any])
+ConnectionState = NewType("ConnectionState", dict[str, Any])
 
 
 class ASGIVersions(TypedDict, total=False):
@@ -243,17 +241,13 @@ Framework = Union[ASGIFramework, WSGIFramework]
 class H2SyncStream(Protocol):
     scope: dict
 
-    def data_received(self, data: bytes) -> None:
-        ...
+    def data_received(self, data: bytes) -> None: ...
 
-    def ended(self) -> None:
-        ...
+    def ended(self) -> None: ...
 
-    def reset(self) -> None:
-        ...
+    def reset(self) -> None: ...
 
-    def close(self) -> None:
-        ...
+    def close(self) -> None: ...
 
     async def handle_request(
         self,
@@ -261,24 +255,19 @@ class H2SyncStream(Protocol):
         scheme: str,
         client: tuple[str, int],
         server: tuple[str, int],
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class H2AsyncStream(Protocol):
     scope: dict
 
-    async def data_received(self, data: bytes) -> None:
-        ...
+    async def data_received(self, data: bytes) -> None: ...
 
-    async def ended(self) -> None:
-        ...
+    async def ended(self) -> None: ...
 
-    async def reset(self) -> None:
-        ...
+    async def reset(self) -> None: ...
 
-    async def close(self) -> None:
-        ...
+    async def close(self) -> None: ...
 
     async def handle_request(
         self,
@@ -286,25 +275,19 @@ class H2AsyncStream(Protocol):
         scheme: str,
         client: tuple[str, int],
         server: tuple[str, int],
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class Event(Protocol):
-    def __init__(self) -> None:
-        ...
+    def __init__(self) -> None: ...
 
-    async def clear(self) -> None:
-        ...
+    async def clear(self) -> None: ...
 
-    async def set(self) -> None:
-        ...
+    async def set(self) -> None: ...
 
-    async def wait(self) -> None:
-        ...
+    async def wait(self) -> None: ...
 
-    def is_set(self) -> bool:
-        ...
+    def is_set(self) -> bool: ...
 
 
 class WorkerContext(Protocol):
@@ -313,16 +296,13 @@ class WorkerContext(Protocol):
     terminate: Event
     terminated: Event
 
-    async def mark_request(self) -> None:
-        ...
+    async def mark_request(self) -> None: ...
 
     @staticmethod
-    async def sleep(wait: float | int) -> None:
-        ...
+    async def sleep(wait: float | int) -> None: ...
 
     @staticmethod
-    def time() -> float:
-        ...
+    def time() -> float: ...
 
 
 class TaskGroup(Protocol):
@@ -332,17 +312,15 @@ class TaskGroup(Protocol):
         config: Config,
         scope: Scope,
         send: Callable[[ASGISendEvent | None], Awaitable[None]],
-    ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]:
-        ...
+    ) -> Callable[[ASGIReceiveEvent], Awaitable[None]]: ...
 
-    def spawn(self, func: Callable, *args: Any) -> None:
-        ...
+    def spawn(self, func: Callable, *args: Any) -> None: ...
 
-    async def __aenter__(self) -> TaskGroup:
-        ...
+    async def __aenter__(self) -> TaskGroup: ...
 
-    async def __aexit__(self, exc_type: type, exc_value: BaseException, tb: TracebackType) -> None:
-        ...
+    async def __aexit__(
+        self, exc_type: type, exc_value: BaseException, tb: TracebackType
+    ) -> None: ...
 
 
 class ResponseSummary(TypedDict):
@@ -358,16 +336,12 @@ class AppWrapper(Protocol):
         send: ASGISendCallable,
         sync_spawn: Callable,
         call_soon: Callable,
-    ) -> None:
-        ...
+    ) -> None: ...
 
 
 class SingleTask(Protocol):
-    def __init__(self) -> None:
-        ...
+    def __init__(self) -> None: ...
 
-    async def restart(self, task_group: TaskGroup, action: Callable) -> None:
-        ...
+    async def restart(self, task_group: TaskGroup, action: Callable) -> None: ...
 
-    async def stop(self) -> None:
-        ...
+    async def stop(self) -> None: ...

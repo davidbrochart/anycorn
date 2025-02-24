@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from itertools import chain
-from typing import Awaitable, Callable, cast
+from typing import Callable, cast
 
 import h11
 

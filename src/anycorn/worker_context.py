@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable
 from functools import wraps
-from typing import Awaitable, Callable
+from typing import Callable
 
 import anyio
 

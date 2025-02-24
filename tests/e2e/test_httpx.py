@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import anycorn
 import anyio
 import httpx
 import pytest
+
+import anycorn
 from anycorn.config import Config
 
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Iterable
 from enum import Enum, auto
 from io import BytesIO, StringIO
 from time import time
-from typing import Awaitable, Callable, Iterable
+from typing import Callable
 from urllib.parse import unquote
 
 from wsproto.connection import Connection, ConnectionState, ConnectionType
