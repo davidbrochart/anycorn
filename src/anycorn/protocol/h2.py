@@ -7,8 +7,8 @@ import h2
 import h2.connection
 import h2.events
 import h2.exceptions
-from hpack import HeaderTuple
 import priority
+from hpack import HeaderTuple
 
 from ..config import Config
 from ..events import Closed, Event, RawData, Updated

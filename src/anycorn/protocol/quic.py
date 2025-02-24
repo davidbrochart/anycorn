@@ -57,7 +57,9 @@ class QuicProtocol:
         self.state = state
 
         self.quic_config = QuicConfiguration(alpn_protocols=H3_ALPN, is_client=False)
-        self.quic_config.load_cert_chain(certfile=Path(config.certfile), keyfile=Path(config.keyfile))
+        self.quic_config.load_cert_chain(
+            certfile=Path(config.certfile), keyfile=Path(config.keyfile)
+        )
 
     @property
     def idle(self) -> bool:
