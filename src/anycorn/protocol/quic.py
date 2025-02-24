@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
 from typing import Callable
 
 from aioquic.buffer import Buffer
@@ -56,7 +57,7 @@ class QuicProtocol:
         self.state = state
 
         self.quic_config = QuicConfiguration(alpn_protocols=H3_ALPN, is_client=False)
-        self.quic_config.load_cert_chain(certfile=config.certfile, keyfile=config.keyfile)
+        self.quic_config.load_cert_chain(certfile=Path(config.certfile), keyfile=Path(config.keyfile))
 
     @property
     def idle(self) -> bool:
@@ -105,8 +106,8 @@ class QuicProtocol:
         elif isinstance(event, Closed):
             pass
 
-    async def send_all(self, connection: QuicConnection) -> None:
-        for data, address in connection.datagrams_to_send(now=self.context.time()):
+    async def send_all(self, connection: _Connection) -> None:
+        for data, address in connection.quic.datagrams_to_send(now=self.context.time()):
             await self.send(RawData(data=data, address=address))
 
         timer = connection.quic.get_timer()
