@@ -113,6 +113,7 @@ class TCPServer:
         try:
             await self.stream.send_eof()
         except (
+            OSError,
             anyio.BrokenResourceError,
             AttributeError,
             NotImplementedError,
