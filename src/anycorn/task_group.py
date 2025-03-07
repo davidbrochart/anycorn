@@ -40,6 +40,24 @@ async def _handle(
         await send(None)
 
 
+class ReceiveWrapper:
+    def __init__(
+        self, receive_channel: anyio.streams.memory.MemoryObjectReceiveStream[ASGIReceiveEvent]
+    ) -> None:
+        self._receive_channel = receive_channel
+
+    # starlette requires that a receiver does not checkpoint before attempting
+    # to return the first event, which `anyio.streams.memory.MemoryObjectReceiveStream.receive`
+    # does.
+    async def receive(self) -> ASGIReceiveEvent:
+        try:
+            return self._receive_channel.receive_nowait()
+        except anyio.WouldBlock:
+            pass
+        await anyio.lowlevel.checkpoint()
+        return await self._receive_channel.receive()
+
+
 class TaskGroup:
     def __init__(self) -> None:
         self._task_group: anyio.abc.TaskGroup | None = None
@@ -59,7 +77,7 @@ class TaskGroup:
             app,
             config,
             scope,
-            app_receive_channel.receive,
+            ReceiveWrapper(app_receive_channel).receive,
             send,
             anyio.to_thread.run_sync,
             anyio.from_thread.run,
