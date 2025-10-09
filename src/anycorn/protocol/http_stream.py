@@ -12,6 +12,7 @@ from ..typing import (
     ASGISendEvent,
     HTTPResponseStartEvent,
     HTTPScope,
+    TLSExtension,
     TaskGroup,
     WorkerContext,
 )
@@ -59,6 +60,7 @@ class HTTPStream:
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
         stream_id: int,
+        tls: TLSExtension | None,
     ) -> None:
         self.app = app
         self.client = client
@@ -74,10 +76,23 @@ class HTTPStream:
         self.state = ASGIHTTPState.REQUEST
         self.stream_id = stream_id
         self.task_group = task_group
+        self.tls = tls
 
     @property
     def idle(self) -> bool:
         return False
+
+    def _build_tls_extension(self) -> dict[str, object] | None:
+        if self.tls is None:
+            return None
+        extension = dict(self.tls)
+        chain = extension.get("client_cert_chain", ())
+        if chain is None or isinstance(chain, (bytes, str)):
+            chain_list: list[str] = []
+        else:
+            chain_list = [str(item) for item in chain]
+        extension["client_cert_chain"] = chain_list
+        return extension
 
     async def handle(self, event: Event) -> None:
         if self.closed:
@@ -85,6 +100,10 @@ class HTTPStream:
         elif isinstance(event, Request):
             self.start_time = time()
             path, _, query_string = event.raw_path.partition(b"?")
+            extensions: dict[str, dict] = {}
+            tls_extension = self._build_tls_extension()
+            if tls_extension is not None:
+                extensions["tls"] = tls_extension
             self.scope = {
                 "type": "http",
                 "http_version": event.http_version,
@@ -99,17 +118,17 @@ class HTTPStream:
                 "client": self.client,
                 "server": self.server,
                 "state": event.state,
-                "extensions": {},
+                "extensions": extensions,
             }
 
             if event.http_version in TRAILERS_VERSIONS:
-                self.scope["extensions"]["http.response.trailers"] = {}
+                extensions["http.response.trailers"] = {}
 
             if event.http_version in PUSH_VERSIONS:
-                self.scope["extensions"]["http.response.push"] = {}
+                extensions["http.response.push"] = {}
 
             if event.http_version in EARLY_HINTS_VERSIONS:
-                self.scope["extensions"]["http.response.early_hint"] = {}
+                extensions["http.response.early_hint"] = {}
 
             if valid_server_name(self.config, event):
                 self.app_put = await self.task_group.spawn_app(

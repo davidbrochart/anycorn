@@ -11,7 +11,7 @@ from .events import Closed, Event, RawData, Updated
 from .protocol import ProtocolWrapper
 from .task_group import TaskGroup
 from .typing import AppWrapper, ConnectionState, LifespanState
-from .utils import parse_socket_addr
+from .utils import build_tls_extension, parse_socket_addr
 from .worker_context import AnyioSingleTask, WorkerContext
 
 MAX_RECV = 2**16
@@ -44,6 +44,7 @@ class TCPServer:
         except anyio.TypedAttributeLookupError:  # Not SSL
             alpn_protocol = "http/1.1"
             ssl = False
+        tls_extension = build_tls_extension(self.config, self.stream, ssl)
 
         try:
             socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
@@ -62,6 +63,7 @@ class TCPServer:
                     client,
                     server,
                     self.protocol_send,
+                    tls_extension,
                     alpn_protocol,
                 )
                 await self.protocol.initiate()

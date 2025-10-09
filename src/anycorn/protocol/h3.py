@@ -10,7 +10,7 @@ from aioquic.quic.connection import QuicConnection
 from aioquic.quic.events import QuicEvent
 
 from ..config import Config
-from ..typing import AppWrapper, ConnectionState, TaskGroup, WorkerContext
+from ..typing import AppWrapper, ConnectionState, TaskGroup, TLSExtension, WorkerContext
 from ..utils import filter_pseudo_headers
 from .events import (
     Body,
@@ -38,6 +38,7 @@ class H3Protocol:
         context: WorkerContext,
         task_group: TaskGroup,
         state: ConnectionState,
+        tls: TLSExtension,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         quic: QuicConnection,
@@ -53,6 +54,7 @@ class H3Protocol:
         self.streams: dict[int, HTTPStream | WSStream] = {}
         self.task_group = task_group
         self.state = state
+        self.tls = tls
 
     async def handle(self, quic_event: QuicEvent) -> None:
         for event in self.connection.handle_event(quic_event):
@@ -111,6 +113,7 @@ class H3Protocol:
                 self.server,
                 self.stream_send,
                 request.stream_id,
+                self.tls,
             )
         else:
             self.streams[request.stream_id] = HTTPStream(
@@ -123,6 +126,7 @@ class H3Protocol:
                 self.server,
                 self.stream_send,
                 request.stream_id,
+                self.tls,
             )
 
         await self.streams[request.stream_id].handle(

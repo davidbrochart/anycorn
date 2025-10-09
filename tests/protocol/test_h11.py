@@ -49,6 +49,7 @@ async def _protocol(monkeypatch: MonkeyPatch) -> H11Protocol:
         None,
         None,
         AsyncMock(),
+        None,
     )
 
 
@@ -341,6 +342,7 @@ async def test_protocol_handle_max_incomplete(monkeypatch: MonkeyPatch) -> None:
         None,
         None,
         AsyncMock(),
+        None,
     )
     await protocol.handle(RawData(data=b"GET / HTTP/1.1\r\nHost: anycorn\r\n"))
     protocol.send.assert_called()  # type: ignore[attr-defined]

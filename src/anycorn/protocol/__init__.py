@@ -5,7 +5,7 @@ from typing import Callable
 
 from ..config import Config
 from ..events import Event, RawData
-from ..typing import AppWrapper, ConnectionState, TaskGroup, WorkerContext
+from ..typing import AppWrapper, ConnectionState, TaskGroup, TLSExtension, WorkerContext
 from .h2 import H2Protocol
 from .h11 import H2CProtocolRequiredError, H2ProtocolAssumedError, H11Protocol
 
@@ -22,6 +22,7 @@ class ProtocolWrapper:
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
+        tls: TLSExtension | None,
         alpn_protocol: str | None = None,
     ) -> None:
         self.app = app
@@ -33,6 +34,7 @@ class ProtocolWrapper:
         self.server = server
         self.send = send
         self.state = state
+        self.tls = tls
         self.protocol: H11Protocol | H2Protocol
         if alpn_protocol == "h2":
             self.protocol = H2Protocol(
@@ -44,7 +46,8 @@ class ProtocolWrapper:
                 self.ssl,
                 self.client,
                 self.server,
-                self.send,
+            self.send,
+                self.tls,
             )
         else:
             self.protocol = H11Protocol(
@@ -57,6 +60,7 @@ class ProtocolWrapper:
                 self.client,
                 self.server,
                 self.send,
+                self.tls,
             )
 
     async def initiate(self) -> None:
@@ -76,6 +80,7 @@ class ProtocolWrapper:
                 self.client,
                 self.server,
                 self.send,
+                self.tls,
             )
             await self.protocol.initiate()
             if error.data != b"":
@@ -91,6 +96,7 @@ class ProtocolWrapper:
                 self.client,
                 self.server,
                 self.send,
+                self.tls,
             )
             await self.protocol.initiate(error.headers, error.settings)
             if error.data != b"":

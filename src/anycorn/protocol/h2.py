@@ -12,7 +12,7 @@ from hpack import HeaderTuple
 
 from ..config import Config
 from ..events import Closed, Event, RawData, Updated
-from ..typing import AppWrapper, ConnectionState, TaskGroup, WorkerContext
+from ..typing import AppWrapper, ConnectionState, TaskGroup, TLSExtension, WorkerContext
 from ..typing import Event as IOEvent
 from ..utils import filter_pseudo_headers
 from .events import (
@@ -95,6 +95,7 @@ class H2Protocol:
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
+        tls: TLSExtension | None,
     ) -> None:
         self.app = app
         self.client = client
@@ -103,6 +104,7 @@ class H2Protocol:
         self.context = context
         self.task_group = task_group
         self.connection_state = connection_state
+        self.tls = tls
 
         self.connection = h2.connection.H2Connection(
             config=h2.config.H2Configuration(client_side=False, header_encoding=None)
@@ -338,6 +340,7 @@ class H2Protocol:
                 self.server,
                 self.stream_send,
                 request.stream_id,
+                self.tls,
             )
         else:
             self.streams[request.stream_id] = HTTPStream(
@@ -350,6 +353,7 @@ class H2Protocol:
                 self.server,
                 self.stream_send,
                 request.stream_id,
+                self.tls,
             )
         self.stream_buffers[request.stream_id] = StreamBuffer(self.context.event_class)
         try:

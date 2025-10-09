@@ -26,7 +26,7 @@ from anycorn.typing import (
     WebsocketResponseStartEvent,
     WebsocketSendEvent,
 )
-from anycorn.utils import UnexpectedMessageError
+from anycorn.utils import UnexpectedMessageError, default_tls_extension
 from anycorn.worker_context import WorkerContext
 
 try:
@@ -165,7 +165,16 @@ def test_handshake_accept_additional_headers() -> None:
 @pytest.fixture(name="stream")
 async def _stream() -> WSStream:
     stream = WSStream(
-        AsyncMock(), Config(), WorkerContext(None), AsyncMock(), False, None, None, AsyncMock(), 1
+        AsyncMock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        False,
+        None,
+        None,
+        AsyncMock(),
+        1,
+        None,
     )
     stream.task_group.spawn_app.return_value = AsyncMock()  # type: ignore[attr-defined]
     stream.app_put = AsyncMock()
@@ -203,6 +212,38 @@ async def test_handle_request(stream: WSStream) -> None:
         "extensions": {"websocket.http.response": {}},
         "state": ConnectionState({}),
     }
+
+
+@pytest.mark.anyio
+async def test_handle_request_tls() -> None:
+    stream = WSStream(
+        AsyncMock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        True,
+        None,
+        None,
+        AsyncMock(),
+        1,
+        default_tls_extension(),
+    )
+    stream.task_group.spawn_app.return_value = AsyncMock()  # type: ignore[attr-defined]
+    stream.app_put = AsyncMock()
+    stream.config._log = AsyncMock(spec=Logger)
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[(b"sec-websocket-version", b"13")],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
+    assert "tls" in scope["extensions"]
+    assert scope["extensions"]["tls"]["client_cert_chain"] == []
 
 
 @pytest.mark.anyio

@@ -25,6 +25,7 @@ from aioquic.quic.packet import (
 from ..config import Config
 from ..events import Closed, Event, RawData
 from ..typing import AppWrapper, ConnectionState, SingleTask, TaskGroup, WorkerContext
+from ..utils import default_tls_extension, get_server_certificate_pem, tls_version_to_int
 from .h3 import H3Protocol
 
 
@@ -55,6 +56,7 @@ class QuicProtocol:
         self.server = server
         self.task_group = task_group
         self.state = state
+        self._server_cert_pem = get_server_certificate_pem(config)
 
         self.quic_config = QuicConfiguration(alpn_protocols=H3_ALPN, is_client=False)
         self.quic_config.load_cert_chain(
@@ -129,12 +131,24 @@ class QuicProtocol:
                     del self.connections[cid]
                 connection.cids = set()
             elif isinstance(event, ProtocolNegotiated):
+                tls_extension = default_tls_extension()
+                if self._server_cert_pem is not None:
+                    tls_extension["server_cert"] = self._server_cert_pem
+                tls_context = getattr(connection.quic, "tls", None)
+                if tls_context is not None:
+                    tls_version = tls_version_to_int(getattr(tls_context, "version", None))
+                    if tls_version is not None:
+                        tls_extension["tls_version"] = tls_version
+                    cipher_suite = getattr(tls_context, "cipher_suite", None)
+                    if isinstance(cipher_suite, int):
+                        tls_extension["cipher_suite"] = cipher_suite
                 connection.h3 = H3Protocol(
                     self.app,
                     self.config,
                     self.context,
                     self.task_group,
                     self.state,
+                    tls_extension,
                     client,
                     self.server,
                     connection.quic,

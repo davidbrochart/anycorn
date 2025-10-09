@@ -88,6 +88,7 @@ async def test_protocol_handle_protocol_error() -> None:
         None,
         None,
         AsyncMock(),
+        None,
     )
     await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
     protocol.send.assert_awaited()  # type: ignore[attr-defined]
@@ -106,6 +107,7 @@ async def test_protocol_keep_alive_max_requests() -> None:
         None,
         None,
         AsyncMock(),
+        None,
     )
     protocol.config.keep_alive_max_requests = 0
     client = H2Connection()

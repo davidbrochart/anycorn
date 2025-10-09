@@ -8,7 +8,14 @@ import h11
 
 from ..config import Config
 from ..events import Closed, Event, RawData, Updated
-from ..typing import AppWrapper, ConnectionState, H11SendableEvent, TaskGroup, WorkerContext
+from ..typing import (
+    AppWrapper,
+    ConnectionState,
+    H11SendableEvent,
+    TaskGroup,
+    TLSExtension,
+    WorkerContext,
+)
 from .events import (
     Body,
     Data,
@@ -92,6 +99,7 @@ class H11Protocol:
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
+        tls: TLSExtension | None,
     ) -> None:
         self.app = app
         self.can_read = context.event_class()
@@ -105,6 +113,7 @@ class H11Protocol:
         self.send = send
         self.server = server
         self.ssl = ssl
+        self.tls = tls
         self.stream: HTTPStream | WSStream | None = None
         self.task_group = task_group
         self.connection_state = connection_state
@@ -214,6 +223,7 @@ class H11Protocol:
                 self.server,
                 self.stream_send,
                 STREAM_ID,
+                self.tls,
             )
             self.connection = H11WSConnection(cast(h11.Connection, self.connection))
         else:
@@ -227,6 +237,7 @@ class H11Protocol:
                 self.server,
                 self.stream_send,
                 STREAM_ID,
+                self.tls,
             )
 
         if self.config.h11_pass_raw_headers:

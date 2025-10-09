@@ -28,6 +28,7 @@ from ..typing import (
     AppWrapper,
     ASGISendEvent,
     TaskGroup,
+    TLSExtension,
     WebsocketAcceptEvent,
     WebsocketResponseBodyEvent,
     WebsocketResponseStartEvent,
@@ -177,6 +178,7 @@ class WSStream:
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
         stream_id: int,
+        tls: TLSExtension | None,
     ) -> None:
         self.app = app
         self.app_put: Callable | None = None
@@ -195,6 +197,7 @@ class WSStream:
         self.start_time: float
         self.state = ASGIWebsocketState.HANDSHAKE
         self.stream_id = stream_id
+        self.tls = tls
 
         self.connection: Connection
         self.handshake: Handshake
@@ -203,6 +206,18 @@ class WSStream:
     def idle(self) -> bool:
         return self.state in {ASGIWebsocketState.CLOSED, ASGIWebsocketState.HTTPCLOSED}
 
+    def _build_tls_extension(self) -> dict[str, object] | None:
+        if self.tls is None:
+            return None
+        extension = dict(self.tls)
+        chain = extension.get("client_cert_chain", ())
+        if chain is None or isinstance(chain, (bytes, str)):
+            chain_list: list[str] = []
+        else:
+            chain_list = [str(item) for item in chain]
+        extension["client_cert_chain"] = chain_list
+        return extension
+
     async def handle(self, event: Event) -> None:
         if self.closed:
             return
@@ -210,6 +225,11 @@ class WSStream:
             self.start_time = time()
             self.handshake = Handshake(event.headers, event.http_version)
             path, _, query_string = event.raw_path.partition(b"?")
+            extensions: dict[str, dict] = {}
+            tls_extension = self._build_tls_extension()
+            if tls_extension is not None:
+                extensions["tls"] = tls_extension
+            extensions["websocket.http.response"] = {}
             self.scope = {
                 "type": "websocket",
                 "asgi": {"spec_version": "2.3", "version": "3.0"},
@@ -224,7 +244,7 @@ class WSStream:
                 "server": self.server,
                 "state": event.state,
                 "subprotocols": self.handshake.subprotocols or [],
-                "extensions": {"websocket.http.response": {}},
+                "extensions": extensions,
             }
 
             if not valid_server_name(self.config, event):

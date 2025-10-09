@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import inspect
 import os
+import re
 import socket
+import ssl
 import sys
 from collections.abc import Awaitable, Iterable
 from enum import Enum
+import functools
 from importlib import import_module
 from multiprocessing.synchronize import Event as EventType
 from pathlib import Path
@@ -17,9 +20,13 @@ from typing import (
     cast,
 )
 
+from anyio import TypedAttributeLookupError
+from anyio.abc import SocketStream
+from anyio.streams.tls import TLSAttribute
+
 from .app_wrappers import ASGIWrapper, WSGIWrapper
 from .config import Config
-from .typing import AppWrapper, ASGIFramework, Framework, WSGIFramework
+from .typing import AppWrapper, ASGIFramework, Framework, TLSExtension, WSGIFramework
 
 if TYPE_CHECKING:
     from .protocol.events import Request
@@ -53,6 +60,238 @@ class UnexpectedMessageError(Exception):
 
 class FrameTooLargeError(Exception):
     pass
+
+
+_CERT_PATTERN = re.compile(
+    r"-----BEGIN CERTIFICATE-----\s.*?-----END CERTIFICATE-----", re.DOTALL
+)
+
+_TLS_VERSION_PREFIX = "TLSv"
+
+_TLS_VERSION_MAP = {
+    "SSLv3": 0x0300,
+    "TLSv1": 0x0301,
+    "TLSv1.1": 0x0302,
+    "TLSv1.2": 0x0303,
+    "TLSv1.3": 0x0304,
+}
+
+_SERVER_CERT_CACHE: dict[str, str | None] = {}
+
+RFC4514_ATTRIBUTE_NAMES = {
+    "commonName": "CN",
+    "countryName": "C",
+    "localityName": "L",
+    "stateOrProvinceName": "ST",
+    "organizationName": "O",
+    "organizationalUnitName": "OU",
+    "emailAddress": "emailAddress",
+    "serialNumber": "serialNumber",
+    "streetAddress": "street",
+    "postalCode": "postalCode",
+    "domainComponent": "DC",
+}
+
+TLS_CIPHER_NAME_TO_CODE: dict[str, int] = {
+    # TLS 1.3
+    "TLS_AES_128_GCM_SHA256": 0x1301,
+    "TLS_AES_256_GCM_SHA384": 0x1302,
+    "TLS_CHACHA20_POLY1305_SHA256": 0x1303,
+    "TLS_AES_128_CCM_SHA256": 0x1304,
+    "TLS_AES_128_CCM_8_SHA256": 0x1305,
+    # Common TLS 1.2 suites
+    "ECDHE-RSA-AES128-GCM-SHA256": 0xC02F,
+    "ECDHE-RSA-AES256-GCM-SHA384": 0xC030,
+    "ECDHE-ECDSA-AES128-GCM-SHA256": 0xC02B,
+    "ECDHE-ECDSA-AES256-GCM-SHA384": 0xC02C,
+    "ECDHE-RSA-CHACHA20-POLY1305": 0xCCA8,
+    "ECDHE-ECDSA-CHACHA20-POLY1305": 0xCCA9,
+    "DHE-RSA-AES128-GCM-SHA256": 0x009E,
+    "DHE-RSA-AES256-GCM-SHA384": 0x009F,
+    "AES128-GCM-SHA256": 0x009C,
+    "AES256-GCM-SHA384": 0x009D,
+    "ECDHE-RSA-AES128-SHA256": 0xC027,
+    "ECDHE-RSA-AES256-SHA384": 0xC028,
+    "ECDHE-ECDSA-AES128-SHA256": 0xC023,
+    "ECDHE-ECDSA-AES256-SHA384": 0xC024,
+}
+
+
+def default_tls_extension() -> TLSExtension:
+    return {
+        "server_cert": None,
+        "client_cert_chain": (),
+        "client_cert_name": None,
+        "client_cert_error": None,
+        "tls_version": None,
+        "cipher_suite": None,
+    }
+
+
+def tls_version_to_int(value: str | int | None) -> int | None:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        mapping = _TLS_VERSION_MAP.get(value)
+        if mapping is not None:
+            return mapping
+        if value.startswith(_TLS_VERSION_PREFIX):
+            version = value[len(_TLS_VERSION_PREFIX) :]
+            if version == "1":
+                return _TLS_VERSION_MAP["TLSv1"]
+            try:
+                major, _, minor = version.partition(".")
+                if major == "1" and minor.isdigit():
+                    return 0x0300 + int(minor) + 1
+            except ValueError:
+                return None
+    return None
+
+
+@functools.lru_cache(maxsize=16)
+def _cached_server_cert(path: str) -> str | None:
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+    match = _CERT_PATTERN.search(text)
+    if match is None:
+        return None
+    return match.group(0)
+
+
+def get_server_certificate_pem(config: Config) -> str | None:
+    if config.certfile is None:
+        return None
+    path = str(Path(config.certfile).resolve())
+    cached = _SERVER_CERT_CACHE.get(path)
+    if cached is not None:
+        return cached
+    cert = _cached_server_cert(path)
+    _SERVER_CERT_CACHE[path] = cert
+    return cert
+
+
+def _extract_client_chain(ssl_object: ssl.SSLObject) -> tuple[str, ...]:
+    chain_der: tuple[bytes, ...] | tuple[()] = ()
+    for method_name in ("get_verified_chain", "get_unverified_chain"):
+        method = getattr(ssl_object, method_name, None)
+        if callable(method):
+            try:
+                data = method()
+            except ssl.SSLError:
+                continue
+            else:
+                if data:
+                    chain_der = tuple(data)
+                    break
+    if not chain_der:
+        try:
+            peer_cert = ssl_object.getpeercert(binary_form=True)
+        except ssl.SSLError:
+            peer_cert = None
+        if peer_cert:
+            chain_der = (peer_cert,)
+
+    return tuple(ssl.DER_cert_to_PEM_cert(cert) for cert in chain_der if cert)
+
+
+def _escape_rfc4514_value(value: str) -> str:
+    escaped = []
+    for index, char in enumerate(value):
+        if char in {",", "+", "\"", "\\", "<", ">", ";"} or (
+            index == 0 and char in {"#", " "}
+        ) or (index == len(value) - 1 and char == " "):
+            escaped.append("\\" + char)
+        else:
+            escaped.append(char)
+    return "".join(escaped)
+
+
+def _subject_to_rfc4514(subject: Iterable[Iterable[tuple[str, str]]]) -> str | None:
+    rdns: list[str] = []
+    try:
+        for rdn in reversed(tuple(subject)):
+            attrs = []
+            for key, value in rdn:
+                name = RFC4514_ATTRIBUTE_NAMES.get(key, key)
+                attrs.append(f"{name}={_escape_rfc4514_value(str(value))}")
+            rdns.append("+".join(attrs))
+    except Exception:
+        return None
+    return ",".join(rdns) if rdns else None
+
+
+def build_tls_extension(
+    config: Config, stream: SocketStream, ssl_active: bool
+) -> TLSExtension | None:
+    if not ssl_active:
+        return None
+
+    extension = default_tls_extension()
+
+    server_cert = get_server_certificate_pem(config)
+    if server_cert is not None:
+        extension["server_cert"] = server_cert
+
+    try:
+        tls_version_value = stream.extra(TLSAttribute.tls_version)
+    except TypedAttributeLookupError:
+        tls_version_value = None
+    extension["tls_version"] = tls_version_to_int(tls_version_value)
+
+    try:
+        ssl_object = stream.extra(TLSAttribute.ssl_object)
+    except (TypedAttributeLookupError, AttributeError):
+        ssl_object = None
+
+    if ssl_object is not None:
+        client_chain = _extract_client_chain(ssl_object)
+        extension["client_cert_chain"] = client_chain
+        extension["cipher_suite"] = None
+        extension["client_cert_error"] = None
+
+        try:
+            cipher = ssl_object.cipher()
+        except (AttributeError, ssl.SSLError):
+            cipher = None
+        if cipher:
+            extension["cipher_suite"] = TLS_CIPHER_NAME_TO_CODE.get(cipher[0])
+
+        try:
+            context = ssl_object.context
+        except AttributeError:
+            context = None
+        else:
+            if (
+                not client_chain
+                and extension["client_cert_name"] is None
+                and getattr(context, "verify_mode", ssl.CERT_NONE) == ssl.CERT_REQUIRED
+            ):
+                extension["client_cert_error"] = "missing-client-certificate"
+    else:
+        extension["client_cert_chain"] = ()
+
+    if extension["client_cert_name"] is None:
+        try:
+            peer_certificate = stream.extra(TLSAttribute.peer_certificate)
+        except TypedAttributeLookupError:
+            peer_certificate = None
+        if peer_certificate and "subject" in peer_certificate:
+            extension["client_cert_name"] = _subject_to_rfc4514(peer_certificate["subject"])
+
+    if extension["client_cert_name"] is None and isinstance(ssl_object, ssl.SSLObject):
+        try:
+            cert_dict = ssl_object.getpeercert()  # type: ignore[call-arg]
+        except (SSLError, ValueError):
+            cert_dict = None
+        if cert_dict and "subject" in cert_dict:
+            extension["client_cert_name"] = _subject_to_rfc4514(cert_dict["subject"])
+
+    if extension["client_cert_chain"] and not extension["client_cert_name"]:
+        extension["client_cert_name"] = None
+
+    return extension
 
 
 def suppress_body(method: str, status_code: int) -> bool:

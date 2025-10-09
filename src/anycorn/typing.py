@@ -38,6 +38,15 @@ class ASGIVersions(TypedDict, total=False):
     version: Literal["2.0"] | Literal["3.0"]
 
 
+class TLSExtension(TypedDict, total=False):
+    server_cert: str | None
+    client_cert_chain: Iterable[str]
+    client_cert_name: str | None
+    client_cert_error: str | None
+    tls_version: int | None
+    cipher_suite: int | None
+
+
 class HTTPScope(TypedDict):
     type: Literal["http"]
     asgi: ASGIVersions
