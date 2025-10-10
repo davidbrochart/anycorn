@@ -70,7 +70,7 @@ async def test_http_to_https_redirect_middleware_websocket(raw_path: bytes) -> N
         "client": None,
         "server": None,
         "subprotocols": [],
-        "extensions": {"websocket.http.response": {}},  # type: ignore[typeddict-unknown-key]
+        "extensions": {"websocket.http.response": {}},
         "state": ConnectionState({}),
     }
     await app(scope, None, send)
@@ -107,7 +107,7 @@ async def test_http_to_https_redirect_middleware_websocket_http2() -> None:
         "client": None,
         "server": None,
         "subprotocols": [],
-        "extensions": {"websocket.http.response": {}},  # type: ignore[typeddict-unknown-key]
+        "extensions": {"websocket.http.response": {}},
         "state": ConnectionState({}),
     }
     await app(scope, None, send)

@@ -97,7 +97,7 @@ class _DummyStream:
 
 def test_build_tls_extension_missing_tls_attributes() -> None:
     config = Config()
-    extension = build_tls_extension(config, _DummyStream())
+    extension = build_tls_extension(config, _DummyStream())  # type: ignore[arg-type]
     assert dict(extension) == default_tls_extension()
 
 
