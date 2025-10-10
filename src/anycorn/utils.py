@@ -63,9 +63,7 @@ class FrameTooLargeError(Exception):
     pass
 
 
-_CERT_PATTERN = re.compile(
-    r"-----BEGIN CERTIFICATE-----\s.*?-----END CERTIFICATE-----", re.DOTALL
-)
+_CERT_PATTERN = re.compile(r"-----BEGIN CERTIFICATE-----\s.*?-----END CERTIFICATE-----", re.DOTALL)
 
 _TLS_VERSION_PREFIX = "TLSv"
 
@@ -130,7 +128,7 @@ def default_tls_extension() -> TLSExtension:
 
 
 def normalize_tls_extension(
-    tls: TLSExtension | Mapping[str, object] | MappingProxyType[str, object]
+    tls: TLSExtension | Mapping[str, object] | MappingProxyType[str, object],
 ) -> MappingProxyType[str, object]:
     """Return an immutable, ASGI-ready TLS extension mapping.
 
@@ -224,9 +222,11 @@ def _extract_client_chain(ssl_object: ssl.SSLObject) -> tuple[str, ...]:
 def _escape_rfc4514_value(value: str) -> str:
     escaped = []
     for index, char in enumerate(value):
-        if char in {",", "+", "\"", "\\", "<", ">", ";"} or (
-            index == 0 and char in {"#", " "}
-        ) or (index == len(value) - 1 and char == " "):
+        if (
+            char in {",", "+", '"', "\\", "<", ">", ";"}
+            or (index == 0 and char in {"#", " "})
+            or (index == len(value) - 1 and char == " ")
+        ):
             escaped.append("\\" + char)
         else:
             escaped.append(char)
