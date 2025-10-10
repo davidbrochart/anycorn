@@ -389,7 +389,7 @@ async def test_send_invalid_message_given_state(
     stream.state = state
     stream.scope = http_scope
     with pytest.raises(UnexpectedMessageError):
-        await stream.app_send({"type": message_type})  # type: ignore[arg-type, misc]
+        await stream.app_send({"type": message_type})  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

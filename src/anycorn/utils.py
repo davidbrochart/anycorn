@@ -7,12 +7,11 @@ import re
 import socket
 import ssl
 import sys
-from collections.abc import Awaitable, Iterable, Mapping
+from collections.abc import Awaitable, Iterable
 from enum import Enum
 from importlib import import_module
 from multiprocessing.synchronize import Event as EventType
 from pathlib import Path
-from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -127,30 +126,6 @@ def default_tls_extension() -> TLSExtension:
     }
 
 
-def normalize_tls_extension(
-    tls: TLSExtension | Mapping[str, object] | MappingProxyType[str, object],
-) -> MappingProxyType[str, object]:
-    """Return an immutable, ASGI-ready TLS extension mapping.
-
-    The ASGI TLS extension requires that values like ``client_cert_chain`` be
-    iterable, that DNs follow RFC 4514, and that the mapping itself is safe to
-    reuse across requests.  This helper enforces those guarantees and converts
-    any mutable structures (lists, dicts) into a read-only ``MappingProxyType``.
-    See: ASGI TLS Extension Spec (https://asgi.readthedocs.io/en/latest/specs/tls.html)
-    """
-    if isinstance(tls, MappingProxyType):
-        return tls
-    data = dict(tls)
-    chain = data.get("client_cert_chain", ())
-    if chain is None:
-        data["client_cert_chain"] = ()
-    else:
-        data["client_cert_chain"] = tuple(str(item) for item in chain)
-    if data.get("client_cert_name") is not None:
-        data["client_cert_name"] = str(data["client_cert_name"])
-    return MappingProxyType(data)
-
-
 def tls_version_to_int(value: str | int | None) -> int | None:
     if isinstance(value, int):
         return value
@@ -247,14 +222,10 @@ def _subject_to_rfc4514(subject: Iterable[Iterable[tuple[str, str]]]) -> str | N
     return ",".join(rdns) if rdns else None
 
 
-def build_tls_extension(
-    config: Config, stream: SocketStream, ssl_active: bool
-) -> TLSExtension | None:
+def build_tls_extension(config: Config, stream: SocketStream) -> TLSExtension:
     """Extract TLS parameters for the ASGI connection scope.
 
-    When ``ssl_active`` is false (plain TCP), the ASGI TLS extension must not be
-    provided.  When true, we harvest information from AnyIO's TLS attributes and
-    Python's ``ssl`` library:
+    Harvest information from AnyIO's TLS attributes and Python's ``ssl`` library:
 
     * TLS version / cipher IDs follow RFC 8446 (TLS 1.3) and the IANA registry.
     * Client certificate chains are returned as PEM per ASGI spec.
@@ -266,9 +237,6 @@ def build_tls_extension(
       - IANA TLS Cipher Suite Registry: https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-4
       - RFC 4514 (LDAP DN string format): https://www.rfc-editor.org/rfc/rfc4514
     """
-    if not ssl_active:
-        return None
-
     extension = default_tls_extension()
 
     server_cert = get_server_certificate_pem(config)
@@ -319,20 +287,24 @@ def build_tls_extension(
         except TypedAttributeLookupError:
             peer_certificate = None
         if peer_certificate and "subject" in peer_certificate:
-            extension["client_cert_name"] = _subject_to_rfc4514(peer_certificate["subject"])
+            extension["client_cert_name"] = _subject_to_rfc4514(
+                cast("Iterable[Iterable[tuple[str, str]]]", peer_certificate["subject"])
+            )
 
     if extension["client_cert_name"] is None and isinstance(ssl_object, ssl.SSLObject):
         try:
-            cert_dict = ssl_object.getpeercert()  # type: ignore[call-arg]
+            cert_dict = ssl_object.getpeercert()
         except (ssl.SSLError, ValueError):
             cert_dict = None
         if cert_dict and "subject" in cert_dict:
-            extension["client_cert_name"] = _subject_to_rfc4514(cert_dict["subject"])
+            extension["client_cert_name"] = _subject_to_rfc4514(
+                cast("Iterable[Iterable[tuple[str, str]]]", cert_dict["subject"])
+            )
 
     if extension["client_cert_chain"] and not extension["client_cert_name"]:
         extension["client_cert_name"] = None
 
-    return normalize_tls_extension(extension)
+    return extension
 
 
 def suppress_body(method: str, status_code: int) -> bool:

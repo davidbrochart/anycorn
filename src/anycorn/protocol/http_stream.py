@@ -10,6 +10,7 @@ from ..config import Config
 from ..typing import (
     AppWrapper,
     ASGISendEvent,
+    Extensions,
     HTTPResponseStartEvent,
     HTTPScope,
     TaskGroup,
@@ -19,7 +20,6 @@ from ..typing import (
 from ..utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
-    normalize_tls_extension,
     suppress_body,
     valid_server_name,
 )
@@ -75,7 +75,7 @@ class HTTPStream:
         self.state = ASGIHTTPState.REQUEST
         self.stream_id = stream_id
         self.task_group = task_group
-        self.tls = normalize_tls_extension(tls) if tls is not None else None
+        self.tls = tls
         self.scheme = "https" if self.tls is not None else "http"
 
     @property
@@ -88,9 +88,20 @@ class HTTPStream:
         elif isinstance(event, Request):
             self.start_time = time()
             path, _, query_string = event.raw_path.partition(b"?")
-            extensions: dict[str, dict] = {}
+
+            extensions = Extensions()
             if self.tls is not None:
                 extensions["tls"] = self.tls
+
+            if event.http_version in TRAILERS_VERSIONS:
+                extensions["http.response.trailers"] = {}
+
+            if event.http_version in PUSH_VERSIONS:
+                extensions["http.response.push"] = {}
+
+            if event.http_version in EARLY_HINTS_VERSIONS:
+                extensions["http.response.early_hint"] = {}
+
             self.scope = {
                 "type": "http",
                 "http_version": event.http_version,
@@ -107,15 +118,6 @@ class HTTPStream:
                 "state": event.state,
                 "extensions": extensions,
             }
-
-            if event.http_version in TRAILERS_VERSIONS:
-                extensions["http.response.trailers"] = {}
-
-            if event.http_version in PUSH_VERSIONS:
-                extensions["http.response.push"] = {}
-
-            if event.http_version in EARLY_HINTS_VERSIONS:
-                extensions["http.response.early_hint"] = {}
 
             if valid_server_name(self.config, event):
                 self.app_put = await self.task_group.spawn_app(

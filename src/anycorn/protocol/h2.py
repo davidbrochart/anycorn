@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable
-from typing import Callable, cast
+from typing import Callable
 
 import h2
 import h2.connection
 import h2.events
 import h2.exceptions
 import priority
-from hpack import HeaderTuple
 
 from ..config import Config
 from ..events import Closed, Event, RawData, Updated
@@ -140,9 +139,8 @@ class H2Protocol:
             self.connection.initiate_connection()
         await self._flush()
         if headers is not None:
-            event = h2.events.RequestReceived()
-            event.stream_id = 1
-            event.headers = cast(list[HeaderTuple], headers)
+            event = h2.events.RequestReceived(stream_id=1)
+            event.headers = headers
             await self._create_stream(event)
             await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
         self.task_group.spawn(self.send_task)
@@ -363,7 +361,7 @@ class H2Protocol:
         await self.streams[request.stream_id].handle(
             Request(
                 stream_id=request.stream_id,
-                headers=filter_pseudo_headers(cast(list[tuple[bytes, bytes]], request.headers)),
+                headers=filter_pseudo_headers(request.headers),
                 http_version="2",
                 method=method,
                 raw_path=raw_path,
@@ -392,9 +390,8 @@ class H2Protocol:
             # push on a push promises request.
             pass
         else:
-            event = h2.events.RequestReceived()
-            event.stream_id = push_stream_id
-            event.headers = cast(list[HeaderTuple], request_headers)
+            event = h2.events.RequestReceived(stream_id=push_stream_id)
+            event.headers = request_headers
             await self._create_stream(event)
             await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
             self.keep_alive_requests += 1

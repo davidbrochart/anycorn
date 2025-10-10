@@ -95,15 +95,9 @@ class _DummyStream:
         raise TypedAttributeLookupError(attr)
 
 
-def test_build_tls_extension_no_tls() -> None:
-    config = Config()
-    extension = build_tls_extension(config, _DummyStream(), False)
-    assert extension is None
-
-
 def test_build_tls_extension_missing_tls_attributes() -> None:
     config = Config()
-    extension = build_tls_extension(config, _DummyStream(), True)
+    extension = build_tls_extension(config, _DummyStream())
     assert dict(extension) == default_tls_extension()
 
 
@@ -158,7 +152,7 @@ def test_build_tls_extension_with_client_certificate() -> None:
             TLSAttribute.peer_certificate: {"subject": ((("commonName", "localhost"),),)},
         }
     )
-    extension = build_tls_extension(Config(), stream, True)
+    extension = build_tls_extension(Config(), stream)  # type: ignore[arg-type]
     assert extension["tls_version"] == 0x0304
     assert extension["client_cert_chain"]
     assert extension["client_cert_name"] == "CN=localhost"
@@ -174,7 +168,7 @@ def test_build_tls_extension_missing_required_certificate() -> None:
             TLSAttribute.ssl_object: fake_ssl,
         }
     )
-    extension = build_tls_extension(Config(), stream, True)
+    extension = build_tls_extension(Config(), stream)  # type: ignore[arg-type]
     assert extension["client_cert_chain"] == ()
     assert extension["client_cert_name"] is None
     assert extension["client_cert_error"] == "missing-client-certificate"

@@ -24,8 +24,8 @@ from aioquic.quic.packet import (
 
 from ..config import Config
 from ..events import Closed, Event, RawData
-from ..typing import AppWrapper, ConnectionState, SingleTask, TaskGroup, WorkerContext
-from ..utils import default_tls_extension, get_server_certificate_pem, tls_version_to_int
+from ..typing import AppWrapper, ConnectionState, SingleTask, TaskGroup, TLSExtension, WorkerContext
+from ..utils import get_server_certificate_pem, tls_version_to_int
 from .h3 import H3Protocol
 
 
@@ -131,7 +131,7 @@ class QuicProtocol:
                     del self.connections[cid]
                 connection.cids = set()
             elif isinstance(event, ProtocolNegotiated):
-                tls_extension = default_tls_extension()
+                tls_extension = TLSExtension()
                 if self._server_cert_pem is not None:
                     tls_extension["server_cert"] = self._server_cert_pem
                 tls_context = getattr(connection.quic, "tls", None)

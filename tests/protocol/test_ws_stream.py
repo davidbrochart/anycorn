@@ -527,7 +527,7 @@ async def test_send_invalid_message_given_state(
 ) -> None:
     stream.state = state
     with pytest.raises(UnexpectedMessageError):
-        await stream.app_send({"type": message_type})  # type: ignore[arg-type, misc]
+        await stream.app_send({"type": message_type})  # type: ignore[arg-type]
 
 
 @pytest.mark.anyio

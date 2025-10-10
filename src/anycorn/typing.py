@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Iterable
+from collections.abc import Awaitable, Iterable, Mapping, Sequence
 from multiprocessing.synchronize import Event as EventType
 from types import TracebackType
 from typing import (
@@ -40,11 +40,24 @@ class ASGIVersions(TypedDict, total=False):
 
 class TLSExtension(TypedDict, total=False):
     server_cert: str | None
-    client_cert_chain: Iterable[str]
+    client_cert_chain: Sequence[str]
     client_cert_name: str | None
     client_cert_error: str | None
     tls_version: int | None
     cipher_suite: int | None
+
+
+Extensions = TypedDict(
+    "Extensions",
+    {
+        "tls": TLSExtension,
+        "http.response.push": Mapping[str, Any],
+        "http.response.trailers": Mapping[str, Any],
+        "http.response.early_hint": Mapping[str, Any],
+        "websocket.http.response": Mapping[str, Any],
+    },
+    total=False,
+)
 
 
 class HTTPScope(TypedDict):
@@ -61,7 +74,7 @@ class HTTPScope(TypedDict):
     client: tuple[str, int] | None
     server: tuple[str, int | None] | None
     state: ConnectionState
-    extensions: dict[str, dict]
+    extensions: Extensions
 
 
 class WebsocketScope(TypedDict):
@@ -78,7 +91,7 @@ class WebsocketScope(TypedDict):
     server: tuple[str, int | None] | None
     subprotocols: Iterable[str]
     state: ConnectionState
-    extensions: dict[str, dict]
+    extensions: Extensions
 
 
 class LifespanScope(TypedDict):

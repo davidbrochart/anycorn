@@ -27,6 +27,7 @@ from ..config import Config
 from ..typing import (
     AppWrapper,
     ASGISendEvent,
+    Extensions,
     TaskGroup,
     TLSExtension,
     WebsocketAcceptEvent,
@@ -38,7 +39,6 @@ from ..typing import (
 from ..utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
-    normalize_tls_extension,
     suppress_body,
     valid_server_name,
 )
@@ -195,7 +195,7 @@ class WSStream:
         self.start_time: float
         self.state = ASGIWebsocketState.HANDSHAKE
         self.stream_id = stream_id
-        self.tls = normalize_tls_extension(tls) if tls is not None else None
+        self.tls = tls
         self.scheme = "wss" if self.tls is not None else "ws"
 
         self.connection: Connection
@@ -212,7 +212,7 @@ class WSStream:
             self.start_time = time()
             self.handshake = Handshake(event.headers, event.http_version)
             path, _, query_string = event.raw_path.partition(b"?")
-            extensions: dict[str, dict] = {}
+            extensions = Extensions()
             if self.tls is not None:
                 extensions["tls"] = self.tls
             extensions["websocket.http.response"] = {}
