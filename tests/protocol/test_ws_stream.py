@@ -169,7 +169,6 @@ async def _stream() -> WSStream:
         Config(),
         WorkerContext(None),
         AsyncMock(),
-        False,
         None,
         None,
         AsyncMock(),
@@ -221,7 +220,6 @@ async def test_handle_request_tls() -> None:
         Config(),
         WorkerContext(None),
         AsyncMock(),
-        True,
         None,
         None,
         AsyncMock(),
@@ -243,7 +241,8 @@ async def test_handle_request_tls() -> None:
     )
     scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
     assert "tls" in scope["extensions"]
-    assert scope["extensions"]["tls"]["client_cert_chain"] == []
+    assert scope["extensions"]["tls"]["client_cert_chain"] == ()
+    assert scope["scheme"] == "wss"
 
 
 @pytest.mark.anyio

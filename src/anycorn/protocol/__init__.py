@@ -18,7 +18,6 @@ class ProtocolWrapper:
         context: WorkerContext,
         task_group: TaskGroup,
         state: ConnectionState,
-        ssl: bool,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
@@ -29,7 +28,6 @@ class ProtocolWrapper:
         self.config = config
         self.context = context
         self.task_group = task_group
-        self.ssl = ssl
         self.client = client
         self.server = server
         self.send = send
@@ -43,10 +41,9 @@ class ProtocolWrapper:
                 self.context,
                 self.task_group,
                 self.state,
-                self.ssl,
                 self.client,
                 self.server,
-            self.send,
+                self.send,
                 self.tls,
             )
         else:
@@ -56,7 +53,6 @@ class ProtocolWrapper:
                 self.context,
                 self.task_group,
                 self.state,
-                self.ssl,
                 self.client,
                 self.server,
                 self.send,
@@ -76,7 +72,6 @@ class ProtocolWrapper:
                 self.context,
                 self.task_group,
                 self.state,
-                self.ssl,
                 self.client,
                 self.server,
                 self.send,
@@ -92,7 +87,6 @@ class ProtocolWrapper:
                 self.context,
                 self.task_group,
                 self.state,
-                self.ssl,
                 self.client,
                 self.server,
                 self.send,

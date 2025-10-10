@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import ssl
 from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
-import ssl
-
 from anyio import TypedAttributeLookupError
 from anyio.streams.tls import TLSAttribute
 
@@ -105,7 +104,7 @@ def test_build_tls_extension_no_tls() -> None:
 def test_build_tls_extension_missing_tls_attributes() -> None:
     config = Config()
     extension = build_tls_extension(config, _DummyStream(), True)
-    assert extension == default_tls_extension()
+    assert dict(extension) == default_tls_extension()
 
 
 class _FakeStream:

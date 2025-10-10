@@ -41,7 +41,6 @@ async def _stream() -> HTTPStream:
         Config(),
         WorkerContext(None),
         AsyncMock(),
-        False,
         None,
         None,
         AsyncMock(),
@@ -129,7 +128,6 @@ async def test_handle_request_http_tls() -> None:
         Config(),
         WorkerContext(None),
         AsyncMock(),
-        True,
         None,
         None,
         AsyncMock(),
@@ -150,7 +148,8 @@ async def test_handle_request_http_tls() -> None:
     )
     scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
     assert "tls" in scope["extensions"]
-    assert scope["extensions"]["tls"]["client_cert_chain"] == []
+    assert scope["extensions"]["tls"]["client_cert_chain"] == ()
+    assert scope["scheme"] == "https"
 
 
 @pytest.mark.anyio
@@ -464,12 +463,11 @@ async def test_abnormal_close_logging() -> None:
         config,
         WorkerContext(None),
         AsyncMock(),
-        False,
         None,
         None,
         AsyncMock(),
         1,
-        default_tls_extension(),
+        None,
     )
 
     await stream.handle(

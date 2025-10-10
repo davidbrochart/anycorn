@@ -40,11 +40,10 @@ class TCPServer:
     async def run(self) -> None:
         try:
             alpn_protocol = self.stream.extra(anyio.streams.tls.TLSAttribute.alpn_protocol)
-            ssl = True
+            tls_extension = build_tls_extension(self.config, self.stream, True)
         except anyio.TypedAttributeLookupError:  # Not SSL
             alpn_protocol = "http/1.1"
-            ssl = False
-        tls_extension = build_tls_extension(self.config, self.stream, ssl)
+            tls_extension = None
 
         try:
             socket = self.stream.extra(anyio.abc.SocketAttribute.raw_socket)
@@ -59,7 +58,6 @@ class TCPServer:
                     self.context,
                     task_group,
                     ConnectionState(self.state.copy()),
-                    ssl,
                     client,
                     server,
                     self.protocol_send,

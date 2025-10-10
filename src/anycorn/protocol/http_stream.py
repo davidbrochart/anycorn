@@ -12,13 +12,14 @@ from ..typing import (
     ASGISendEvent,
     HTTPResponseStartEvent,
     HTTPScope,
-    TLSExtension,
     TaskGroup,
+    TLSExtension,
     WorkerContext,
 )
 from ..utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
+    normalize_tls_extension,
     suppress_body,
     valid_server_name,
 )
@@ -55,7 +56,6 @@ class HTTPStream:
         config: Config,
         context: WorkerContext,
         task_group: TaskGroup,
-        ssl: bool,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
@@ -70,29 +70,17 @@ class HTTPStream:
         self.response: HTTPResponseStartEvent
         self.scope: HTTPScope
         self.send = send
-        self.scheme = "https" if ssl else "http"
         self.server = server
         self.start_time: float
         self.state = ASGIHTTPState.REQUEST
         self.stream_id = stream_id
         self.task_group = task_group
-        self.tls = tls
+        self.tls = normalize_tls_extension(tls) if tls is not None else None
+        self.scheme = "https" if self.tls is not None else "http"
 
     @property
     def idle(self) -> bool:
         return False
-
-    def _build_tls_extension(self) -> dict[str, object] | None:
-        if self.tls is None:
-            return None
-        extension = dict(self.tls)
-        chain = extension.get("client_cert_chain", ())
-        if chain is None or isinstance(chain, (bytes, str)):
-            chain_list: list[str] = []
-        else:
-            chain_list = [str(item) for item in chain]
-        extension["client_cert_chain"] = chain_list
-        return extension
 
     async def handle(self, event: Event) -> None:
         if self.closed:
@@ -101,9 +89,8 @@ class HTTPStream:
             self.start_time = time()
             path, _, query_string = event.raw_path.partition(b"?")
             extensions: dict[str, dict] = {}
-            tls_extension = self._build_tls_extension()
-            if tls_extension is not None:
-                extensions["tls"] = tls_extension
+            if self.tls is not None:
+                extensions["tls"] = self.tls
             self.scope = {
                 "type": "http",
                 "http_version": event.http_version,

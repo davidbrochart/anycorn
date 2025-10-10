@@ -38,6 +38,7 @@ from ..typing import (
 from ..utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
+    normalize_tls_extension,
     suppress_body,
     valid_server_name,
 )
@@ -173,7 +174,6 @@ class WSStream:
         config: Config,
         context: WorkerContext,
         task_group: TaskGroup,
-        ssl: bool,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
@@ -191,13 +191,12 @@ class WSStream:
         self.response: WebsocketResponseStartEvent
         self.scope: WebsocketScope
         self.send = send
-        # RFC 8441 for HTTP/2 says use http or https, ASGI says ws or wss
-        self.scheme = "wss" if ssl else "ws"
         self.server = server
         self.start_time: float
         self.state = ASGIWebsocketState.HANDSHAKE
         self.stream_id = stream_id
-        self.tls = tls
+        self.tls = normalize_tls_extension(tls) if tls is not None else None
+        self.scheme = "wss" if self.tls is not None else "ws"
 
         self.connection: Connection
         self.handshake: Handshake
@@ -205,18 +204,6 @@ class WSStream:
     @property
     def idle(self) -> bool:
         return self.state in {ASGIWebsocketState.CLOSED, ASGIWebsocketState.HTTPCLOSED}
-
-    def _build_tls_extension(self) -> dict[str, object] | None:
-        if self.tls is None:
-            return None
-        extension = dict(self.tls)
-        chain = extension.get("client_cert_chain", ())
-        if chain is None or isinstance(chain, (bytes, str)):
-            chain_list: list[str] = []
-        else:
-            chain_list = [str(item) for item in chain]
-        extension["client_cert_chain"] = chain_list
-        return extension
 
     async def handle(self, event: Event) -> None:
         if self.closed:
@@ -226,9 +213,8 @@ class WSStream:
             self.handshake = Handshake(event.headers, event.http_version)
             path, _, query_string = event.raw_path.partition(b"?")
             extensions: dict[str, dict] = {}
-            tls_extension = self._build_tls_extension()
-            if tls_extension is not None:
-                extensions["tls"] = tls_extension
+            if self.tls is not None:
+                extensions["tls"] = self.tls
             extensions["websocket.http.response"] = {}
             self.scope = {
                 "type": "websocket",

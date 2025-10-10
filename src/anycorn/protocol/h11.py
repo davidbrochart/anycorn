@@ -95,7 +95,6 @@ class H11Protocol:
         context: WorkerContext,
         task_group: TaskGroup,
         connection_state: ConnectionState,
-        ssl: bool,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
@@ -112,7 +111,6 @@ class H11Protocol:
         self.keep_alive_requests = 0
         self.send = send
         self.server = server
-        self.ssl = ssl
         self.tls = tls
         self.stream: HTTPStream | WSStream | None = None
         self.task_group = task_group
@@ -218,7 +216,6 @@ class H11Protocol:
                 self.config,
                 self.context,
                 self.task_group,
-                self.ssl,
                 self.client,
                 self.server,
                 self.stream_send,
@@ -232,7 +229,6 @@ class H11Protocol:
                 self.config,
                 self.context,
                 self.task_group,
-                self.ssl,
                 self.client,
                 self.server,
                 self.stream_send,

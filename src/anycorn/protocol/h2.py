@@ -91,7 +91,6 @@ class H2Protocol:
         context: WorkerContext,
         task_group: TaskGroup,
         connection_state: ConnectionState,
-        ssl: bool,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
@@ -122,7 +121,6 @@ class H2Protocol:
         self.keep_alive_requests = 0
         self.send = send
         self.server = server
-        self.ssl = ssl
         self.streams: dict[int, HTTPStream | WSStream] = {}
         # The below are used by the sending task
         self.has_data = self.context.event_class()
@@ -335,7 +333,6 @@ class H2Protocol:
                 self.config,
                 self.context,
                 self.task_group,
-                self.ssl,
                 self.client,
                 self.server,
                 self.stream_send,
@@ -348,7 +345,6 @@ class H2Protocol:
                 self.config,
                 self.context,
                 self.task_group,
-                self.ssl,
                 self.client,
                 self.server,
                 self.stream_send,
