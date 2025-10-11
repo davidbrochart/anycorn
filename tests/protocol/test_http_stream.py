@@ -24,7 +24,7 @@ from anycorn.typing import (
     HTTPResponseStartEvent,
     HTTPScope,
 )
-from anycorn.utils import UnexpectedMessageError
+from anycorn.utils import UnexpectedMessageError, default_tls_extension
 from anycorn.worker_context import WorkerContext
 
 try:
@@ -37,7 +37,15 @@ except ImportError:
 @pytest.fixture(name="stream")
 async def _stream() -> HTTPStream:
     stream = HTTPStream(
-        AsyncMock(), Config(), WorkerContext(None), AsyncMock(), False, None, None, AsyncMock(), 1
+        AsyncMock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        None,
+        None,
+        AsyncMock(),
+        1,
+        None,
     )
     stream.app_put = AsyncMock()
     stream.config._log = AsyncMock(spec=Logger)
@@ -111,6 +119,37 @@ async def test_handle_request_http_2(stream: HTTPStream) -> None:
         },
         "state": ConnectionState({}),
     }
+
+
+@pytest.mark.anyio
+async def test_handle_request_http_tls() -> None:
+    stream = HTTPStream(
+        AsyncMock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        None,
+        None,
+        AsyncMock(),
+        1,
+        default_tls_extension(),
+    )
+    stream.app_put = AsyncMock()
+    stream.config._log = AsyncMock(spec=Logger)
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="1.1",
+            headers=[],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
+    assert "tls" in scope["extensions"]
+    assert scope["extensions"]["tls"]["client_cert_chain"] == ()
+    assert scope["scheme"] == "https"
 
 
 @pytest.mark.anyio
@@ -350,7 +389,7 @@ async def test_send_invalid_message_given_state(
     stream.state = state
     stream.scope = http_scope
     with pytest.raises(UnexpectedMessageError):
-        await stream.app_send({"type": message_type})  # type: ignore[arg-type, misc]
+        await stream.app_send({"type": message_type})  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -420,7 +459,15 @@ async def test_abnormal_close_logging() -> None:
     # with `response=None` when the statsd logger failed to handle it.
     config.set_statsd_logger_class(StatsdLogger)
     stream = HTTPStream(
-        AsyncMock(), config, WorkerContext(None), AsyncMock(), False, None, None, AsyncMock(), 1
+        AsyncMock(),
+        config,
+        WorkerContext(None),
+        AsyncMock(),
+        None,
+        None,
+        AsyncMock(),
+        1,
+        None,
     )
 
     await stream.handle(

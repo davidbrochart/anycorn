@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable
-from typing import Callable, cast
+from typing import Callable
 
 import h2
 import h2.connection
 import h2.events
 import h2.exceptions
 import priority
-from hpack import HeaderTuple
 
 from ..config import Config
 from ..events import Closed, Event, RawData, Updated
-from ..typing import AppWrapper, ConnectionState, TaskGroup, WorkerContext
+from ..typing import AppWrapper, ConnectionState, TaskGroup, TLSExtension, WorkerContext
 from ..typing import Event as IOEvent
 from ..utils import filter_pseudo_headers
 from .events import (
@@ -91,10 +90,10 @@ class H2Protocol:
         context: WorkerContext,
         task_group: TaskGroup,
         connection_state: ConnectionState,
-        ssl: bool,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
+        tls: TLSExtension | None,
     ) -> None:
         self.app = app
         self.client = client
@@ -103,6 +102,7 @@ class H2Protocol:
         self.context = context
         self.task_group = task_group
         self.connection_state = connection_state
+        self.tls = tls
 
         self.connection = h2.connection.H2Connection(
             config=h2.config.H2Configuration(client_side=False, header_encoding=None)
@@ -120,7 +120,6 @@ class H2Protocol:
         self.keep_alive_requests = 0
         self.send = send
         self.server = server
-        self.ssl = ssl
         self.streams: dict[int, HTTPStream | WSStream] = {}
         # The below are used by the sending task
         self.has_data = self.context.event_class()
@@ -140,9 +139,8 @@ class H2Protocol:
             self.connection.initiate_connection()
         await self._flush()
         if headers is not None:
-            event = h2.events.RequestReceived()
-            event.stream_id = 1
-            event.headers = cast(list[HeaderTuple], headers)
+            event = h2.events.RequestReceived(stream_id=1)
+            event.headers = headers
             await self._create_stream(event)
             await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
         self.task_group.spawn(self.send_task)
@@ -333,11 +331,11 @@ class H2Protocol:
                 self.config,
                 self.context,
                 self.task_group,
-                self.ssl,
                 self.client,
                 self.server,
                 self.stream_send,
                 request.stream_id,
+                self.tls,
             )
         else:
             self.streams[request.stream_id] = HTTPStream(
@@ -345,11 +343,11 @@ class H2Protocol:
                 self.config,
                 self.context,
                 self.task_group,
-                self.ssl,
                 self.client,
                 self.server,
                 self.stream_send,
                 request.stream_id,
+                self.tls,
             )
         self.stream_buffers[request.stream_id] = StreamBuffer(self.context.event_class)
         try:
@@ -363,7 +361,7 @@ class H2Protocol:
         await self.streams[request.stream_id].handle(
             Request(
                 stream_id=request.stream_id,
-                headers=filter_pseudo_headers(cast(list[tuple[bytes, bytes]], request.headers)),
+                headers=filter_pseudo_headers(request.headers),
                 http_version="2",
                 method=method,
                 raw_path=raw_path,
@@ -392,9 +390,8 @@ class H2Protocol:
             # push on a push promises request.
             pass
         else:
-            event = h2.events.RequestReceived()
-            event.stream_id = push_stream_id
-            event.headers = cast(list[HeaderTuple], request_headers)
+            event = h2.events.RequestReceived(stream_id=push_stream_id)
+            event.headers = request_headers
             await self._create_stream(event)
             await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
             self.keep_alive_requests += 1

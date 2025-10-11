@@ -27,7 +27,9 @@ from ..config import Config
 from ..typing import (
     AppWrapper,
     ASGISendEvent,
+    Extensions,
     TaskGroup,
+    TLSExtension,
     WebsocketAcceptEvent,
     WebsocketResponseBodyEvent,
     WebsocketResponseStartEvent,
@@ -172,11 +174,11 @@ class WSStream:
         config: Config,
         context: WorkerContext,
         task_group: TaskGroup,
-        ssl: bool,
         client: tuple[str, int] | None,
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
         stream_id: int,
+        tls: TLSExtension | None,
     ) -> None:
         self.app = app
         self.app_put: Callable | None = None
@@ -189,12 +191,12 @@ class WSStream:
         self.response: WebsocketResponseStartEvent
         self.scope: WebsocketScope
         self.send = send
-        # RFC 8441 for HTTP/2 says use http or https, ASGI says ws or wss
-        self.scheme = "wss" if ssl else "ws"
         self.server = server
         self.start_time: float
         self.state = ASGIWebsocketState.HANDSHAKE
         self.stream_id = stream_id
+        self.tls = tls
+        self.scheme = "wss" if self.tls is not None else "ws"
 
         self.connection: Connection
         self.handshake: Handshake
@@ -210,6 +212,10 @@ class WSStream:
             self.start_time = time()
             self.handshake = Handshake(event.headers, event.http_version)
             path, _, query_string = event.raw_path.partition(b"?")
+            extensions = Extensions()
+            if self.tls is not None:
+                extensions["tls"] = self.tls
+            extensions["websocket.http.response"] = {}
             self.scope = {
                 "type": "websocket",
                 "asgi": {"spec_version": "2.3", "version": "3.0"},
@@ -224,7 +230,7 @@ class WSStream:
                 "server": self.server,
                 "state": event.state,
                 "subprotocols": self.handshake.subprotocols or [],
-                "extensions": {"websocket.http.response": {}},
+                "extensions": extensions,
             }
 
             if not valid_server_name(self.config, event):

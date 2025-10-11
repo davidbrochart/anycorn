@@ -2,7 +2,7 @@
 
 Anycorn is a fork of [Hypercorn](https://github.com/pgjones/hypercorn) where `asyncio` and
 [Trio](https://trio.readthedocs.io) compatibility is delegated to AnyIO, instead of having a
-separate code base for each. Anycorn forked from version 0.16.0 of Hypercorn.
+separate code base for each. Anycorn forked from version 0.16.0 of Hypercorn. This fork supports [tls extension](https://asgi.readthedocs.io/en/latest/specs/tls.html).
 
 ## Quickstart
 

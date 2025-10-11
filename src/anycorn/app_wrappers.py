@@ -76,7 +76,7 @@ class WSGIWrapper:
                 break
 
         try:
-            environ = _build_environ(scope, body)
+            environ = _build_environ(scope, body)  # type: ignore[arg-type]
         except InvalidPathError:
             await send({"type": "http.response.start", "status": 404, "headers": []})
         else:
@@ -158,6 +158,6 @@ def _build_environ(scope: HTTPScope, body: bytes) -> dict:
         # HTTPbis say only ASCII chars are allowed in headers, but we latin1 just in case
         value = raw_value.decode("latin1")
         if corrected_name in environ:
-            value = environ[corrected_name] + "," + value  # type: ignore[operator]
+            value = environ[corrected_name] + "," + value  # type: ignore[operator,assignment]
         environ[corrected_name] = value
     return environ
