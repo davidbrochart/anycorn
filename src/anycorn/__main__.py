@@ -290,7 +290,7 @@ def main(
     if max_requests is not None:
         config.max_requests = max_requests
     if max_requests_jitter is not None:
-        config.max_requests_jitter = max_requests
+        config.max_requests_jitter = max_requests_jitter
     if pid is not None:
         config.pid_path = pid
     if root_path is not None:
