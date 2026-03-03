@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import inf
 from ssl import SSLError, SSLZeroReturnError
-from typing import Callable
 
 import anyio
 

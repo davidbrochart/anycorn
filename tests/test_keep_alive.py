@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable  # , Generator
-from typing import Callable
+from collections.abc import (
+    Awaitable,  # , Generator
+    Callable,
+)
 
 import anyio
 import h11

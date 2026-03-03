@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable
-from typing import Callable
+from collections.abc import Awaitable, Callable
 
 import h2
 import h2.connection
@@ -202,7 +201,7 @@ class H2Protocol:
 
     async def stream_send(self, event: StreamEvent) -> None:
         try:
-            if isinstance(event, (InformationalResponse, Response)):
+            if isinstance(event, InformationalResponse | Response):
                 self.connection.send_headers(
                     event.stream_id,
                     [(b":status", b"%d" % event.status_code)]
@@ -210,11 +209,11 @@ class H2Protocol:
                     + self.config.response_headers("h2"),
                 )
                 await self._flush()
-            elif isinstance(event, (Body, Data)):
+            elif isinstance(event, Body | Data):
                 self.priority.unblock(event.stream_id)
                 await self.has_data.set()
                 await self.stream_buffers[event.stream_id].push(event.data)
-            elif isinstance(event, (EndBody, EndData)):
+            elif isinstance(event, EndBody | EndData):
                 self.stream_buffers[event.stream_id].set_complete()
                 self.priority.unblock(event.stream_id)
                 await self.has_data.set()

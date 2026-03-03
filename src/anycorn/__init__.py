@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import warnings
-from collections.abc import Awaitable
-from typing import Callable, Literal
+from collections.abc import Awaitable, Callable
+from typing import Literal
 
 import anyio
 

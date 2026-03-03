@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from json import dumps
 from socket import AF_INET
-from typing import Callable, cast
+from typing import cast
 
 from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWScope
 

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import ssl
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from anyio import TypedAttributeLookupError

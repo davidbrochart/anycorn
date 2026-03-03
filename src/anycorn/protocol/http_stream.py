@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from enum import Enum, auto
 from time import time
-from typing import Callable
 from urllib.parse import unquote
 
 from ..config import Config

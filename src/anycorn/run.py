@@ -4,7 +4,7 @@ import platform
 import signal
 import sys
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from functools import partial
 from multiprocessing import get_context
 from multiprocessing.connection import wait
@@ -13,7 +13,7 @@ from multiprocessing.process import BaseProcess
 from multiprocessing.synchronize import Event as EventType
 from pickle import PicklingError
 from random import randint
-from typing import Any, Callable
+from typing import Any
 
 import anyio
 

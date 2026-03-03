@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from enum import Enum, auto
 from io import BytesIO, StringIO
 from time import time
-from typing import Callable
 from urllib.parse import unquote
 
 from wsproto.connection import Connection, ConnectionState, ConnectionType
@@ -244,10 +243,10 @@ class WSStream:
                     self.app, self.config, self.scope, self.app_send
                 )
                 await self.app_put({"type": "websocket.connect"})
-        elif isinstance(event, (Body, Data)) and not self.handshake.accepted:
+        elif isinstance(event, Body | Data) and not self.handshake.accepted:
             await self._send_error_response(400)
             self.closed = True
-        elif isinstance(event, (Body, Data)):
+        elif isinstance(event, Body | Data):
             self.connection.receive_data(event.data)
             await self._handle_events()
         elif isinstance(event, StreamClosed):

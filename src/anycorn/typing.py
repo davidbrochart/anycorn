@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from multiprocessing.synchronize import Event as EventType
 from types import TracebackType
 from typing import (
     Any,
-    Callable,
     Literal,
     NewType,
-    Optional,
     Protocol,
     TypedDict,
-    Union,
 )
 
 import h2.events
@@ -24,9 +21,9 @@ try:
 except ImportError:
     from typing_extensions import NotRequired
 
-H11SendableEvent = Union[h11.Data, h11.EndOfMessage, h11.InformationalResponse, h11.Response]
+H11SendableEvent = h11.Data | h11.EndOfMessage | h11.InformationalResponse | h11.Response
 
-WorkerFunc = Callable[[Config, Optional[Sockets], Optional[EventType]], None]
+WorkerFunc = Callable[[Config, Sockets | None, EventType | None], None]
 
 LifespanState = dict[str, Any]
 
@@ -100,8 +97,8 @@ class LifespanScope(TypedDict):
     state: LifespanState
 
 
-WWWScope = Union[HTTPScope, WebsocketScope]
-Scope = Union[HTTPScope, WebsocketScope, LifespanScope]
+WWWScope = HTTPScope | WebsocketScope
+Scope = HTTPScope, WebsocketScope | LifespanScope
 
 
 class HTTPRequestEvent(TypedDict):
@@ -215,34 +212,34 @@ class LifespanShutdownFailedEvent(TypedDict):
     message: str
 
 
-ASGIReceiveEvent = Union[
-    HTTPRequestEvent,
-    HTTPDisconnectEvent,
-    WebsocketConnectEvent,
-    WebsocketReceiveEvent,
-    WebsocketDisconnectEvent,
-    LifespanStartupEvent,
-    LifespanShutdownEvent,
-]
+ASGIReceiveEvent = (
+    HTTPRequestEvent
+    | HTTPDisconnectEvent
+    | WebsocketConnectEvent
+    | WebsocketReceiveEvent
+    | WebsocketDisconnectEvent
+    | LifespanStartupEvent
+    | LifespanShutdownEvent
+)
 
 
-ASGISendEvent = Union[
-    HTTPResponseStartEvent,
-    HTTPResponseBodyEvent,
-    HTTPResponseTrailersEvent,
-    HTTPServerPushEvent,
-    HTTPEarlyHintEvent,
-    HTTPDisconnectEvent,
-    WebsocketAcceptEvent,
-    WebsocketSendEvent,
-    WebsocketResponseStartEvent,
-    WebsocketResponseBodyEvent,
-    WebsocketCloseEvent,
-    LifespanStartupCompleteEvent,
-    LifespanStartupFailedEvent,
-    LifespanShutdownCompleteEvent,
-    LifespanShutdownFailedEvent,
-]
+ASGISendEvent = (
+    HTTPResponseStartEvent
+    | HTTPResponseBodyEvent
+    | HTTPResponseTrailersEvent
+    | HTTPServerPushEvent
+    | HTTPEarlyHintEvent
+    | HTTPDisconnectEvent
+    | WebsocketAcceptEvent
+    | WebsocketSendEvent
+    | WebsocketResponseStartEvent
+    | WebsocketResponseBodyEvent
+    | WebsocketCloseEvent
+    | LifespanStartupCompleteEvent
+    | LifespanStartupFailedEvent
+    | LifespanShutdownCompleteEvent
+    | LifespanShutdownFailedEvent
+)
 
 
 ASGIReceiveCallable = Callable[[], Awaitable[ASGIReceiveEvent]]
@@ -257,7 +254,7 @@ ASGIFramework = Callable[
     Awaitable[None],
 ]
 WSGIFramework = Callable[[dict, Callable], Iterable[bytes]]
-Framework = Union[ASGIFramework, WSGIFramework]
+Framework = ASGIFramework | WSGIFramework
 
 
 class H2SyncStream(Protocol):

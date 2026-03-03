@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Callable
 from types import TracebackType
-from typing import Any, Callable
+from typing import Any
 
 import anyio
 

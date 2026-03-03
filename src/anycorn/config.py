@@ -21,7 +21,7 @@ from ssl import (
     create_default_context,
 )
 from time import time
-from typing import Any, AnyStr, Union
+from typing import Any, AnyStr
 from wsgiref.handlers import format_date_time
 
 if sys.version_info >= (3, 11):
@@ -35,8 +35,8 @@ BYTES = 1
 OCTETS = 1
 SECONDS = 1.0
 
-FilePath = Union[AnyStr, os.PathLike]
-SocketKind = Union[int, socket.SocketKind]
+FilePath = AnyStr | os.PathLike
+SocketKind = int | socket.SocketKind
 
 
 @dataclass

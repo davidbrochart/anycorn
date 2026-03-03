@@ -7,7 +7,7 @@ import re
 import socket
 import ssl
 import sys
-from collections.abc import Awaitable, Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from enum import Enum
 from importlib import import_module
 from multiprocessing.synchronize import Event as EventType
@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     Literal,
     cast,
 )

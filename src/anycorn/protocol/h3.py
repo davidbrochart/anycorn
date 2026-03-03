@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable
-from typing import Callable
+from collections.abc import Awaitable, Callable
 
 from aioquic.h3.connection import H3Connection
 from aioquic.h3.events import DataReceived, HeadersReceived
@@ -73,7 +72,7 @@ class H3Protocol:
                     await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
 
     async def stream_send(self, event: StreamEvent) -> None:
-        if isinstance(event, (InformationalResponse, Response)):
+        if isinstance(event, InformationalResponse | Response):
             self.connection.send_headers(
                 event.stream_id,
                 [(b":status", b"%d" % event.status_code)]
@@ -81,10 +80,10 @@ class H3Protocol:
                 + self.config.response_headers("h3"),
             )
             await self.send()
-        elif isinstance(event, (Body, Data)):
+        elif isinstance(event, Body | Data):
             self.connection.send_data(event.stream_id, event.data, False)
             await self.send()
-        elif isinstance(event, (EndBody, EndData)):
+        elif isinstance(event, EndBody | EndData):
             self.connection.send_data(event.stream_id, b"", True)
             await self.send()
         elif isinstance(event, Trailers):
