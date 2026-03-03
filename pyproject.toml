@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "anycorn"
-dynamic = ["version"]
-requires-python = ">=3.9"
+version = "0.18.2"
+requires-python = ">=3.10"
 description = "A fork of Hypercorn that uses AnyIO"
 authors = [
     { name = "Philip Graham Jones", email = "philip.graham.jones@googlemail.com" },
@@ -46,7 +46,7 @@ dependencies = [
     "rich-click >=1.8.3,<2.0.0",
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 h3 = [
     "aioquic >=1.2.0,<2.0.0",
 ]
