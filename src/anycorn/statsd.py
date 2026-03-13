@@ -121,6 +121,7 @@ class StatsdLogger(BaseStatsdLogger):
     """StatsD logger that sends metrics over UDP."""
 
     socket: anyio.abc.ConnectedUDPSocket | None
+
     def __init__(self, config: Config) -> None:
         super().__init__(config)
         assert config.statsd_host is not None

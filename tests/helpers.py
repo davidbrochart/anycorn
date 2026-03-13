@@ -55,8 +55,7 @@ async def echo_framework(
     scope["query_string"] = scope["query_string"].decode()  # type: ignore[arg-type]
     scope["raw_path"] = scope["raw_path"].decode()  # type: ignore[arg-type]
     scope["headers"] = [  # type: ignore[invalid-assignment]
-        (name.decode(), value.decode())
-        for name, value in scope["headers"]
+        (name.decode(), value.decode()) for name, value in scope["headers"]
     ]
 
     body = bytearray()

@@ -54,6 +54,7 @@ class TaskGroup:
 
     def __init__(self) -> None:
         self._task_group: anyio.abc.TaskGroup | None = None
+
     async def spawn_app(
         self,
         app: AppWrapper,
