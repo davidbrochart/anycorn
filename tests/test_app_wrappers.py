@@ -10,8 +10,8 @@ import anyio.from_thread
 import anyio.to_thread
 import pytest
 
-from anycorn.app_wrappers import ASGIReceiveCallable, InvalidPathError, WSGIWrapper, _build_environ
-from anycorn.typing import ASGIReceiveEvent, ASGISendEvent, ConnectionState, HTTPScope
+from anycorn.app_wrappers import InvalidPathError, WSGIWrapper, _build_environ
+from anycorn.typing import ASGIReceiveCallable, ASGIReceiveEvent, ASGISendEvent, ConnectionState, HTTPScope
 
 if TYPE_CHECKING:
     from collections.abc import Callable
