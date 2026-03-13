@@ -9,7 +9,6 @@ import anyio
 import anyio.abc
 import anyio.from_thread
 import anyio.to_thread
-from typing_extensions import Self
 
 from .typing import AppWrapper, ASGIReceiveCallable, ASGIReceiveEvent, ASGISendEvent, Scope
 
@@ -19,8 +18,11 @@ if TYPE_CHECKING:
 
     from .config import Config
 
-if sys.version_info < (3, 11):
+if sys.version_info >= (3, 11):
+    from typing import Self
+else:
     from exceptiongroup import BaseExceptionGroup
+    from typing_extensions import Self
 
 
 async def _handle(  # noqa: PLR0913

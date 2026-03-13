@@ -16,7 +16,6 @@ from typing import (
 )
 
 import h11
-from typing_extensions import Self
 
 from .config import Config, Sockets
 
@@ -26,9 +25,9 @@ if TYPE_CHECKING:
     import h2.events
 
 if sys.version_info >= (3, 11):
-    from typing import NotRequired
+    from typing import NotRequired, Self
 else:
-    from typing_extensions import NotRequired
+    from typing_extensions import NotRequired, Self
 
 H11SendableEvent = h11.Data | h11.EndOfMessage | h11.InformationalResponse | h11.Response
 
