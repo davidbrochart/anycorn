@@ -56,14 +56,10 @@ test = [
     "mock",
     "trio",
 ]
-lint = [
-    "anycorn[h3]",
-    "ruff>=0.15.6",
-    "ty>=0.0.22",
-]
 dev = [
     { include-group = "test" },
-    { include-group = "lint" },
+    "ruff>=0.15.6",
+    "ty>=0.0.22",
 ]
 
 [project.scripts]
