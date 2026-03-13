@@ -142,9 +142,7 @@ def _populate(  # noqa: PLR0913
             process.start()
         except PicklingError as error:
             msg = "Cannot pickle the config, see https://docs.python.org/3/library/pickle.html#pickle-picklable"
-            raise RuntimeError(
-                msg
-            ) from error
+            raise RuntimeError(msg) from error
         processes.append(process)
         if platform.system() == "Windows":
             time.sleep(0.1)

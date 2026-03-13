@@ -81,9 +81,7 @@ class H3Protocol:
                     Body(stream_id=event.stream_id, data=event.data)
                 )
                 if event.stream_ended:
-                    await self.streams[event.stream_id].handle(
-                        EndBody(stream_id=event.stream_id)
-                    )
+                    await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
 
     async def stream_send(self, event: StreamEvent) -> None:
         """Send a stream event to the remote client."""

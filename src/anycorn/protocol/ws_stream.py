@@ -69,7 +69,6 @@ class FrameTooLargeError(Exception):
     """Raised when a WebSocket message exceeds the configured maximum size."""
 
 
-
 class Handshake:
     """Parses and validates a WebSocket upgrade handshake."""
 
@@ -323,9 +322,7 @@ class WSStream:
             else:
                 event = TextMessage(data=message["text"])
             await self._send_wsproto_event(event)
-        elif (
-            message["type"] == "websocket.close" and self.state == ASGIWebsocketState.HANDSHAKE
-        ):
+        elif message["type"] == "websocket.close" and self.state == ASGIWebsocketState.HANDSHAKE:
             self.state = ASGIWebsocketState.HTTPCLOSED
             await self._send_error_response(403)
         elif message["type"] == "websocket.close":

@@ -46,7 +46,6 @@ class BufferCompleteError(Exception):
     """Raised when data is pushed to an already-complete stream buffer."""
 
 
-
 class StreamBuffer:
     """Flow-controlled buffer for outgoing HTTP/2 stream data."""
 
@@ -290,9 +289,7 @@ class H2Protocol:
                 )
             elif isinstance(event, h2.events.StreamEnded):
                 with contextlib.suppress(KeyError):
-                    await self.streams[event.stream_id].handle(
-                        EndBody(stream_id=event.stream_id)
-                    )
+                    await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
             elif isinstance(event, h2.events.StreamReset):
                 await self._close_stream(event.stream_id)
                 await self._window_updated(event.stream_id)

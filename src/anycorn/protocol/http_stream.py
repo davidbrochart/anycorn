@@ -175,8 +175,7 @@ class HTTPStream:
             )
             self.state = ASGIHTTPState.RESPONSE
         elif (
-            message["type"] == "http.response.push"
-            and self.scope["http_version"] in PUSH_VERSIONS
+            message["type"] == "http.response.push" and self.scope["http_version"] in PUSH_VERSIONS
         ):
             if not isinstance(message["path"], str):
                 msg = f"{message['path']} should be a str"

@@ -42,7 +42,6 @@ class EndBody(Event):
     """Signals the end of the request body."""
 
 
-
 @dataclass(frozen=True)
 class Trailers(Event):
     """Represents HTTP trailers sent after the body."""
@@ -62,7 +61,6 @@ class EndData(Event):
     """Signals the end of a data stream (e.g. WebSocket close)."""
 
 
-
 @dataclass(frozen=True)
 class Response(Event):
     """Represents an HTTP response to be sent."""
@@ -80,7 +78,10 @@ class InformationalResponse(Event):
 
     def __post_init__(self) -> None:
         """Validate that the status code is in the 1XX range."""
-        if self.status_code >= _MAX_INFORMATIONAL_STATUS or self.status_code < _MIN_INFORMATIONAL_STATUS:  # noqa: E501
+        if (
+            self.status_code >= _MAX_INFORMATIONAL_STATUS
+            or self.status_code < _MIN_INFORMATIONAL_STATUS
+        ):
             msg = f"Status code must be 1XX not {self.status_code}"
             raise ValueError(msg)
 
@@ -88,4 +89,3 @@ class InformationalResponse(Event):
 @dataclass(frozen=True)
 class StreamClosed(Event):
     """Signals that the stream has been closed."""
-

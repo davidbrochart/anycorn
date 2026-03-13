@@ -244,7 +244,8 @@ class Config:
             else:
                 warnings.warn(
                     f'Cannot create a alt-svc header for the QUIC socket with address "{name}"',
-                    Warning, stacklevel=2,
+                    Warning,
+                    stacklevel=2,
                 )
 
     def _create_sockets(  # noqa: C901, PLR0912
