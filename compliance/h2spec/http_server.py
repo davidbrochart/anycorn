@@ -1,19 +1,28 @@
-async def app(scope, receive, send):
+"""HTTP/2 server for h2spec compliance testing."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+async def app(_scope: Any, receive: Any, send: Any) -> None:  # noqa: ANN401
+    """Handle HTTP requests and lifespan events for h2spec testing."""
     while True:
         event = await receive()
         if event["type"] == "http.disconnect":
             break
-        elif event["type"] == "http.request" and not event.get("more_body", False):
-            await send_data(send)
+        if event["type"] == "http.request" and not event.get("more_body", False):
+            await _send_data(send)
             break
-        elif event["type"] == "lifespan.startup":
+        if event["type"] == "lifespan.startup":
             await send({"type": "lifespan.startup.complete"})
         elif event["type"] == "lifespan.shutdown":
             await send({"type": "lifespan.shutdown.complete"})
             break
 
 
-async def send_data(send):
+async def _send_data(send: Any) -> None:  # noqa: ANN401
+    """Send an HTTP response with a simple 'Hello' body."""
     await send(
         {
             "type": "http.response.start",
