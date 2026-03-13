@@ -6,8 +6,8 @@ import math
 from typing import TYPE_CHECKING, Any, cast
 
 import anyio
-import anyio.to_thread
 import anyio.from_thread
+import anyio.to_thread
 import pytest
 
 from anycorn.app_wrappers import ASGIReceiveCallable, InvalidPathError, WSGIWrapper, _build_environ

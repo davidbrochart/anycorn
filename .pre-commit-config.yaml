@@ -14,10 +14,3 @@ repos:
       - id: mixed-line-ending
         args: [ "--fix=lf" ]
       - id: trailing-whitespace
-
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.9.7
-    hooks:
-      - id: ruff
-        args: [--fix, --show-fixes]
-      - id: ruff-format
