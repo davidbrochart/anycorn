@@ -54,8 +54,8 @@ async def echo_framework(
     scope = deepcopy(input_scope)
     scope["query_string"] = scope["query_string"].decode()  # type: ignore[arg-type]
     scope["raw_path"] = scope["raw_path"].decode()  # type: ignore[arg-type]
-    scope["headers"] = [
-        (name.decode(), value.decode())  # type: ignore[misc]
+    scope["headers"] = [  # type: ignore[invalid-assignment]
+        (name.decode(), value.decode())
         for name, value in scope["headers"]
     ]
 

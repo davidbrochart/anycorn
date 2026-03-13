@@ -54,12 +54,12 @@ class WSGIClassInstance:
     def __init__(self) -> None:
         pass
 
-    def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
-        pass
+    def __call__(self, environ: dict, start_response: Callable) -> Iterable[bytes]:  # noqa: ARG002
+        return []
 
 
-def wsgi_callable(environ: dict, start_response: Callable) -> Iterable[bytes]:
-    pass
+def wsgi_callable(environ: dict, start_response: Callable) -> Iterable[bytes]:  # noqa: ARG001
+    return []
 
 
 @pytest.mark.parametrize(

@@ -19,24 +19,24 @@ async def test_http_to_https_redirect_middleware_http(raw_path: bytes) -> None:
         nonlocal sent_events
         sent_events.append(message)
 
-    scope: HTTPScope = {
-        "type": "http",
-        "asgi": {},
-        "http_version": "2",
-        "method": "GET",
-        "scheme": "http",
-        "path": raw_path.decode(),
-        "raw_path": raw_path,
-        "query_string": b"a=b",
-        "root_path": "",
-        "headers": [],
-        "client": ("127.0.0.1", 80),
-        "server": None,
-        "extensions": {},
-        "state": ConnectionState({}),
-    }
+    scope = HTTPScope(
+        type="http",
+        asgi={},
+        http_version="2",
+        method="GET",
+        scheme="http",
+        path=raw_path.decode(),
+        raw_path=raw_path,
+        query_string=b"a=b",
+        root_path="",
+        headers=[],
+        client=("127.0.0.1", 80),
+        server=None,
+        extensions={},
+        state=ConnectionState({}),
+    )
 
-    await app(scope, None, send)
+    await app(scope, None, send)  # type: ignore[invalid-argument-type]
 
     assert sent_events == [
         {
@@ -58,23 +58,23 @@ async def test_http_to_https_redirect_middleware_websocket(raw_path: bytes) -> N
         nonlocal sent_events
         sent_events.append(message)
 
-    scope: WebsocketScope = {
-        "type": "websocket",
-        "asgi": {},
-        "http_version": "1.1",
-        "scheme": "ws",
-        "path": raw_path.decode(),
-        "raw_path": raw_path,
-        "query_string": b"a=b",
-        "root_path": "",
-        "headers": [],
-        "client": None,
-        "server": None,
-        "subprotocols": [],
-        "extensions": {"websocket.http.response": {}},
-        "state": ConnectionState({}),
-    }
-    await app(scope, None, send)
+    scope = WebsocketScope(
+        type="websocket",
+        asgi={},
+        http_version="1.1",
+        scheme="ws",
+        path=raw_path.decode(),
+        raw_path=raw_path,
+        query_string=b"a=b",
+        root_path="",
+        headers=[],
+        client=None,
+        server=None,
+        subprotocols=[],
+        extensions={"websocket.http.response": {}},
+        state=ConnectionState({}),
+    )
+    await app(scope, None, send)  # type: ignore[invalid-argument-type]
 
     assert sent_events == [
         {
@@ -95,23 +95,23 @@ async def test_http_to_https_redirect_middleware_websocket_http2() -> None:
         nonlocal sent_events
         sent_events.append(message)
 
-    scope: WebsocketScope = {
-        "type": "websocket",
-        "asgi": {},
-        "http_version": "2",
-        "scheme": "ws",
-        "path": "/abc",
-        "raw_path": b"/abc",
-        "query_string": b"a=b",
-        "root_path": "",
-        "headers": [],
-        "client": None,
-        "server": None,
-        "subprotocols": [],
-        "extensions": {"websocket.http.response": {}},
-        "state": ConnectionState({}),
-    }
-    await app(scope, None, send)
+    scope = WebsocketScope(
+        type="websocket",
+        asgi={},
+        http_version="2",
+        scheme="ws",
+        path="/abc",
+        raw_path=b"/abc",
+        query_string=b"a=b",
+        root_path="",
+        headers=[],
+        client=None,
+        server=None,
+        subprotocols=[],
+        extensions={"websocket.http.response": {}},
+        state=ConnectionState({}),
+    )
+    await app(scope, None, send)  # type: ignore[invalid-argument-type]
 
     assert sent_events == [
         {
@@ -132,23 +132,23 @@ async def test_http_to_https_redirect_middleware_websocket_no_rejection() -> Non
         nonlocal sent_events
         sent_events.append(message)
 
-    scope: WebsocketScope = {
-        "type": "websocket",
-        "asgi": {},
-        "http_version": "2",
-        "scheme": "ws",
-        "path": "/abc",
-        "raw_path": b"/abc",
-        "query_string": b"a=b",
-        "root_path": "",
-        "headers": [],
-        "client": None,
-        "server": None,
-        "subprotocols": [],
-        "extensions": {},
-        "state": ConnectionState({}),
-    }
-    await app(scope, None, send)
+    scope = WebsocketScope(
+        type="websocket",
+        asgi={},
+        http_version="2",
+        scheme="ws",
+        path="/abc",
+        raw_path=b"/abc",
+        query_string=b"a=b",
+        root_path="",
+        headers=[],
+        client=None,
+        server=None,
+        subprotocols=[],
+        extensions={},
+        state=ConnectionState({}),
+    )
+    await app(scope, None, send)  # type: ignore[invalid-argument-type]
 
     assert sent_events == [{"type": "websocket.close"}]
 
@@ -157,21 +157,21 @@ def test_http_to_https_redirect_new_url_header() -> None:
     app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
     new_url = app._new_url(
         "https",
-        {
-            "http_version": "1.1",
-            "asgi": {},
-            "method": "GET",
-            "headers": [(b"host", b"localhost")],
-            "path": "/",
-            "root_path": "",
-            "query_string": b"",
-            "raw_path": b"/",
-            "scheme": "http",
-            "type": "http",
-            "client": None,
-            "server": None,
-            "extensions": {},
-            "state": ConnectionState({}),
-        },
+        HTTPScope(
+            http_version="1.1",
+            asgi={},
+            method="GET",
+            headers=[(b"host", b"localhost")],
+            path="/",
+            root_path="",
+            query_string=b"",
+            raw_path=b"/",
+            scheme="http",
+            type="http",
+            client=None,
+            server=None,
+            extensions={},
+            state=ConnectionState({}),
+        ),
     )
     assert new_url == "https://localhost/"

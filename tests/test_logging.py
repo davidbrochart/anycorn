@@ -44,8 +44,10 @@ def test_access_logger_init(
     if target is None:
         assert logger.access_logger is None
     elif expected_name is None:
+        assert logger.access_logger is not None
         assert logger.access_logger.handlers == []
     else:
+        assert logger.access_logger is not None
         assert logger.access_logger.name == expected_name
         if expected_handler_type is None:
             assert logger.access_logger.handlers == []
@@ -62,8 +64,10 @@ def test_access_logger_init(
 )
 def test_loglevel_option(level: str | None, expected: int) -> None:
     config = Config()
+    assert level is not None
     config.loglevel = level
     logger = Logger(config)
+    assert logger.error_logger is not None
     assert logger.error_logger.getEffectiveLevel() == expected
 
 

@@ -377,14 +377,14 @@ async def test_send_reject(stream: WSStream) -> None:
             {"type": "websocket.http.response.body", "body": b"Body"},
         )
     )
-    assert stream.state == ASGIWebsocketState.HTTPCLOSED  # type: ignore[comparison-overlap]
-    stream.send.assert_called()
-    assert stream.send.call_args_list == [
+    assert stream.state == ASGIWebsocketState.HTTPCLOSED
+    stream.send.assert_called()  # type: ignore[unresolved-attribute]
+    assert stream.send.call_args_list == [  # type: ignore[unresolved-attribute]
         call(Response(stream_id=1, headers=[], status_code=200)),
         call(Body(stream_id=1, data=b"Body")),
         call(EndBody(stream_id=1)),
     ]
-    stream.config._log.access.assert_called()
+    stream.config._log.access.assert_called()  # type: ignore[unresolved-attribute]
 
 
 @pytest.mark.anyio
@@ -594,7 +594,7 @@ async def test_closure(stream: WSStream) -> None:
     assert stream.closed
     # It is important that the disconnect message has only been sent
     # once.
-    assert stream.app_put.call_args_list == [call({"type": "websocket.disconnect", "code": 1006})]
+    assert stream.app_put.call_args_list == [call({"type": "websocket.disconnect", "code": 1006})]  # type: ignore[unresolved-attribute]
 
 
 @pytest.mark.anyio

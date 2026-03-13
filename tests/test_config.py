@@ -65,6 +65,7 @@ def test_create_ssl_context() -> None:
     #
     #       To overcome this, instead of checking that the result in True, we will check that it is
     #        equal to "context.options".
+    assert context is not None
     assert (
         context.options
         & (
@@ -115,7 +116,7 @@ def test_create_sockets_unix(monkeypatch: MonkeyPatch) -> None:
     config.bind = ["unix:/tmp/anycorn.sock"]
     sockets = config.create_sockets()
     sock = sockets.insecure_sockets[0]
-    mock_socket.assert_called_with(socket.AF_UNIX, socket.SOCK_STREAM)
+    mock_socket.assert_called_with(socket.AF_UNIX, socket.SOCK_STREAM)  # type: ignore[unresolved-attribute]
     sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
     sock.bind.assert_called_with("/tmp/anycorn.sock")  # type: ignore[attr-defined] # noqa: S108
     sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]  # noqa: FBT003

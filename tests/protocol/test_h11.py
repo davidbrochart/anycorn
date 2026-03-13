@@ -299,7 +299,7 @@ async def test_protocol_handle_send_client_error(protocol: H11Protocol) -> None:
 
 @pytest.mark.anyio
 async def test_protocol_handle_pipelining(protocol: H11Protocol) -> None:
-    protocol.can_read.wait.side_effect = Exception()  # type: ignore[attr-defined]
+    protocol.can_read.wait.side_effect = Exception()
     with pytest.raises(Exception, match=""):  # noqa: PT011
         await protocol.handle(
             RawData(
@@ -307,8 +307,8 @@ async def test_protocol_handle_pipelining(protocol: H11Protocol) -> None:
                 b"GET / HTTP/1.1\r\nHost: anycorn\r\nConnection: close\r\n\r\n"
             )
         )
-    protocol.can_read.clear.assert_called()  # type: ignore[attr-defined]
-    protocol.can_read.wait.assert_called()  # type: ignore[attr-defined]
+    protocol.can_read.clear.assert_called()
+    protocol.can_read.wait.assert_called()
 
 
 @pytest.mark.anyio
