@@ -87,7 +87,7 @@ class Logger:
             dictConfig(config.logconfig_dict)
 
     async def access(
-        self, request: WWWScope, response: ResponseSummary, request_time: float
+        self, request: WWWScope, response: ResponseSummary | None, request_time: float
     ) -> None:
         """Log an access log entry."""
         if self.access_logger is not None:
@@ -172,8 +172,8 @@ class AccessLogAtoms(dict):
         status_code = "-"
         status_phrase = "-"
         if response is not None:
-            for name, value in response.get("headers", []):  # type: ignore[assignment]
-                self[f"{{{name.decode('latin1').lower()}}}o"] = value.decode("latin1")  # type: ignore[attr-defined]
+            for name, value in response.get("headers", []):
+                self[f"{{{name.decode('latin1').lower()}}}o"] = value.decode("latin1")
             status_code = str(response["status"])
             try:
                 status_phrase = HTTPStatus(response["status"]).phrase

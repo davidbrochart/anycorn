@@ -6,9 +6,11 @@ import contextlib
 from typing import TYPE_CHECKING
 
 import h2
+import h2.config
 import h2.connection
 import h2.events
 import h2.exceptions
+import h2.settings
 import priority
 
 from anycorn.events import Closed, Event, RawData, Updated
@@ -319,10 +321,14 @@ class H2Protocol:
         await self.has_data.set()
 
     async def _priority_updated(self, event: h2.events.PriorityUpdated) -> None:
+        assert event.stream_id is not None
+        assert event.weight is not None
+        assert event.exclusive is not None
+        depends_on: int | None = event.depends_on or None
         try:
             self.priority.reprioritize(
                 stream_id=event.stream_id,
-                depends_on=event.depends_on or None,
+                depends_on=depends_on,
                 weight=event.weight,
                 exclusive=event.exclusive,
             )
@@ -330,7 +336,7 @@ class H2Protocol:
             # Received PRIORITY frame before HEADERS frame
             self.priority.insert_stream(
                 stream_id=event.stream_id,
-                depends_on=event.depends_on or None,
+                depends_on=depends_on,
                 weight=event.weight,
                 exclusive=event.exclusive,
             )

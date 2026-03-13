@@ -35,8 +35,8 @@ class ASGIWrapper:
         scope: Scope,
         receive: ASGIReceiveCallable,
         send: ASGISendCallable,
-        _sync_spawn: Callable,
-        _call_soon: Callable,
+        sync_spawn: Callable,  # noqa: ARG002
+        call_soon: Callable,  # noqa: ARG002
     ) -> None:
         """Call the wrapped ASGI application."""
         await self.app(scope, receive, send)
@@ -80,7 +80,7 @@ class WSGIWrapper:
         body = bytearray()
         while True:
             message = await receive()
-            body.extend(message.get("body", b""))  # type: ignore[arg-type]
+            body.extend(message.get("body", b""))
             if len(body) > self.max_body_size:
                 await send({"type": "http.response.start", "status": 400, "headers": []})
                 await send({"type": "http.response.body", "body": b"", "more_body": False})
@@ -159,8 +159,9 @@ def _build_environ(scope: HTTPScope, body: bytes) -> dict:
         "wsgi.run_once": False,
     }
 
-    if scope.get("client") is not None:
-        environ["REMOTE_ADDR"] = scope["client"][0]
+    client = scope.get("client")
+    if client is not None:
+        environ["REMOTE_ADDR"] = client[0]
 
     for raw_name, raw_value in scope.get("headers", []):
         name = raw_name.decode("latin1")

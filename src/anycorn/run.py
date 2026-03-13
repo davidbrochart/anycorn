@@ -14,6 +14,8 @@ from random import randint
 from typing import TYPE_CHECKING, Any
 
 import anyio
+import anyio.abc
+import anyio.streams.tls
 
 from .lifespan import Lifespan
 from .statsd import StatsdLogger
@@ -194,7 +196,8 @@ async def worker_serve(  # noqa: C901, PLR0915
             listeners: list[anyio.abc.SocketListener | anyio.streams.tls.TLSListener] = []
             binds = []
             for secure_sock in sockets.secure_sockets:
-                asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001
+                assert ssl_context is not None
+                asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001  # ty:ignore[possibly-missing-attribute]
                 secure_listener = anyio.streams.tls.TLSListener(
                     asynclib.create_tcp_listener(secure_sock),
                     ssl_context,
@@ -208,7 +211,7 @@ async def worker_serve(  # noqa: C901, PLR0915
                 await config.log.info("Running on %s (CTRL + C to quit)", url)
 
             for insecure_sock in sockets.insecure_sockets:
-                asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001
+                asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001  # ty:ignore[possibly-missing-attribute]
                 insecure_listener = asynclib.create_tcp_listener(insecure_sock)
                 listeners.append(insecure_listener)
                 bind = repr_socket_addr(insecure_sock.family, insecure_sock.getsockname())

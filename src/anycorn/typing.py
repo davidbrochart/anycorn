@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from multiprocessing.synchronize import Event as EventType
 from typing import (
@@ -24,9 +25,9 @@ if TYPE_CHECKING:
 
     import h2.events
 
-try:
+if sys.version_info >= (3, 11):
     from typing import NotRequired
-except ImportError:
+else:
     from typing_extensions import NotRequired
 
 H11SendableEvent = h11.Data | h11.EndOfMessage | h11.InformationalResponse | h11.Response

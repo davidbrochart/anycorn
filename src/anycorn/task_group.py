@@ -6,6 +6,9 @@ import sys
 from typing import TYPE_CHECKING, Any
 
 import anyio
+import anyio.abc
+import anyio.from_thread
+import anyio.to_thread
 from typing_extensions import Self
 
 from .typing import AppWrapper, ASGIReceiveCallable, ASGIReceiveEvent, ASGISendEvent, Scope
@@ -51,7 +54,6 @@ class TaskGroup:
 
     def __init__(self) -> None:
         self._task_group: anyio.abc.TaskGroup | None = None
-
     async def spawn_app(
         self,
         app: AppWrapper,
@@ -63,6 +65,7 @@ class TaskGroup:
         app_send_channel, app_receive_channel = anyio.create_memory_object_stream[ASGIReceiveEvent](
             config.max_app_queue_size
         )
+        assert self._task_group is not None
         self._task_group.start_soon(
             _handle,
             app,
@@ -77,6 +80,7 @@ class TaskGroup:
 
     def spawn(self, func: Callable, *args: Any) -> None:  # noqa: ANN401
         """Spawn an arbitrary coroutine function in the task group."""
+        assert self._task_group is not None
         self._task_group.start_soon(func, *args)
 
     async def __aenter__(self) -> Self:
@@ -90,5 +94,6 @@ class TaskGroup:
         exc_value: BaseException | None,
         tb: TracebackType | None,
     ) -> None:
+        assert self._task_group is not None
         await self._task_group.__aexit__(exc_type, exc_value, tb)
         self._task_group = None

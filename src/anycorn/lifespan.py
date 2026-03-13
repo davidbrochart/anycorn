@@ -6,6 +6,9 @@ import sys
 from typing import TYPE_CHECKING
 
 import anyio
+import anyio.abc
+import anyio.from_thread
+import anyio.to_thread
 
 from .typing import AppWrapper, ASGIReceiveEvent, ASGISendEvent, LifespanScope, LifespanState
 from .utils import LifespanFailureError, LifespanTimeoutError

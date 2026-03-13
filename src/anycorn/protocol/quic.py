@@ -77,6 +77,8 @@ class QuicProtocol:
         self._server_cert_pem = get_server_certificate_pem(config)
 
         self.quic_config = QuicConfiguration(alpn_protocols=H3_ALPN, is_client=False)
+        assert config.certfile is not None
+        assert config.keyfile is not None
         self.quic_config.load_cert_chain(
             certfile=pathlib.Path(config.certfile), keyfile=pathlib.Path(config.keyfile)
         )

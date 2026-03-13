@@ -4,7 +4,7 @@ import importlib.metadata
 import warnings
 from typing import TYPE_CHECKING, Literal
 
-import anyio
+import anyio.abc
 
 from .config import Config
 from .run import worker_serve

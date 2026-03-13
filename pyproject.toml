@@ -50,12 +50,14 @@ h3 = [
 ]
 [dependency-groups]
 test = [
+    "anycorn[h3]",
     "httpx",
     "pytest",
     "mock",
     "trio",
 ]
 lint = [
+    "anycorn[h3]",
     "ruff>=0.15.6",
     "ty>=0.0.22",
 ]

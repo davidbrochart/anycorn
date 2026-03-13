@@ -13,6 +13,7 @@ from anycorn.typing import (
     Extensions,
     HTTPResponseStartEvent,
     HTTPScope,
+    ResponseSummary,
     TaskGroup,
     TLSExtension,
     WorkerContext,
@@ -117,22 +118,22 @@ class HTTPStream:
             if event.http_version in EARLY_HINTS_VERSIONS:
                 extensions["http.response.early_hint"] = {}
 
-            self.scope = {
-                "type": "http",
-                "http_version": event.http_version,
-                "asgi": {"spec_version": "2.1", "version": "3.0"},
-                "method": event.method,
-                "scheme": self.scheme,
-                "path": unquote(path.decode("ascii")),
-                "raw_path": path,
-                "query_string": query_string,
-                "root_path": self.config.root_path,
-                "headers": event.headers,
-                "client": self.client,
-                "server": self.server,
-                "state": event.state,
-                "extensions": extensions,
-            }
+            self.scope = HTTPScope(
+                type="http",
+                http_version=event.http_version,
+                asgi={"spec_version": "2.1", "version": "3.0"},
+                method=event.method,
+                scheme=self.scheme,
+                path=unquote(path.decode("ascii")),
+                raw_path=path,
+                query_string=query_string,
+                root_path=self.config.root_path,
+                headers=event.headers,
+                client=self.client,
+                server=self.server,
+                state=event.state,
+                extensions=extensions,
+            )
 
             if valid_server_name(self.config, event):
                 self.app_put = await self.task_group.spawn_app(
@@ -230,11 +231,11 @@ class HTTPStream:
             for name, value in self.scope["headers"]:
                 if name == b"te" and value == b"trailers":
                     headers = build_and_validate_headers(message["headers"])
-                    self.response = {
-                        "type": "http.response.start",
-                        "status": 200,
-                        "headers": headers,
-                    }
+                    self.response = HTTPResponseStartEvent(
+                        type="http.response.start",
+                        status=200,
+                        headers=headers,
+                    )
                     await self.send(
                         Response(
                             stream_id=self.stream_id,
@@ -280,5 +281,5 @@ class HTTPStream:
         await self.send(EndBody(stream_id=self.stream_id))
         self.state = ASGIHTTPState.CLOSED
         await self.config.log.access(
-            self.scope, {"status": status_code, "headers": []}, time() - self.start_time
+            self.scope, ResponseSummary(status=status_code, headers=[]), time() - self.start_time
         )

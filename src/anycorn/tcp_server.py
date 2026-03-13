@@ -8,6 +8,8 @@ from ssl import SSLError, SSLZeroReturnError
 from typing import TYPE_CHECKING
 
 import anyio
+import anyio.abc
+import anyio.streams.tls
 
 from .events import Closed, Event, RawData, Updated
 from .protocol import ProtocolWrapper

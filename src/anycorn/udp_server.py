@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import anyio
+import anyio.abc
 
 from .events import Event, RawData
 from .task_group import TaskGroup
@@ -64,4 +65,5 @@ class UDPServer:
     async def protocol_send(self, event: Event) -> None:
         """Forward a protocol event back to the UDP socket."""
         if isinstance(event, RawData):
+            assert event.address is not None
             await self.socket.sendto(event.data, event.address[0], event.address[1])

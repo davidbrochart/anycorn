@@ -108,7 +108,7 @@ class Handshake:
                 token.lower() == "upgrade" for token in self.connection_tokens
             ):
                 return False
-            if self.upgrade.lower() != b"websocket":
+            if self.upgrade is None or self.upgrade.lower() != b"websocket":
                 return False
 
         return self.version == WEBSOCKET_VERSION
@@ -314,8 +314,9 @@ class WSStream:
             await self._send_rejection(message)
         elif message["type"] == "websocket.send" and self.state == ASGIWebsocketState.CONNECTED:
             event: WSProtoEvent
-            if message.get("bytes") is not None:
-                event = BytesMessage(data=bytes(message["bytes"]))
+            msg_bytes = message.get("bytes")
+            if msg_bytes is not None:
+                event = BytesMessage(data=bytes(msg_bytes))
             elif not isinstance(message["text"], str):
                 msg = f"{message['text']} should be a str"
                 raise TypeError(msg)
@@ -349,6 +350,7 @@ class WSStream:
                     break
 
                 if event.message_finished:
+                    assert self.app_put is not None
                     await self.app_put(self.buffer.to_message())
                     self.buffer.clear()
             elif isinstance(event, Ping):
@@ -413,6 +415,8 @@ class WSStream:
             await self.config.log.access(self.scope, self.response, time() - self.start_time)
 
     async def _send_pings(self) -> None:
+        ping_interval = self.config.websocket_ping_interval
+        assert ping_interval is not None
         while not self.closed:
             await self._send_wsproto_event(Ping())
-            await self.context.sleep(self.config.websocket_ping_interval)
+            await self.context.sleep(ping_interval)

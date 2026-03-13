@@ -6,6 +6,7 @@ import socket
 from typing import TYPE_CHECKING, Any
 
 import anyio
+import anyio.abc
 
 from .logging import Logger
 
@@ -84,7 +85,8 @@ class BaseStatsdLogger(Logger):
         self, request: WWWScope, response: ResponseSummary | None, request_time: float
     ) -> None:
         """Log an access entry and emit request duration/count metrics."""
-        await super().access(request, response, request_time)
+        if response is not None:
+            await super().access(request, response, request_time)
         await self.histogram("anycorn.request.duration", request_time * 1_000)
         await self.increment("anycorn.requests", 1)
         if response is not None:
@@ -119,9 +121,9 @@ class StatsdLogger(BaseStatsdLogger):
     """StatsD logger that sends metrics over UDP."""
 
     socket: anyio.abc.ConnectedUDPSocket | None
-
     def __init__(self, config: Config) -> None:
         super().__init__(config)
+        assert config.statsd_host is not None
         self.address = tuple(config.statsd_host.rsplit(":", 1))
         self.socket = None
 

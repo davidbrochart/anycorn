@@ -6,6 +6,7 @@ from functools import wraps
 from typing import TYPE_CHECKING, ClassVar
 
 import anyio
+import anyio.abc
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -74,8 +75,8 @@ class EventWrapper:
 class WorkerContext:
     """Shared state for a single worker, tracking requests and shutdown signals."""
 
-    event_class: ClassVar[type[Event]] = EventWrapper  # type: ignore[assignment]
-    single_task_class: ClassVar[type[SingleTask]] = AnyioSingleTask  # type: ignore[assignment]
+    event_class: ClassVar[type[Event]] = EventWrapper
+    single_task_class: ClassVar[type[SingleTask]] = AnyioSingleTask
 
     def __init__(self, max_requests: int | None) -> None:
         self.max_requests = max_requests

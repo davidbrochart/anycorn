@@ -69,12 +69,21 @@ class SocketTypeError(Exception):
 class Config:
     """Anycorn server configuration."""
 
-    _bind: ClassVar[list[str]] = ["127.0.0.1:8000"]
-    _insecure_bind: ClassVar[list[str]] = []
-    _quic_bind: ClassVar[list[str]] = []
-    _quic_addresses: ClassVar[list[tuple]] = []
-    _log: Logger | None = None
-    _root_path: str = ""
+    _bind: list[str]
+    _insecure_bind: list[str]
+    _quic_bind: list[str]
+    _quic_addresses: list[tuple]
+    _log: Logger | None
+    _root_path: str
+
+    def __init__(self) -> None:
+        """Initialise per-instance mutable defaults."""
+        self._bind = ["127.0.0.1:8000"]
+        self._insecure_bind = []
+        self._quic_bind = []
+        self._quic_addresses = []
+        self._log = None
+        self._root_path = ""
 
     access_log_format = '%(h)s %(l)s %(l)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
     accesslog: logging.Logger | str | None = None
@@ -110,7 +119,7 @@ class Config:
     max_requests: int | None = None
     max_requests_jitter: int = 0
     pid_path: str | None = None
-    server_names: ClassVar[list[str]] = []
+    server_names: list[str] = []  # noqa: RUF012
     shutdown_timeout = 60 * SECONDS
     ssl_handshake_timeout = 60 * SECONDS
     startup_timeout = 60 * SECONDS
@@ -255,7 +264,7 @@ class Config:
         for bind in binds:
             binding: Any = None
             if bind.startswith("unix:"):
-                sock = socket.socket(socket.AF_UNIX, type_)
+                sock = socket.socket(socket.AF_UNIX, type_)  # type: ignore[attr-defined]
                 binding = bind[5:]
                 with contextlib.suppress(FileNotFoundError):
                     if stat.S_ISSOCK(pathlib.Path(binding).stat().st_mode):
@@ -279,7 +288,7 @@ class Config:
 
                 if self.workers > 1:
                     with contextlib.suppress(AttributeError):
-                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # type: ignore[attr-defined]
                 binding = (host, port)
 
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -287,14 +296,16 @@ class Config:
             if bind.startswith("unix:"):
                 if self.umask is not None:
                     current_umask = os.umask(self.umask)
+                assert binding is not None
                 sock.bind(binding)
                 if self.user is not None and self.group is not None:
-                    os.chown(binding, self.user, self.group)
+                    os.chown(binding, self.user, self.group)  # type: ignore[attr-defined]
                 if self.umask is not None:
                     os.umask(current_umask)
             elif bind.startswith("fd://"):
                 pass
             else:
+                assert binding is not None
                 sock.bind(binding)
 
             sock.setblocking(False)  # noqa: FBT003
@@ -313,7 +324,9 @@ class Config:
 
         headers.extend((b"alt-svc", h.encode()) for h in self.alt_svc_headers)
         if len(self.alt_svc_headers) == 0 and self._quic_addresses:
-            from aioquic.h3.connection import H3_ALPN  # noqa: PLC0415
+            from aioquic.h3.connection import (  # noqa: PLC0415
+                H3_ALPN,
+            )
 
             for version in H3_ALPN:
                 for addr in self._quic_addresses:
@@ -375,6 +388,8 @@ class Config:
         """
         file_path = os.fspath(filename)
         spec = importlib.util.spec_from_file_location("module.name", file_path)
+        assert spec is not None
+        assert spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return cls.from_object(module)

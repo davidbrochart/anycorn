@@ -242,78 +242,78 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     workers: int | None,
 ) -> int:
     """Configure and start the Anycorn server with the given options."""
-    config = _load_config(config)
-    config.application_path = application
+    cfg = _load_config(config)
+    cfg.application_path = application
 
     if log_level is not None:
-        config.loglevel = log_level
+        cfg.loglevel = log_level
     if access_logformat is not None:
-        config.access_log_format = access_logformat
+        cfg.access_log_format = access_logformat
     if access_logfile is not None:
-        config.accesslog = access_logfile
+        cfg.accesslog = access_logfile
     if backlog is not None:
-        config.backlog = backlog
+        cfg.backlog = backlog
     if ca_certs is not None:
-        config.ca_certs = ca_certs
+        cfg.ca_certs = ca_certs
     if certfile is not None:
-        config.certfile = certfile
+        cfg.certfile = certfile
     if cert_reqs is not None:
-        config.cert_reqs = cert_reqs
+        cfg.cert_reqs = cert_reqs
     if ciphers is not None:
-        config.ciphers = ciphers
+        cfg.ciphers = ciphers
     if debug is not None:
-        config.debug = debug
+        cfg.debug = debug
     if error_logfile is not None:
-        config.errorlog = error_logfile
+        cfg.errorlog = error_logfile
     if graceful_timeout is not None:
-        config.graceful_timeout = graceful_timeout
+        cfg.graceful_timeout = graceful_timeout
     if read_timeout is not None:
-        config.read_timeout = read_timeout
+        cfg.read_timeout = read_timeout
     if group is not None:
-        config.group = group
+        cfg.group = group
     if keep_alive is not None:
-        config.keep_alive_timeout = keep_alive
+        cfg.keep_alive_timeout = keep_alive
     if keyfile is not None:
-        config.keyfile = keyfile
+        cfg.keyfile = keyfile
     if keyfile_password is not None:
-        config.keyfile_password = keyfile_password
+        cfg.keyfile_password = keyfile_password
     if log_config is not None:
-        config.logconfig = log_config
+        cfg.logconfig = log_config
     if max_requests is not None:
-        config.max_requests = max_requests
+        cfg.max_requests = max_requests
     if max_requests_jitter is not None:
-        config.max_requests_jitter = max_requests_jitter
+        cfg.max_requests_jitter = max_requests_jitter
     if pid is not None:
-        config.pid_path = pid
+        cfg.pid_path = pid
     if root_path is not None:
-        config.root_path = root_path
+        cfg.root_path = root_path
     if reload is not None:
-        config.use_reloader = reload
+        cfg.use_reloader = reload
     if statsd_host is not None:
-        config.statsd_host = statsd_host
+        cfg.statsd_host = statsd_host
     if statsd_prefix is not None:
-        config.statsd_prefix = statsd_prefix
+        cfg.statsd_prefix = statsd_prefix
     if umask is not None:
-        config.umask = umask
+        cfg.umask = umask
     if user is not None:
-        config.user = user
+        cfg.user = user
     if worker_class is not None:
-        config.worker_class = worker_class
+        cfg.worker_class = worker_class
     if verify_mode is not None:
-        config.verify_mode = ssl.VerifyMode[verify_mode]
+        cfg.verify_mode = ssl.VerifyMode[verify_mode]
     if websocket_ping_interval is not None:
-        config.websocket_ping_interval = websocket_ping_interval
+        cfg.websocket_ping_interval = websocket_ping_interval
     if workers is not None:
-        config.workers = workers
+        cfg.workers = workers
 
     if len(binds) > 0:
-        config.bind = binds
+        cfg.bind = binds
     if len(insecure_binds) > 0:
-        config.insecure_bind = insecure_binds
+        cfg.insecure_bind = insecure_binds
     if len(server_names) > 0:
-        config.server_names = server_names
+        cfg.server_names = server_names
 
-    return run(config)
+    return run(cfg)
 
 
 if __name__ == "__main__":
