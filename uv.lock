@@ -62,11 +62,6 @@ dev = [
     { name = "trio" },
     { name = "ty" },
 ]
-lint = [
-    { name = "anycorn", extra = ["h3"] },
-    { name = "ruff" },
-    { name = "ty" },
-]
 test = [
     { name = "anycorn", extra = ["h3"] },
     { name = "httpx" },
@@ -99,11 +94,6 @@ dev = [
     { name = "pytest" },
     { name = "ruff", specifier = ">=0.15.6" },
     { name = "trio" },
-    { name = "ty", specifier = ">=0.0.22" },
-]
-lint = [
-    { name = "anycorn", extras = ["h3"] },
-    { name = "ruff", specifier = ">=0.15.6" },
     { name = "ty", specifier = ">=0.0.22" },
 ]
 test = [
