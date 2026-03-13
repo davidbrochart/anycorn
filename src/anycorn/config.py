@@ -1,15 +1,16 @@
+"""Configuration classes and utilities for Anycorn."""
+
 from __future__ import annotations
 
 import importlib
 import importlib.util
-import logging
 import os
+import pathlib
 import socket
 import stat
 import sys
 import types
 import warnings
-from collections.abc import Mapping
 from dataclasses import dataclass
 from ssl import (
     OP_NO_COMPRESSION,
@@ -21,7 +22,7 @@ from ssl import (
     create_default_context,
 )
 from time import time
-from typing import Any, AnyStr, Union
+from typing import TYPE_CHECKING, Any, AnyStr, ClassVar
 from wsgiref.handlers import format_date_time
 
 if sys.version_info >= (3, 11):
@@ -29,25 +30,36 @@ if sys.version_info >= (3, 11):
 else:
     import tomli as tomllib
 
+import contextlib
+
 from .logging import Logger
+
+if TYPE_CHECKING:
+    import logging
+    from collections.abc import Mapping
 
 BYTES = 1
 OCTETS = 1
 SECONDS = 1.0
 
-FilePath = Union[AnyStr, os.PathLike]
-SocketKind = Union[int, socket.SocketKind]
+FilePath = AnyStr | os.PathLike
+SocketKind = int | socket.SocketKind
 
 
 @dataclass
 class Sockets:
+    """Container for server sockets grouped by protocol type."""
+
     secure_sockets: list[socket.socket]
     insecure_sockets: list[socket.socket]
     quic_sockets: list[socket.socket]
 
 
 class SocketTypeError(Exception):
+    """Raised when a socket has an unexpected type."""
+
     def __init__(self, expected: SocketKind, actual: SocketKind) -> None:
+        """Initialise with the expected and actual socket kinds."""
         super().__init__(
             f'Unexpected socket type, wanted "{socket.SocketKind(expected)}" got '
             f'"{socket.SocketKind(actual)}"'
@@ -55,17 +67,19 @@ class SocketTypeError(Exception):
 
 
 class Config:
-    _bind = ["127.0.0.1:8000"]
-    _insecure_bind: list[str] = []
-    _quic_bind: list[str] = []
-    _quic_addresses: list[tuple] = []
+    """Anycorn server configuration."""
+
+    _bind: ClassVar[list[str]] = ["127.0.0.1:8000"]
+    _insecure_bind: ClassVar[list[str]] = []
+    _quic_bind: ClassVar[list[str]] = []
+    _quic_addresses: ClassVar[list[tuple]] = []
     _log: Logger | None = None
     _root_path: str = ""
 
     access_log_format = '%(h)s %(l)s %(l)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
     accesslog: logging.Logger | str | None = None
-    alpn_protocols = ["h2", "http/1.1"]
-    alt_svc_headers: list[str] = []
+    alpn_protocols: ClassVar[list[str]] = ["h2", "http/1.1"]
+    alt_svc_headers: ClassVar[list[str]] = []
     application_path: str
     backlog = 100
     ca_certs: str | None = None
@@ -96,7 +110,7 @@ class Config:
     max_requests: int | None = None
     max_requests_jitter: int = 0
     pid_path: str | None = None
-    server_names: list[str] = []
+    server_names: ClassVar[list[str]] = []
     shutdown_timeout = 60 * SECONDS
     ssl_handshake_timeout = 60 * SECONDS
     startup_timeout = 60 * SECONDS
@@ -114,23 +128,27 @@ class Config:
     wsgi_max_body_size = 16 * 1024 * 1024 * BYTES
 
     def set_cert_reqs(self, value: int) -> None:
-        warnings.warn("Please use verify_mode instead", Warning)
+        """Set certificate requirements (deprecated, use verify_mode instead)."""
+        warnings.warn("Please use verify_mode instead", Warning, stacklevel=2)
         self.verify_mode = VerifyMode(value)
 
     cert_reqs = property(None, set_cert_reqs)
 
     @property
     def log(self) -> Logger:
+        """Return the logger, creating it if necessary."""
         if self._log is None:
             self._log = self.logger_class(self)
         return self._log
 
     @property
     def bind(self) -> list[str]:
+        """Return the list of bind addresses."""
         return self._bind
 
     @bind.setter
     def bind(self, value: list[str] | str) -> None:
+        """Set the bind addresses, accepting a string or list of strings."""
         if isinstance(value, str):
             self._bind = [value]
         else:
@@ -138,10 +156,12 @@ class Config:
 
     @property
     def insecure_bind(self) -> list[str]:
+        """Return the list of insecure bind addresses."""
         return self._insecure_bind
 
     @insecure_bind.setter
     def insecure_bind(self, value: list[str] | str) -> None:
+        """Set the insecure bind addresses, accepting a string or list of strings."""
         if isinstance(value, str):
             self._insecure_bind = [value]
         else:
@@ -149,10 +169,12 @@ class Config:
 
     @property
     def quic_bind(self) -> list[str]:
+        """Return the list of QUIC bind addresses."""
         return self._quic_bind
 
     @quic_bind.setter
     def quic_bind(self, value: list[str] | str) -> None:
+        """Set the QUIC bind addresses, accepting a string or list of strings."""
         if isinstance(value, str):
             self._quic_bind = [value]
         else:
@@ -160,13 +182,16 @@ class Config:
 
     @property
     def root_path(self) -> str:
+        """Return the root path."""
         return self._root_path
 
     @root_path.setter
     def root_path(self, value: str) -> None:
+        """Set the root path, stripping any trailing slash."""
         self._root_path = value.rstrip("/")
 
     def create_ssl_context(self) -> SSLContext | None:
+        """Create and return an SSL context, or None if SSL is not enabled."""
         if not self.ssl_enabled:
             return None
 
@@ -194,9 +219,11 @@ class Config:
 
     @property
     def ssl_enabled(self) -> bool:
+        """Return True if SSL is enabled (both certfile and keyfile are set)."""
         return self.certfile is not None and self.keyfile is not None
 
     def create_sockets(self) -> Sockets:
+        """Create and return the server sockets."""
         if self.ssl_enabled:
             secure_sockets = self._create_sockets(self.bind)
             insecure_sockets = self._create_sockets(self.insecure_bind)
@@ -212,15 +239,15 @@ class Config:
         self._quic_addresses = []
         for sock in sockets:
             name = sock.getsockname()
-            if not isinstance(name, str) and len(name) >= 2:
+            if not isinstance(name, str) and len(name) >= 2:  # noqa: PLR2004
                 self._quic_addresses.append(name)
             else:
                 warnings.warn(
                     f'Cannot create a alt-svc header for the QUIC socket with address "{name}"',
-                    Warning,
+                    Warning, stacklevel=2,
                 )
 
-    def _create_sockets(
+    def _create_sockets(  # noqa: C901, PLR0912
         self, binds: list[str], type_: int = socket.SOCK_STREAM
     ) -> list[socket.socket]:
         sockets: list[socket.socket] = []
@@ -229,18 +256,16 @@ class Config:
             if bind.startswith("unix:"):
                 sock = socket.socket(socket.AF_UNIX, type_)
                 binding = bind[5:]
-                try:
-                    if stat.S_ISSOCK(os.stat(binding).st_mode):
-                        os.remove(binding)
-                except FileNotFoundError:
-                    pass
+                with contextlib.suppress(FileNotFoundError):
+                    if stat.S_ISSOCK(pathlib.Path(binding).stat().st_mode):
+                        pathlib.Path(binding).unlink()
             elif bind.startswith("fd://"):
                 sock = socket.socket(fileno=int(bind[5:]))
                 actual_type = sock.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE)
                 if actual_type != type_:
                     raise SocketTypeError(type_, actual_type)
             else:
-                bind = bind.replace("[", "").replace("]", "")
+                bind = bind.replace("[", "").replace("]", "")  # noqa: PLW2901
                 try:
                     value = bind.rsplit(":", 1)
                     host, port = value[0], int(value[1])
@@ -252,10 +277,8 @@ class Config:
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
                 if self.workers > 1:
-                    try:
+                    with contextlib.suppress(AttributeError):
                         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-                    except AttributeError:
-                        pass
                 binding = (host, port)
 
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -273,25 +296,23 @@ class Config:
             else:
                 sock.bind(binding)
 
-            sock.setblocking(False)
-            try:
+            sock.setblocking(False)  # noqa: FBT003
+            with contextlib.suppress(AttributeError):
                 sock.set_inheritable(True)
-            except AttributeError:
-                pass
             sockets.append(sock)
         return sockets
 
     def response_headers(self, protocol: str) -> list[tuple[bytes, bytes]]:
-        headers = []
+        """Build and return the response headers for the given protocol."""
+        headers: list[tuple[bytes, bytes]] = []
         if self.include_date_header:
             headers.append((b"date", format_date_time(time()).encode("ascii")))
         if self.include_server_header:
             headers.append((b"server", f"anycorn-{protocol}".encode("ascii")))
 
-        for alt_svc_header in self.alt_svc_headers:
-            headers.append((b"alt-svc", alt_svc_header.encode()))
+        headers.extend((b"alt-svc", h.encode()) for h in self.alt_svc_headers)
         if len(self.alt_svc_headers) == 0 and self._quic_addresses:
-            from aioquic.h3.connection import H3_ALPN
+            from aioquic.h3.connection import H3_ALPN  # noqa: PLC0415
 
             for version in H3_ALPN:
                 for addr in self._quic_addresses:
@@ -301,12 +322,15 @@ class Config:
         return headers
 
     def set_statsd_logger_class(self, statsd_logger: type[Logger]) -> None:
+        """Set the logger class to a statsd logger if statsd is configured."""
         if self.logger_class == Logger and self.statsd_host is not None:
             self.logger_class = statsd_logger
 
     @classmethod
     def from_mapping(
-        cls: type[Config], mapping: Mapping[str, Any] | None = None, **kwargs: Any
+        cls: type[Config],
+        mapping: Mapping[str, Any] | None = None,
+        **kwargs: Any,  # noqa: ANN401
     ) -> Config:
         """Create a configuration from a mapping.
 
@@ -323,6 +347,7 @@ class Config:
             mapping: Optionally a mapping object.
             kwargs: Optionally a collection of keyword arguments to
                 form a mapping.
+
         """
         mappings: dict[str, Any] = {}
         if mapping is not None:
@@ -330,10 +355,8 @@ class Config:
         mappings.update(kwargs)
         config = cls()
         for key, value in mappings.items():
-            try:
+            with contextlib.suppress(AttributeError):
                 setattr(config, key, value)
-            except AttributeError:
-                pass
 
         return config
 
@@ -347,6 +370,7 @@ class Config:
 
         Arguments:
             filename: The filename which gives the path to the file.
+
         """
         file_path = os.fspath(filename)
         spec = importlib.util.spec_from_file_location("module.name", file_path)
@@ -366,9 +390,10 @@ class Config:
 
         Arguments:
             filename: The filename which gives the path to the file.
+
         """
-        file_path = os.fspath(filename)
-        with open(file_path, "rb") as file_:
+        file_path = pathlib.Path(os.fspath(filename))
+        with file_path.open("rb") as file_:
             data = tomllib.load(file_)
         return cls.from_mapping(data)
 

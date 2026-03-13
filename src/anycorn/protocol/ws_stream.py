@@ -1,10 +1,11 @@
+"""ASGI WebSocket stream handler that manages handshake and message framing."""
+
 from __future__ import annotations
 
-from collections.abc import Awaitable, Iterable
 from enum import Enum, auto
 from io import BytesIO, StringIO
 from time import time
-from typing import Callable
+from typing import TYPE_CHECKING
 from urllib.parse import unquote
 
 from wsproto.connection import Connection, ConnectionState, ConnectionType
@@ -23,8 +24,7 @@ from wsproto.frame_protocol import CloseReason
 from wsproto.handshake import WEBSOCKET_VERSION, server_extensions_handshake
 from wsproto.utilities import LocalProtocolError, generate_accept_token, split_comma_header
 
-from ..config import Config
-from ..typing import (
+from anycorn.typing import (
     AppWrapper,
     ASGISendEvent,
     Extensions,
@@ -36,18 +36,28 @@ from ..typing import (
     WebsocketScope,
     WorkerContext,
 )
-from ..utils import (
+from anycorn.utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
     suppress_body,
     valid_server_name,
 )
+
 from .events import Body, Data, EndBody, EndData, Event, Request, Response, StreamClosed
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Iterable
+
+    from anycorn.config import Config
 
 
 class ASGIWebsocketState(Enum):
-    # Hypercorn supports the ASGI websocket HTTP response extension,
-    # which allows HTTP responses rather than acceptance.
+    """State machine for ASGI WebSocket lifecycle.
+
+    Hypercorn supports the ASGI websocket HTTP response extension,
+    which allows HTTP responses rather than acceptance.
+    """
+
     HANDSHAKE = auto()
     CONNECTED = auto()
     RESPONSE = auto()
@@ -56,11 +66,15 @@ class ASGIWebsocketState(Enum):
 
 
 class FrameTooLargeError(Exception):
-    pass
+    """Raised when a WebSocket message exceeds the configured maximum size."""
+
 
 
 class Handshake:
+    """Parses and validates a WebSocket upgrade handshake."""
+
     def __init__(self, headers: list[tuple[bytes, bytes]], http_version: str) -> None:
+        """Parse WebSocket-related headers from the request."""
         self.accepted = False
         self.http_version = http_version
         self.connection_tokens: list[str] | None = None
@@ -69,8 +83,8 @@ class Handshake:
         self.subprotocols: list[str] | None = None
         self.upgrade: bytes | None = None
         self.version: bytes | None = None
-        for name, value in headers:
-            name = name.lower()
+        for raw_name, value in headers:
+            name = raw_name.lower()
             if name == b"connection":
                 self.connection_tokens = split_comma_header(value)
             elif name == b"sec-websocket-extensions":
@@ -85,9 +99,10 @@ class Handshake:
                 self.upgrade = value
 
     def is_valid(self) -> bool:
+        """Return True if the handshake headers form a valid WebSocket upgrade."""
         if self.http_version < "1.1":
             return False
-        elif self.http_version == "1.1":
+        if self.http_version == "1.1":
             if self.key is None:
                 return False
             if self.connection_tokens is None or not any(
@@ -97,21 +112,20 @@ class Handshake:
             if self.upgrade.lower() != b"websocket":
                 return False
 
-        if self.version != WEBSOCKET_VERSION:
-            return False
-        return True
+        return self.version == WEBSOCKET_VERSION
 
     def accept(
         self,
         subprotocol: str | None,
         additional_headers: Iterable[tuple[bytes, bytes]],
     ) -> tuple[int, list[tuple[bytes, bytes]], Connection]:
+        """Build accept headers and return the status code, headers, and connection."""
         headers = []
         if subprotocol is not None:
             if self.subprotocols is None or subprotocol not in self.subprotocols:
-                raise Exception("Invalid Subprotocol")
-            else:
-                headers.append((b"sec-websocket-protocol", subprotocol.encode()))
+                msg = "Invalid Subprotocol"
+                raise Exception(msg)  # noqa: TRY002
+            headers.append((b"sec-websocket-protocol", subprotocol.encode()))
 
         extensions: list[Extension] = [PerMessageDeflate()]
         accepts = None
@@ -130,8 +144,9 @@ class Handshake:
             status_code = 101
 
         for name, value in additional_headers:
-            if b"sec-websocket-protocol" == name or name.startswith(b":"):
-                raise Exception(f"Invalid additional header, {name.decode()}")
+            if name == b"sec-websocket-protocol" or name.startswith(b":"):
+                msg = f"Invalid additional header, {name.decode()}"
+                raise Exception(msg)  # noqa: TRY002
 
             headers.append((name, value))
 
@@ -140,12 +155,16 @@ class Handshake:
 
 
 class WebsocketBuffer:
+    """Accumulates WebSocket message fragments into a single message."""
+
     def __init__(self, max_length: int) -> None:
+        """Initialize with the maximum allowed message length in bytes."""
         self.value: BytesIO | StringIO | None = None
         self.length = 0
         self.max_length = max_length
 
     def extend(self, event: Message) -> None:
+        """Append a message fragment, raising FrameTooLargeError if the limit is exceeded."""
         if self.value is None:
             if isinstance(event, TextMessage):
                 self.value = StringIO()
@@ -153,13 +172,15 @@ class WebsocketBuffer:
                 self.value = BytesIO()
         self.length += self.value.write(event.data)
         if self.length > self.max_length:
-            raise FrameTooLargeError()
+            raise FrameTooLargeError
 
     def clear(self) -> None:
+        """Reset the buffer ready for the next message."""
         self.value = None
         self.length = 0
 
     def to_message(self) -> dict:
+        """Return the accumulated data as a websocket.receive ASGI message."""
         return {
             "type": "websocket.receive",
             "bytes": self.value.getvalue() if isinstance(self.value, BytesIO) else None,
@@ -168,7 +189,9 @@ class WebsocketBuffer:
 
 
 class WSStream:
-    def __init__(
+    """Handles a single WebSocket stream including handshake and message framing."""
+
+    def __init__(  # noqa: PLR0913
         self,
         app: AppWrapper,
         config: Config,
@@ -180,6 +203,7 @@ class WSStream:
         stream_id: int,
         tls: TLSExtension | None,
     ) -> None:
+        """Initialize the WebSocket stream handler."""
         self.app = app
         self.app_put: Callable | None = None
         self.buffer = WebsocketBuffer(config.websocket_max_message_size)
@@ -203,12 +227,14 @@ class WSStream:
 
     @property
     def idle(self) -> bool:
+        """Return True when the WebSocket stream is in a terminal state."""
         return self.state in {ASGIWebsocketState.CLOSED, ASGIWebsocketState.HTTPCLOSED}
 
-    async def handle(self, event: Event) -> None:
+    async def handle(self, event: Event) -> None:  # noqa: C901
+        """Handle an incoming stream event."""
         if self.closed:
             return
-        elif isinstance(event, Request):
+        if isinstance(event, Request):
             self.start_time = time()
             self.handshake = Handshake(event.headers, event.http_version)
             path, _, query_string = event.raw_path.partition(b"?")
@@ -259,7 +285,8 @@ class WSStream:
                     code = CloseReason.ABNORMAL_CLOSURE.value
                 await self.app_put({"type": "websocket.disconnect", "code": code})
 
-    async def app_send(self, message: ASGISendEvent | None) -> None:
+    async def app_send(self, message: ASGISendEvent | None) -> None:  # noqa: C901, PLR0912
+        """Handle a message sent by the ASGI application."""
         if self.closed:
             # Allow app to finish after close
             return
@@ -274,44 +301,44 @@ class WSStream:
             elif self.state == ASGIWebsocketState.CONNECTED:
                 await self._send_wsproto_event(CloseConnection(code=CloseReason.INTERNAL_ERROR))
             await self.send(StreamClosed(stream_id=self.stream_id))
-        else:
-            if message["type"] == "websocket.accept" and self.state == ASGIWebsocketState.HANDSHAKE:
-                await self._accept(message)
-            elif (
-                message["type"] == "websocket.http.response.start"
-                and self.state == ASGIWebsocketState.HANDSHAKE
-            ):
-                self.response = message
-            elif message["type"] == "websocket.http.response.body" and self.state in {
-                ASGIWebsocketState.HANDSHAKE,
-                ASGIWebsocketState.RESPONSE,
-            }:
-                await self._send_rejection(message)
-            elif message["type"] == "websocket.send" and self.state == ASGIWebsocketState.CONNECTED:
-                event: WSProtoEvent
-                if message.get("bytes") is not None:
-                    event = BytesMessage(data=bytes(message["bytes"]))
-                elif not isinstance(message["text"], str):
-                    raise TypeError(f"{message['text']} should be a str")
-                else:
-                    event = TextMessage(data=message["text"])
-                await self._send_wsproto_event(event)
-            elif (
-                message["type"] == "websocket.close" and self.state == ASGIWebsocketState.HANDSHAKE
-            ):
-                self.state = ASGIWebsocketState.HTTPCLOSED
-                await self._send_error_response(403)
-            elif message["type"] == "websocket.close":
-                self.state = ASGIWebsocketState.CLOSED
-                await self._send_wsproto_event(
-                    CloseConnection(
-                        code=int(message.get("code", CloseReason.NORMAL_CLOSURE)),
-                        reason=message.get("reason"),
-                    )
-                )
-                await self.send(EndData(stream_id=self.stream_id))
+        elif message["type"] == "websocket.accept" and self.state == ASGIWebsocketState.HANDSHAKE:
+            await self._accept(message)
+        elif (
+            message["type"] == "websocket.http.response.start"
+            and self.state == ASGIWebsocketState.HANDSHAKE
+        ):
+            self.response = message
+        elif message["type"] == "websocket.http.response.body" and self.state in {
+            ASGIWebsocketState.HANDSHAKE,
+            ASGIWebsocketState.RESPONSE,
+        }:
+            await self._send_rejection(message)
+        elif message["type"] == "websocket.send" and self.state == ASGIWebsocketState.CONNECTED:
+            event: WSProtoEvent
+            if message.get("bytes") is not None:
+                event = BytesMessage(data=bytes(message["bytes"]))
+            elif not isinstance(message["text"], str):
+                msg = f"{message['text']} should be a str"
+                raise TypeError(msg)
             else:
-                raise UnexpectedMessageError(self.state, message["type"])
+                event = TextMessage(data=message["text"])
+            await self._send_wsproto_event(event)
+        elif (
+            message["type"] == "websocket.close" and self.state == ASGIWebsocketState.HANDSHAKE
+        ):
+            self.state = ASGIWebsocketState.HTTPCLOSED
+            await self._send_error_response(403)
+        elif message["type"] == "websocket.close":
+            self.state = ASGIWebsocketState.CLOSED
+            await self._send_wsproto_event(
+                CloseConnection(
+                    code=int(message.get("code", CloseReason.NORMAL_CLOSURE)),
+                    reason=message.get("reason"),
+                )
+            )
+            await self.send(EndData(stream_id=self.stream_id))
+        else:
+            raise UnexpectedMessageError(self.state, message["type"])
 
     async def _handle_events(self) -> None:
         for event in self.connection.events():

@@ -1,11 +1,13 @@
+"""Logging utilities for Anycorn, including access and error log formatting."""
+
 from __future__ import annotations
 
 import json
 import logging
 import os
+import pathlib
 import sys
 import time
-from collections.abc import Mapping
 from http import HTTPStatus
 from logging.config import dictConfig, fileConfig
 from typing import IO, TYPE_CHECKING, Any
@@ -17,6 +19,8 @@ else:
 
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from .config import Config
     from .typing import ResponseSummary, WWWScope
 
@@ -46,11 +50,12 @@ def _create_logger(
         if level is not None:
             logger.setLevel(logging.getLevelName(level.upper()))
         return logger
-    else:
-        return None
+    return None
 
 
 class Logger:
+    """Anycorn logger providing access and error logging."""
+
     def __init__(self, config: Config) -> None:
         self.access_log_format = config.access_log_format
 
@@ -67,54 +72,61 @@ class Logger:
 
         if config.logconfig is not None:
             if config.logconfig.startswith("json:"):
-                with open(config.logconfig[5:]) as file_:
+                with pathlib.Path(config.logconfig[5:]).open() as file_:
                     dictConfig(json.load(file_))
             elif config.logconfig.startswith("toml:"):
-                with open(config.logconfig[5:], "rb") as file_:
+                with pathlib.Path(config.logconfig[5:]).open("rb") as file_:
                     dictConfig(tomllib.load(file_))
             else:
                 log_config = {
                     "__file__": config.logconfig,
-                    "here": os.path.dirname(config.logconfig),
+                    "here": str(pathlib.Path(config.logconfig).parent),
                 }
                 fileConfig(config.logconfig, defaults=log_config, disable_existing_loggers=False)
-        else:
-            if config.logconfig_dict is not None:
-                dictConfig(config.logconfig_dict)
+        elif config.logconfig_dict is not None:
+            dictConfig(config.logconfig_dict)
 
     async def access(
         self, request: WWWScope, response: ResponseSummary, request_time: float
     ) -> None:
+        """Log an access log entry."""
         if self.access_logger is not None:
             self.access_logger.info(
                 self.access_log_format, self.atoms(request, response, request_time)
             )
 
-    async def critical(self, message: str, *args: Any, **kwargs: Any) -> None:
+    async def critical(self, message: str, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """Log a critical-level message."""
         if self.error_logger is not None:
             self.error_logger.critical(message, *args, **kwargs)
 
-    async def error(self, message: str, *args: Any, **kwargs: Any) -> None:
+    async def error(self, message: str, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """Log an error-level message."""
         if self.error_logger is not None:
             self.error_logger.error(message, *args, **kwargs)
 
-    async def warning(self, message: str, *args: Any, **kwargs: Any) -> None:
+    async def warning(self, message: str, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """Log a warning-level message."""
         if self.error_logger is not None:
             self.error_logger.warning(message, *args, **kwargs)
 
-    async def info(self, message: str, *args: Any, **kwargs: Any) -> None:
+    async def info(self, message: str, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """Log an info-level message."""
         if self.error_logger is not None:
             self.error_logger.info(message, *args, **kwargs)
 
-    async def debug(self, message: str, *args: Any, **kwargs: Any) -> None:
+    async def debug(self, message: str, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """Log a debug-level message."""
         if self.error_logger is not None:
             self.error_logger.debug(message, *args, **kwargs)
 
-    async def exception(self, message: str, *args: Any, **kwargs: Any) -> None:
+    async def exception(self, message: str, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """Log an exception with traceback."""
         if self.error_logger is not None:
             self.error_logger.exception(message, *args, **kwargs)
 
-    async def log(self, level: int, message: str, *args: Any, **kwargs: Any) -> None:
+    async def log(self, level: int, message: str, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
+        """Log a message at the given numeric level."""
         if self.error_logger is not None:
             self.error_logger.log(level, message, *args, **kwargs)
 
@@ -128,14 +140,17 @@ class Logger:
         """
         return AccessLogAtoms(request, response, request_time)
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name: str) -> Any:  # noqa: ANN401
         return getattr(self.error_logger, name)
 
 
 class AccessLogAtoms(dict):
+    """Dictionary of atoms for formatting access log entries."""
+
     def __init__(
         self, request: WWWScope, response: ResponseSummary | None, request_time: float
     ) -> None:
+        super().__init__()
         for name, value in request["headers"]:
             self[f"{{{name.decode('latin1').lower()}}}i"] = value.decode("latin1")
         for name, value in os.environ.items():
@@ -144,16 +159,13 @@ class AccessLogAtoms(dict):
         client = request.get("client")
         if client is None:
             remote_addr = None
-        elif len(client) == 2:
+        elif len(client) == 2:  # noqa: PLR2004
             remote_addr = f"{client[0]}:{client[1]}"
         elif len(client) == 1:
             remote_addr = client[0]
         else:  # make sure not to throw UnboundLocalError
             remote_addr = f"<???{client}???>"
-        if request["type"] == "http":
-            method = request["method"]
-        else:
-            method = "GET"
+        method = request["method"] if request["type"] == "http" else "GET"
         query_string = request["query_string"].decode()
         path_with_qs = request["path"] + ("?" + query_string if query_string else "")
 
@@ -194,10 +206,10 @@ class AccessLogAtoms(dict):
         )
 
     def __getitem__(self, key: str) -> str:
+        """Return the atom for *key*, or ``'-'`` if missing."""
         try:
             if key.startswith("{"):
                 return super().__getitem__(key.lower())
-            else:
-                return super().__getitem__(key)
+            return super().__getitem__(key)
         except KeyError:
             return "-"

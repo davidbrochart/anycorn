@@ -1,25 +1,32 @@
+"""Wrappers for ASGI and WSGI applications."""
+
 from __future__ import annotations
 
 import sys
 from functools import partial
 from io import BytesIO
-from typing import Callable
+from typing import TYPE_CHECKING
 
-from .typing import (
-    ASGIFramework,
-    ASGIReceiveCallable,
-    ASGISendCallable,
-    HTTPScope,
-    Scope,
-    WSGIFramework,
-)
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from .typing import (
+        ASGIFramework,
+        ASGIReceiveCallable,
+        ASGISendCallable,
+        HTTPScope,
+        Scope,
+        WSGIFramework,
+    )
 
 
 class InvalidPathError(Exception):
-    pass
+    """Raised when the request path is invalid."""
 
 
 class ASGIWrapper:
+    """Wrapper that adapts an ASGI application to the internal AppWrapper protocol."""
+
     def __init__(self, app: ASGIFramework) -> None:
         self.app = app
 
@@ -28,13 +35,16 @@ class ASGIWrapper:
         scope: Scope,
         receive: ASGIReceiveCallable,
         send: ASGISendCallable,
-        sync_spawn: Callable,
-        call_soon: Callable,
+        _sync_spawn: Callable,
+        _call_soon: Callable,
     ) -> None:
+        """Call the wrapped ASGI application."""
         await self.app(scope, receive, send)
 
 
 class WSGIWrapper:
+    """Wrapper that adapts a WSGI application to the internal AppWrapper protocol."""
+
     def __init__(self, app: WSGIFramework, max_body_size: int) -> None:
         self.app = app
         self.max_body_size = max_body_size
@@ -47,6 +57,7 @@ class WSGIWrapper:
         sync_spawn: Callable,
         call_soon: Callable,
     ) -> None:
+        """Dispatch a request to the wrapped WSGI application."""
         if scope["type"] == "http":
             await self.handle_http(scope, receive, send, sync_spawn, call_soon)
         elif scope["type"] == "websocket":
@@ -54,7 +65,8 @@ class WSGIWrapper:
         elif scope["type"] == "lifespan":
             return
         else:
-            raise Exception(f"Unknown scope type, {scope['type']}")
+            msg = f"Unknown scope type, {scope['type']}"
+            raise RuntimeError(msg)
 
     async def handle_http(
         self,
@@ -64,6 +76,7 @@ class WSGIWrapper:
         sync_spawn: Callable,
         call_soon: Callable,
     ) -> None:
+        """Handle an HTTP request via the WSGI application."""
         body = bytearray()
         while True:
             message = await receive()
@@ -84,6 +97,7 @@ class WSGIWrapper:
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
     def run_app(self, environ: dict, send: Callable) -> None:
+        """Run the WSGI app and forward the response via *send*."""
         headers: list[tuple[bytes, bytes]] = []
         response_started = False
         status_code: int | None = None
@@ -91,7 +105,7 @@ class WSGIWrapper:
         def start_response(
             status: str,
             response_headers: list[tuple[str, str]],
-            exc_info: Exception | None = None,
+            _exc_info: Exception | None = None,
         ) -> None:
             nonlocal headers, response_started, status_code
 
@@ -106,7 +120,8 @@ class WSGIWrapper:
         response_body = self.app(environ, start_response)
 
         if not response_started:
-            raise RuntimeError("WSGI app did not call start_response")
+            msg = "WSGI app did not call start_response"
+            raise RuntimeError(msg)
 
         send({"type": "http.response.start", "status": status_code, "headers": headers})
         try:
@@ -125,7 +140,7 @@ def _build_environ(scope: HTTPScope, body: bytes) -> dict:
         path = path[len(script_name) :]
         path = path if path != "" else "/"
     else:
-        raise InvalidPathError()
+        raise InvalidPathError
 
     environ = {
         "REQUEST_METHOD": scope["method"],

@@ -1,17 +1,15 @@
+"""HTTP/3 protocol implementation built on aioquic."""
+
 from __future__ import annotations
 
-from collections.abc import Awaitable
-from typing import Callable
+from typing import TYPE_CHECKING
 
 from aioquic.h3.connection import H3Connection
 from aioquic.h3.events import DataReceived, HeadersReceived
 from aioquic.h3.exceptions import NoAvailablePushIDError
-from aioquic.quic.connection import QuicConnection
-from aioquic.quic.events import QuicEvent
 
-from ..config import Config
-from ..typing import AppWrapper, ConnectionState, TaskGroup, TLSExtension, WorkerContext
-from ..utils import filter_pseudo_headers
+from anycorn.utils import filter_pseudo_headers
+
 from .events import (
     Body,
     Data,
@@ -29,9 +27,20 @@ from .events import (
 from .http_stream import HTTPStream
 from .ws_stream import WSStream
 
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from aioquic.quic.connection import QuicConnection
+    from aioquic.quic.events import QuicEvent
+
+    from anycorn.config import Config
+    from anycorn.typing import AppWrapper, ConnectionState, TaskGroup, TLSExtension, WorkerContext
+
 
 class H3Protocol:
-    def __init__(
+    """HTTP/3 server-side protocol handler using aioquic."""
+
+    def __init__(  # noqa: PLR0913
         self,
         app: AppWrapper,
         config: Config,
@@ -44,6 +53,7 @@ class H3Protocol:
         quic: QuicConnection,
         send: Callable[[], Awaitable[None]],
     ) -> None:
+        """Initialize the H3 protocol handler."""
         self.app = app
         self.client = client
         self.config = config
@@ -57,6 +67,7 @@ class H3Protocol:
         self.tls = tls
 
     async def handle(self, quic_event: QuicEvent) -> None:
+        """Handle an incoming QUIC event."""
         for event in self.connection.handle_event(quic_event):
             if isinstance(event, HeadersReceived):
                 if not self.context.terminated.is_set():
@@ -70,22 +81,27 @@ class H3Protocol:
                     Body(stream_id=event.stream_id, data=event.data)
                 )
                 if event.stream_ended:
-                    await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
+                    await self.streams[event.stream_id].handle(
+                        EndBody(stream_id=event.stream_id)
+                    )
 
     async def stream_send(self, event: StreamEvent) -> None:
+        """Send a stream event to the remote client."""
         if isinstance(event, (InformationalResponse, Response)):
             self.connection.send_headers(
                 event.stream_id,
-                [(b":status", b"%d" % event.status_code)]
-                + event.headers
-                + self.config.response_headers("h3"),
+                [
+                    (b":status", b"%d" % event.status_code),
+                    *event.headers,
+                    *self.config.response_headers("h3"),
+                ],
             )
             await self.send()
         elif isinstance(event, (Body, Data)):
-            self.connection.send_data(event.stream_id, event.data, False)
+            self.connection.send_data(event.stream_id, event.data, False)  # noqa: FBT003
             await self.send()
         elif isinstance(event, (EndBody, EndData)):
-            self.connection.send_data(event.stream_id, b"", True)
+            self.connection.send_data(event.stream_id, b"", True)  # noqa: FBT003
             await self.send()
         elif isinstance(event, Trailers):
             self.connection.send_headers(event.stream_id, event.headers)

@@ -82,6 +82,13 @@ lint.extend-ignore = [# https://docs.astral.sh/ruff/settings/#extend-ignore
     "D213", # multi-line-summary-second-line
     "COM812", # https://docs.astral.sh/ruff/rules/missing-trailing-comma/
     "S101", # https://docs.astral.sh/ruff/rules/assert/
+    "TD001", # invalid-todo-tag
+    "TD002", # missing-todo-author
+    "TD003", # missing-todo-link
+    "TD004", # missing-todo-colon
+    "TD005", # missing-todo-description
+    "FIX001", # line-contains-fixme
+    "FIX002", # line-contains-todo
 ]
 src = ["src", "tests"]  # https://docs.astral.sh/ruff/settings/#src
 line-length = 100

@@ -1,9 +1,17 @@
+"""Dispatcher middleware for routing ASGI requests to multiple sub-applications."""
+
 from __future__ import annotations
 
 from functools import partial
-from typing import Callable
+from typing import TYPE_CHECKING
 
-from ..typing import ASGIFramework, ASGIReceiveEvent, Scope
+import anyio
+import anyio.streams.memory
+
+from anycorn.typing import ASGIFramework, ASGIReceiveEvent, Scope
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 MAX_QUEUE_SIZE = 10
 
@@ -28,15 +36,16 @@ class _DispatcherMiddleware:
                 }
             )
             await send({"type": "http.response.body"})
+        return None
 
     async def _handle_lifespan(self, scope: Scope, receive: Callable, send: Callable) -> None:
         pass
 
 
 class DispatcherMiddleware(_DispatcherMiddleware):
-    async def _handle_lifespan(self, scope: Scope, receive: Callable, send: Callable) -> None:
-        import anyio
+    """ASGI middleware that dispatches requests to different apps based on path prefixes."""
 
+    async def _handle_lifespan(self, scope: Scope, receive: Callable, send: Callable) -> None:
         self.app_queues: dict[
             str,
             tuple[
@@ -47,8 +56,8 @@ class DispatcherMiddleware(_DispatcherMiddleware):
             path: anyio.create_memory_object_stream[ASGIReceiveEvent](MAX_QUEUE_SIZE)
             for path in self.mounts
         }
-        self.startup_complete = {path: False for path in self.mounts}
-        self.shutdown_complete = {path: False for path in self.mounts}
+        self.startup_complete = dict.fromkeys(self.mounts, False)
+        self.shutdown_complete = dict.fromkeys(self.mounts, False)
 
         async with anyio.create_task_group() as tg:
             for path, app in self.mounts.items():
@@ -67,6 +76,7 @@ class DispatcherMiddleware(_DispatcherMiddleware):
                     break
 
     async def send(self, path: str, send: Callable, message: dict) -> None:
+        """Forward lifespan messages and track startup/shutdown completion across mounted apps."""
         if message["type"] == "lifespan.startup.complete":
             self.startup_complete[path] = True
             if all(self.startup_complete.values()):

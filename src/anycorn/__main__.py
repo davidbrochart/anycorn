@@ -1,3 +1,5 @@
+"""Command-line entry point for Anycorn."""
+
 from __future__ import annotations
 
 import ssl
@@ -12,12 +14,11 @@ from .run import run
 def _load_config(config_path: str | None) -> Config:
     if config_path is None:
         return Config()
-    elif config_path.startswith("python:"):
+    if config_path.startswith("python:"):
         return Config.from_object(config_path[len("python:") :])
-    elif config_path.startswith("file:"):
+    if config_path.startswith("file:"):
         return Config.from_pyfile(config_path[len("file:") :])
-    else:
-        return Config.from_toml(config_path)
+    return Config.from_toml(config_path)
 
 
 @click.command(
@@ -148,16 +149,6 @@ def _load_config(config_path: str | None) -> Config:
     "--pid",
     help="Location to write the PID (Program ID) to.",
 )
-# FIXME
-# parser.add_argument(
-#     "--quic-bind",
-#     dest="quic_binds",
-#     help="""The UDP/QUIC host/address to bind to. See *bind* for formatting
-#     options.
-#     """,
-#     default=[],
-#     action="append",
-# )
 @click.option(
     "--reload",
     help="Enable automatic reloads on code changes",
@@ -213,7 +204,7 @@ def _load_config(config_path: str | None) -> Config:
     help="The number of workers to spawn and use",
     type=int,
 )
-def main(
+def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     application: str,
     access_logfile: str | None,
     access_logformat: str | None,
@@ -224,7 +215,7 @@ def main(
     cert_reqs: int | None,
     ciphers: str | None,
     config: str | None,
-    debug: bool,
+    debug: bool,  # noqa: FBT001
     error_logfile: str | None,
     graceful_timeout: int | None,
     read_timeout: int | None,
@@ -239,7 +230,7 @@ def main(
     log_config: str | None,
     log_level: str | None,
     pid: str | None,
-    reload: bool,
+    reload: bool,  # noqa: FBT001
     root_path: str | None,
     server_names: list[str],
     statsd_host: str | None,
@@ -250,6 +241,7 @@ def main(
     websocket_ping_interval: int | None,
     workers: int | None,
 ) -> int:
+    """Configure and start the Anycorn server with the given options."""
     config = _load_config(config)
     config.application_path = application
 
@@ -318,9 +310,6 @@ def main(
         config.bind = binds
     if len(insecure_binds) > 0:
         config.insecure_bind = insecure_binds
-    # FIXME
-    # if len(args.quic_binds) > 0:
-    #     config.quic_bind = args.quic_binds
     if len(server_names) > 0:
         config.server_names = server_names
 

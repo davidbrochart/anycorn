@@ -1,13 +1,19 @@
+"""Middleware for extracting client information from reverse-proxy forwarding headers."""
+
 from __future__ import annotations
 
-from collections.abc import Iterable
 from copy import deepcopy
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Literal
 
-from ..typing import ASGIFramework, Scope
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from anycorn.typing import ASGIFramework, Scope
 
 
 class ProxyFixMiddleware:
+    """ASGI middleware that rewrites scope fields based on X-Forwarded-* or Forwarded headers."""
+
     def __init__(
         self,
         app: ASGIFramework,
@@ -19,6 +25,7 @@ class ProxyFixMiddleware:
         self.trusted_hops = trusted_hops
 
     async def __call__(self, scope: Scope, receive: Callable, send: Callable) -> None:
+        """Process the ASGI scope and apply proxy header rewrites before passing to the app."""
         # Keep the `or` instead of `in {'http' …}` to allow type narrowing
         if scope["type"] == "http" or scope["type"] == "websocket":
             scope = deepcopy(scope)

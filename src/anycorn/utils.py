@@ -1,46 +1,52 @@
+"""Utility functions and exception types for the Anycorn server."""
+
 from __future__ import annotations
 
+import contextlib
 import functools
 import inspect
 import os
+import pathlib
 import re
 import socket
 import ssl
 import sys
-from collections.abc import Awaitable, Iterable
-from enum import Enum
 from importlib import import_module
-from multiprocessing.synchronize import Event as EventType
-from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     Literal,
     cast,
 )
 
 from anyio import TypedAttributeLookupError
-from anyio.abc import SocketStream
 from anyio.streams.tls import TLSAttribute
 
 from .app_wrappers import ASGIWrapper, WSGIWrapper
-from .config import Config
-from .typing import AppWrapper, ASGIFramework, Framework, TLSExtension, WSGIFramework
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable, Iterable
+    from enum import Enum
+    from multiprocessing.synchronize import Event as EventType
+
+    from anyio.abc import SocketStream
+
+    from .config import Config
     from .protocol.events import Request
+    from .typing import AppWrapper, ASGIFramework, Framework, TLSExtension, WSGIFramework
 
 
 class ShutdownError(Exception):
-    pass
+    """Raised to trigger a graceful server shutdown."""
 
 
 class NoAppError(Exception):
-    pass
+    """Raised when the application cannot be loaded."""
 
 
 class LifespanTimeoutError(Exception):
+    """Raised when the ASGI lifespan startup or shutdown times out."""
+
     def __init__(self, stage: str) -> None:
         super().__init__(
             f"Timeout whilst awaiting {stage}. Your application may not support the ASGI Lifespan "
@@ -49,17 +55,21 @@ class LifespanTimeoutError(Exception):
 
 
 class LifespanFailureError(Exception):
+    """Raised when the ASGI lifespan reports a failure."""
+
     def __init__(self, stage: str, message: str) -> None:
         super().__init__(f"Lifespan failure in {stage}. '{message}'")
 
 
 class UnexpectedMessageError(Exception):
+    """Raised when an unexpected ASGI message type is received for the current state."""
+
     def __init__(self, state: Enum, message_type: str) -> None:
         super().__init__(f"Unexpected message type, {message_type} given the state {state}")
 
 
 class FrameTooLargeError(Exception):
-    pass
+    """Raised when a WebSocket frame exceeds the maximum allowed size."""
 
 
 _CERT_PATTERN = re.compile(r"-----BEGIN CERTIFICATE-----\s.*?-----END CERTIFICATE-----", re.DOTALL)
@@ -116,6 +126,7 @@ TLS_CIPHER_NAME_TO_CODE: dict[str, int] = {
 
 
 def default_tls_extension() -> TLSExtension:
+    """Return a TLSExtension dict with all fields set to their default values."""
     return {
         "server_cert": None,
         "client_cert_chain": (),
@@ -127,6 +138,7 @@ def default_tls_extension() -> TLSExtension:
 
 
 def tls_version_to_int(value: str | int | None) -> int | None:
+    """Convert a TLS version string or integer to its IANA numeric code."""
     if isinstance(value, int):
         return value
     if isinstance(value, str):
@@ -149,7 +161,7 @@ def tls_version_to_int(value: str | int | None) -> int | None:
 @functools.lru_cache(maxsize=16)
 def _cached_server_cert(path: str) -> str | None:
     try:
-        text = Path(path).read_text(encoding="utf-8")
+        text = pathlib.Path(path).read_text(encoding="utf-8")
     except (OSError, UnicodeError):
         return None
     match = _CERT_PATTERN.search(text)
@@ -159,9 +171,10 @@ def _cached_server_cert(path: str) -> str | None:
 
 
 def get_server_certificate_pem(config: Config) -> str | None:
+    """Return the PEM-encoded server certificate from config, or None."""
     if config.certfile is None:
         return None
-    path = str(Path(config.certfile).resolve())
+    path = str(pathlib.Path(config.certfile).resolve())
     cached = _SERVER_CERT_CACHE.get(path)
     if cached is not None:
         return cached
@@ -217,12 +230,12 @@ def _subject_to_rfc4514(subject: Iterable[Iterable[tuple[str, str]]]) -> str | N
                 name = RFC4514_ATTRIBUTE_NAMES.get(key, key)
                 attrs.append(f"{name}={_escape_rfc4514_value(str(value))}")
             rdns.append("+".join(attrs))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     return ",".join(rdns) if rdns else None
 
 
-def build_tls_extension(config: Config, stream: SocketStream) -> TLSExtension:
+def build_tls_extension(config: Config, stream: SocketStream) -> TLSExtension:  # noqa: C901, PLR0912
     """Extract TLS parameters for the ASGI connection scope.
 
     Harvest information from AnyIO's TLS attributes and Python's ``ssl`` library:
@@ -236,6 +249,7 @@ def build_tls_extension(config: Config, stream: SocketStream) -> TLSExtension:
       - RFC 8446: https://www.rfc-editor.org/rfc/rfc8446
       - IANA TLS Cipher Suite Registry: https://www.iana.org/assignments/tls-parameters/tls-parameters.xhtml#tls-parameters-4
       - RFC 4514 (LDAP DN string format): https://www.rfc-editor.org/rfc/rfc4514
+
     """
     extension = default_tls_extension()
 
@@ -244,13 +258,13 @@ def build_tls_extension(config: Config, stream: SocketStream) -> TLSExtension:
         extension["server_cert"] = server_cert
 
     try:
-        tls_version_value = stream.extra(TLSAttribute.tls_version)
+        tls_version_value = stream.extra(TLSAttribute.tls_version)  # noqa: S610
     except TypedAttributeLookupError:
         tls_version_value = None
     extension["tls_version"] = tls_version_to_int(tls_version_value)
 
     try:
-        ssl_object = stream.extra(TLSAttribute.ssl_object)
+        ssl_object = stream.extra(TLSAttribute.ssl_object)  # noqa: S610
     except (TypedAttributeLookupError, AttributeError):
         ssl_object = None
 
@@ -283,7 +297,7 @@ def build_tls_extension(config: Config, stream: SocketStream) -> TLSExtension:
 
     if extension["client_cert_name"] is None:
         try:
-            peer_certificate = stream.extra(TLSAttribute.peer_certificate)
+            peer_certificate = stream.extra(TLSAttribute.peer_certificate)  # noqa: S610
         except TypedAttributeLookupError:
             peer_certificate = None
         if peer_certificate and "subject" in peer_certificate:
@@ -308,22 +322,26 @@ def build_tls_extension(config: Config, stream: SocketStream) -> TLSExtension:
 
 
 def suppress_body(method: str, status_code: int) -> bool:
-    return method == "HEAD" or 100 <= status_code < 200 or status_code in {204, 304}
+    """Return True if the response body should be suppressed for this method/status."""
+    return method == "HEAD" or 100 <= status_code < 200 or status_code in {204, 304}  # noqa: PLR2004
 
 
 def build_and_validate_headers(
     headers: Iterable[tuple[bytes, bytes]],
 ) -> list[tuple[bytes, bytes]]:
+    """Validate and normalise response headers, raising ValueError for pseudo-headers."""
     # Validates that the header name and value are bytes
     validated_headers: list[tuple[bytes, bytes]] = []
     for name, value in headers:
         if name[0] == b":"[0]:
-            raise ValueError("Pseudo headers are not valid")
+            msg = "Pseudo headers are not valid"
+            raise ValueError(msg)
         validated_headers.append((bytes(name).strip(), bytes(value).strip()))
     return validated_headers
 
 
 def filter_pseudo_headers(headers: list[tuple[bytes, bytes]]) -> list[tuple[bytes, bytes]]:
+    """Remove HTTP/2 pseudo-headers and promote :authority to the host header."""
     filtered_headers: list[tuple[bytes, bytes]] = [(b"host", b"")]  # Placeholder
     authority = None
     host = b""
@@ -339,33 +357,33 @@ def filter_pseudo_headers(headers: list[tuple[bytes, bytes]]) -> list[tuple[byte
 
 
 def load_application(path: str, wsgi_max_body_size: int) -> AppWrapper:
+    """Load and wrap an application from a module path string."""
     mode: Literal["asgi", "wsgi"] | None = None
     if ":" not in path:
         module_name, app_name = path, "app"
-    elif path.count(":") == 2:
+    elif path.count(":") == 2:  # noqa: PLR2004
         mode, module_name, app_name = path.split(":", 2)  # type: ignore[assignment]
         if mode not in {"asgi", "wsgi"}:
-            raise ValueError("Invalid mode, must be 'asgi', or 'wsgi'")
+            msg = "Invalid mode, must be 'asgi', or 'wsgi'"
+            raise ValueError(msg)
     else:
         module_name, app_name = path.split(":", 1)
 
-    module_path = Path(module_name).resolve()
+    module_path = pathlib.Path(module_name).resolve()
     sys.path.insert(0, str(module_path.parent))
-    if module_path.is_file():
-        import_name = module_path.with_suffix("").name
-    else:
-        import_name = module_path.name
+    import_name = module_path.with_suffix("").name if module_path.is_file() else module_path.name
     try:
         module = import_module(import_name)
     except ModuleNotFoundError as error:
         if error.name == import_name:
-            raise NoAppError(f"Cannot load application from '{path}', module not found.")
-        else:
-            raise
+            msg = f"Cannot load application from '{path}', module not found."
+            raise NoAppError(msg) from error
+        raise
     try:
-        app = eval(app_name, vars(module))
-    except NameError:
-        raise NoAppError(f"Cannot load application from '{path}', application not found.")
+        app = eval(app_name, vars(module))  # noqa: S307
+    except NameError as error:
+        msg = f"Cannot load application from '{path}', application not found."
+        raise NoAppError(msg) from error
     else:
         return wrap_app(app, wsgi_max_body_size, mode)
 
@@ -373,50 +391,51 @@ def load_application(path: str, wsgi_max_body_size: int) -> AppWrapper:
 def wrap_app(
     app: Framework, wsgi_max_body_size: int, mode: Literal["asgi", "wsgi"] | None
 ) -> AppWrapper:
+    """Wrap *app* in the appropriate ASGI or WSGI wrapper."""
     if mode is None:
         mode = "asgi" if is_asgi(app) else "wsgi"
     if mode == "asgi":
-        return ASGIWrapper(cast(ASGIFramework, app))
-    else:
-        return WSGIWrapper(cast(WSGIFramework, app), wsgi_max_body_size)
+        return ASGIWrapper(cast("ASGIFramework", app))
+    return WSGIWrapper(cast("WSGIFramework", app), wsgi_max_body_size)
 
 
-def files_to_watch() -> dict[Path, float]:
-    last_updates: dict[Path, float] = {}
+def files_to_watch() -> dict[pathlib.Path, float]:
+    """Return a mapping of loaded module file paths to their current mtime."""
+    last_updates: dict[pathlib.Path, float] = {}
     for module in list(sys.modules.values()):
         filename = getattr(module, "__file__", None)
         if filename is None:
             continue
-        path = Path(filename)
-        try:
-            last_updates[Path(filename)] = path.stat().st_mtime
-        except (FileNotFoundError, NotADirectoryError):
-            pass
+        path = pathlib.Path(filename)
+        with contextlib.suppress(FileNotFoundError, NotADirectoryError):
+            last_updates[pathlib.Path(filename)] = path.stat().st_mtime
     return last_updates
 
 
-def check_for_updates(files: dict[Path, float]) -> bool:
+def check_for_updates(files: dict[pathlib.Path, float]) -> bool:
+    """Return True if any watched file has been modified since last checked."""
     for path, last_mtime in files.items():
         try:
             mtime = path.stat().st_mtime
-        except FileNotFoundError:
+        except FileNotFoundError:  # noqa: PERF203
             return True
         else:
             if mtime > last_mtime:
                 return True
-            else:
-                files[path] = mtime
+            files[path] = mtime
     return False
 
 
 async def raise_shutdown(shutdown_event: Callable[..., Awaitable]) -> None:
+    """Await *shutdown_event* then raise ShutdownError to trigger graceful shutdown."""
     await shutdown_event()
-    raise ShutdownError()
+    raise ShutdownError
 
 
 async def check_multiprocess_shutdown_event(
     shutdown_event: EventType, sleep: Callable[[float], Awaitable[Any]]
 ) -> None:
+    """Poll *shutdown_event* in a loop, returning when it becomes set."""
     while True:
         if shutdown_event.is_set():
             return
@@ -424,31 +443,33 @@ async def check_multiprocess_shutdown_event(
 
 
 def write_pid_file(pid_path: str) -> None:
-    with open(pid_path, "w") as file_:
+    """Write the current process ID to *pid_path*."""
+    with pathlib.Path(pid_path).open("w") as file_:
         file_.write(f"{os.getpid()}")
 
 
 def parse_socket_addr(family: int, address: tuple) -> tuple[str, int] | None:
+    """Parse a raw socket address into a (host, port) tuple, or None for unsupported families."""
     if family == socket.AF_INET:
         return address
-    elif family == socket.AF_INET6:
+    if family == socket.AF_INET6:
         return (address[0], address[1])
-    else:
-        return None
+    return None
 
 
 def repr_socket_addr(family: int, address: tuple) -> str:
+    """Return a human-readable string representation of a socket address."""
     if family == socket.AF_INET:
         return f"{address[0]}:{address[1]}"
-    elif family == socket.AF_INET6:
+    if family == socket.AF_INET6:
         return f"[{address[0]}]:{address[1]}"
-    elif family == socket.AF_UNIX:
+    if family == socket.AF_UNIX:
         return f"unix:{address}"
-    else:
-        return f"{address}"
+    return f"{address}"
 
 
 def valid_server_name(config: Config, request: Request) -> bool:
+    """Return True if the request's Host header matches a configured server name."""
     if len(config.server_names) == 0:
         return True
 
@@ -460,9 +481,10 @@ def valid_server_name(config: Config, request: Request) -> bool:
     return host in config.server_names
 
 
-def is_asgi(app: Any) -> bool:
+def is_asgi(app: Any) -> bool:  # noqa: ANN401
+    """Return True if *app* appears to be an ASGI application."""
     if inspect.iscoroutinefunction(app):
         return True
-    elif hasattr(app, "__call__"):
+    if callable(app):
         return inspect.iscoroutinefunction(app.__call__)
     return False
