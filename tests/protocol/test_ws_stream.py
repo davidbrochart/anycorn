@@ -112,7 +112,9 @@ def test_buffer_mixed_types(data: list) -> None:
     ],
 )
 def test_handshake_validity(
-    headers: list[tuple[bytes, bytes]], http_version: str, valid: bool  # noqa: FBT001
+    headers: list[tuple[bytes, bytes]],
+    http_version: str,
+    valid: bool,  # noqa: FBT001
 ) -> None:
     handshake = Handshake(headers, http_version)
     assert handshake.is_valid() is valid
