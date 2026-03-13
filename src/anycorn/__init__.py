@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.metadata
 import warnings
 from collections.abc import Awaitable
 from typing import Callable, Literal
@@ -12,7 +13,7 @@ from .typing import Framework
 from .utils import wrap_app
 
 __all__ = ("Config", "serve")
-__version__ = "0.18.2"
+__version__ = importlib.metadata.version("anycorn")
 
 
 async def serve(

@@ -1,11 +1,11 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
 
 [project]
 name = "anycorn"
-dynamic = ["version"]
-requires-python = ">=3.9"
+version = "0.0.0"
+requires-python = ">=3.10"
 description = "A fork of Hypercorn that uses AnyIO"
 authors = [
     { name = "Philip Graham Jones", email = "philip.graham.jones@googlemail.com" },
@@ -19,7 +19,6 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -28,7 +27,6 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-include = ["src/anycorn/py.typed"]
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/davidbrochart/anycorn/"
@@ -50,54 +48,52 @@ dependencies = [
 h3 = [
     "aioquic >=1.2.0,<2.0.0",
 ]
+[dependency-groups]
 test = [
     "httpx",
     "pytest",
     "mock",
     "trio",
-    "mypy",
+]
+lint = [
+    "ruff>=0.15.6",
+    "ty>=0.0.22",
+]
+dev = [
+    { include-group = "test" },
+    { include-group = "lint" },
 ]
 
 [project.scripts]
 anycorn = "anycorn.__main__:main"
-
-[tool.mypy]
-allow_redefinition = true
-disallow_any_generics = false
-disallow_subclassing_any = true
-disallow_untyped_calls = false
-disallow_untyped_defs = true
-implicit_reexport = true
-no_implicit_optional = true
-show_error_codes = true
-strict = true
-strict_equality = true
-strict_optional = false
-warn_redundant_casts = true
-warn_return_any = false
-warn_unused_configs = true
-warn_unused_ignores = true
-
-[[tool.mypy.overrides]]
-module =["aioquic.*", "cryptography.*", "h11.*", "h2.*", "priority.*", "trio.*"]
-ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 addopts = "--showlocals --strict-markers --color=yes -v"
 testpaths = ["tests"]
 
 [tool.ruff]
-line-length = 100
-lint.select = [
-    "ASYNC",        # flake8-async
-    "E", "F", "W",  # default Flake8
-    "G",            # flake8-logging-format
-    "I",            # isort
-    "ISC",          # flake8-implicit-str-concat
-    "PGH",          # pygrep-hooks
-    "RUF100",       # unused noqa (yesqa)
-    "UP",           # pyupgrade
+lint.extend-select = [# https://docs.astral.sh/ruff/settings/#extend-select
+    "ALL",
 ]
+lint.extend-ignore = [# https://docs.astral.sh/ruff/settings/#extend-ignore
+    "D105", # undocumented-magic-method
+    "D107", # undocumented-public-init
+    "D203", # one-blank-line-before-class
+    "D213", # multi-line-summary-second-line
+    "COM812", # https://docs.astral.sh/ruff/rules/missing-trailing-comma/
+    "S101", # https://docs.astral.sh/ruff/rules/assert/
+]
+src = ["src", "tests"]  # https://docs.astral.sh/ruff/settings/#src
+line-length = 100
 
-[tool.hatch.version]
-path = "src/anycorn/__init__.py"
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["D104"]
+"tests/**/*.py" = [
+    "ANN204",
+    "D102",
+    "D103",
+    "EM101",
+    "ERA001",
+    "SLF001",
+    "TRY003"
+]
