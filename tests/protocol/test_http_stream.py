@@ -1,3 +1,5 @@
+"""Tests for HTTP stream implementation."""
+
 from __future__ import annotations
 
 from typing import Any, cast
@@ -201,11 +203,14 @@ async def test_send_response(stream: HTTPStream) -> None:
         )
     )
     await stream.app_send(
-        cast(HTTPResponseStartEvent, {"type": "http.response.start", "status": 200, "headers": []})
+        cast(
+            "HTTPResponseStartEvent",
+            {"type": "http.response.start", "status": 200, "headers": []},
+        )
     )
     assert stream.state == ASGIHTTPState.RESPONSE
     await stream.app_send(
-        cast(HTTPResponseBodyEvent, {"type": "http.response.body", "body": b"Body"})
+        cast("HTTPResponseBodyEvent", {"type": "http.response.body", "body": b"Body"})
     )
     assert stream.state == ASGIHTTPState.CLOSED  # type: ignore[comparison-overlap]
     stream.send.assert_called()
@@ -296,12 +301,12 @@ async def test_send_trailers(stream: HTTPStream) -> None:
     )
     await stream.app_send(
         cast(
-            HTTPResponseStartEvent,
+            "HTTPResponseStartEvent",
             {"type": "http.response.start", "status": 200, "trailers": True},
         )
     )
     await stream.app_send(
-        cast(HTTPResponseBodyEvent, {"type": "http.response.body", "body": b"Body"})
+        cast("HTTPResponseBodyEvent", {"type": "http.response.body", "body": b"Body"})
     )
     await stream.app_send({"type": "http.response.trailers", "headers": [(b"X", b"V")]})
     assert stream.send.call_args_list == [  # type: ignore[attr-defined]
@@ -327,12 +332,12 @@ async def test_send_trailers_ignored(stream: HTTPStream) -> None:
     )
     await stream.app_send(
         cast(
-            HTTPResponseStartEvent,
+            "HTTPResponseStartEvent",
             {"type": "http.response.start", "status": 200, "trailers": True},
         )
     )
     await stream.app_send(
-        cast(HTTPResponseBodyEvent, {"type": "http.response.body", "body": b"Body"})
+        cast("HTTPResponseBodyEvent", {"type": "http.response.body", "body": b"Body"})
     )
     await stream.app_send({"type": "http.response.trailers", "headers": [(b"X", b"V")]})
     assert stream.send.call_args_list == [  # type: ignore[attr-defined]
@@ -372,7 +377,7 @@ async def test_send_app_error(stream: HTTPStream) -> None:
 
 
 @pytest.mark.parametrize(
-    "state, message_type",
+    ("state", "message_type"),
     [
         (ASGIHTTPState.REQUEST, "not_a_real_type"),
         (ASGIHTTPState.RESPONSE, "http.response.start"),
@@ -393,7 +398,7 @@ async def test_send_invalid_message_given_state(
 
 
 @pytest.mark.parametrize(
-    "status, headers, body",
+    ("status", "headers", "body"),
     [
         ("201 NO CONTENT", [], b""),  # Status should be int
         (200, [("X-Foo", "foo")], b""),  # Headers should be bytes
@@ -404,21 +409,21 @@ async def test_send_invalid_message_given_state(
 async def test_send_invalid_message(
     stream: HTTPStream,
     http_scope: HTTPScope,
-    status: Any,
-    headers: Any,
-    body: Any,
+    status: Any,  # noqa: ANN401
+    headers: Any,  # noqa: ANN401
+    body: Any,  # noqa: ANN401
 ) -> None:
     stream.scope = http_scope
     stream.state = ASGIHTTPState.REQUEST
-    with pytest.raises((TypeError, ValueError)):
+    with pytest.raises((TypeError, ValueError)):  # noqa: PT012
         await stream.app_send(
             cast(
-                HTTPResponseStartEvent,
+                "HTTPResponseStartEvent",
                 {"type": "http.response.start", "headers": headers, "status": status},
             )
         )
         await stream.app_send(
-            cast(HTTPResponseBodyEvent, {"type": "http.response.body", "body": body})
+            cast("HTTPResponseBodyEvent", {"type": "http.response.body", "body": body})
         )
 
 

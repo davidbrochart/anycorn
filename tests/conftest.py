@@ -1,10 +1,16 @@
+"""Shared pytest fixtures for Anycorn tests."""
+
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
-from _pytest.monkeypatch import MonkeyPatch
 
 import anycorn.config
 from anycorn.typing import ConnectionState, HTTPScope
+
+if TYPE_CHECKING:
+    from _pytest.monkeypatch import MonkeyPatch
 
 
 @pytest.fixture(autouse=True)

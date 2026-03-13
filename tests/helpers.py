@@ -1,16 +1,23 @@
+"""Test helper utilities and mock classes for anycorn tests."""
+
 from __future__ import annotations
 
 from copy import deepcopy
 from json import dumps
 from socket import AF_INET
-from typing import Callable, cast
+from typing import TYPE_CHECKING, cast
 
-from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWScope
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope, WWWScope
 
 SANITY_BODY = b"Hello Anycorn"
 
 
 class MockSocket:
+    """Mock socket for testing network connections."""
+
     family = AF_INET
 
     def getsockname(self) -> tuple[str, int]:
@@ -25,12 +32,17 @@ async def empty_framework(scope: Scope, receive: Callable, send: Callable) -> No
 
 
 class SlowLifespanFramework:
+    """ASGI framework that sleeps during startup to simulate slow lifespan."""
+
     def __init__(self, delay: float, sleep: Callable) -> None:
         self.delay = delay
         self.sleep = sleep
 
     async def __call__(
-        self, scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
+        self,
+        _scope: Scope,
+        _receive: ASGIReceiveCallable,
+        _send: ASGISendCallable,
     ) -> None:
         await self.sleep(self.delay)
 
@@ -38,7 +50,7 @@ class SlowLifespanFramework:
 async def echo_framework(
     input_scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
 ) -> None:
-    input_scope = cast(WWWScope, input_scope)
+    input_scope = cast("WWWScope", input_scope)
     scope = deepcopy(input_scope)
     scope["query_string"] = scope["query_string"].decode()  # type: ignore[arg-type]
     scope["raw_path"] = scope["raw_path"].decode()  # type: ignore[arg-type]
@@ -52,7 +64,7 @@ async def echo_framework(
         event = await receive()
         if event["type"] in {"http.disconnect", "websocket.disconnect"}:
             break
-        elif event["type"] == "http.request":
+        if event["type"] == "http.request":
             body.extend(event.get("body", b""))
             if not event.get("more_body", False):
                 response = dumps({"scope": scope, "request_body": body.decode()}).encode()
@@ -83,7 +95,7 @@ async def sanity_framework(
         event = await receive()
         if event["type"] in {"http.disconnect", "websocket.disconnect"}:
             break
-        elif event["type"] == "lifespan.startup":
+        if event["type"] == "lifespan.startup":
             assert "state" in scope
             await send({"type": "lifspan.startup.complete"})  # type: ignore[misc, arg-type]
         elif event["type"] == "lifespan.shutdown":

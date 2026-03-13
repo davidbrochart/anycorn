@@ -1,17 +1,17 @@
+"""Tests for anycorn utility functions including header handling and TLS extensions."""
+
 from __future__ import annotations
 
 import ssl
-from collections.abc import Iterable
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from anyio import TypedAttributeLookupError
 from anyio.streams.tls import TLSAttribute
 
 from anycorn.config import Config
-from anycorn.typing import Scope
 from anycorn.utils import (
     build_and_validate_headers,
     build_tls_extension,
@@ -21,15 +21,22 @@ from anycorn.utils import (
     suppress_body,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
+    from anycorn.typing import Scope
+
 
 @pytest.mark.parametrize(
-    "method, status, expected", [("HEAD", 200, True), ("GET", 200, False), ("GET", 101, True)]
+    ("method", "status", "expected"), [("HEAD", 200, True), ("GET", 200, False), ("GET", 101, True)]
 )
-def test_suppress_body(method: str, status: int, expected: bool) -> None:
+def test_suppress_body(method: str, status: int, expected: bool) -> None:  # noqa: FBT001
     assert suppress_body(method, status) is expected
 
 
 class ASGIClassInstance:
+    """ASGI callable class instance for testing is_asgi detection."""
+
     def __init__(self) -> None:
         pass
 
@@ -42,6 +49,8 @@ async def asgi_callable(scope: Scope, receive: Callable, send: Callable) -> None
 
 
 class WSGIClassInstance:
+    """WSGI callable class instance for testing is_asgi detection."""
+
     def __init__(self) -> None:
         pass
 
@@ -54,7 +63,7 @@ def wsgi_callable(environ: dict, start_response: Callable) -> Iterable[bytes]:
 
 
 @pytest.mark.parametrize(
-    "app, expected",
+    ("app", "expected"),
     [
         (WSGIClassInstance(), False),
         (ASGIClassInstance(), True),
@@ -62,7 +71,7 @@ def wsgi_callable(environ: dict, start_response: Callable) -> Iterable[bytes]:
         (asgi_callable, True),
     ],
 )
-def test_is_asgi(app: Any, expected: bool) -> None:
+def test_is_asgi(app: Any, expected: bool) -> None:  # noqa: ANN401, FBT001
     assert is_asgi(app) == expected
 
 
@@ -72,7 +81,7 @@ def test_build_and_validate_headers_validate() -> None:
 
 
 def test_build_and_validate_headers_pseudo() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Pseudo headers are not valid"):
         build_and_validate_headers([(b":authority", b"quart")])
 
 
@@ -105,7 +114,7 @@ class _FakeStream:
     def __init__(self, extras: dict[Any, Any]) -> None:
         self._extras = extras
 
-    def extra(self, attr: Any) -> Any:
+    def extra(self, attr: Any) -> Any:  # noqa: ANN401
         if attr in self._extras:
             return self._extras[attr]
         raise TypedAttributeLookupError(attr)
@@ -130,7 +139,7 @@ class _FakeSSLObject:
     def get_unverified_chain(self) -> tuple[bytes, ...]:
         return self.get_verified_chain()
 
-    def getpeercert(self, binary_form: bool = False) -> Any:
+    def getpeercert(self, binary_form: bool = False) -> Any:  # noqa: ANN401, FBT001, FBT002
         if binary_form:
             return self._der_bytes
         if self._der_bytes:
@@ -153,10 +162,10 @@ def test_build_tls_extension_with_client_certificate() -> None:
         }
     )
     extension = build_tls_extension(Config(), stream)  # type: ignore[arg-type]
-    assert extension["tls_version"] == 0x0304
+    assert extension["tls_version"] == 0x0304  # noqa: PLR2004
     assert extension["client_cert_chain"]
     assert extension["client_cert_name"] == "CN=localhost"
-    assert extension["cipher_suite"] == 0x1301
+    assert extension["cipher_suite"] == 0x1301  # noqa: PLR2004
     assert extension["client_cert_error"] is None
 
 

@@ -1,19 +1,25 @@
+"""Tests for anycorn logging functionality and access log atom formatting."""
+
 from __future__ import annotations
 
 import logging
 import os
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from anycorn.config import Config
 from anycorn.logging import AccessLogAtoms, Logger
-from anycorn.typing import HTTPScope, ResponseSummary
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from anycorn.typing import HTTPScope, ResponseSummary
 
 
 @pytest.mark.parametrize(
-    "target, expected_name, expected_handler_type",
+    ("target", "expected_name", "expected_handler_type"),
     [
         ("-", "anycorn.access", logging.StreamHandler),
         ("", "anycorn.access", logging.FileHandler),
@@ -48,7 +54,7 @@ def test_access_logger_init(
 
 
 @pytest.mark.parametrize(
-    "level, expected",
+    ("level", "expected"),
     [
         (logging.getLevelName(level_name), level_name)
         for level_name in range(logging.DEBUG, logging.CRITICAL + 1, 10)
@@ -71,19 +77,19 @@ def test_access_log_standard_atoms(http_scope: HTTPScope, response: ResponseSumm
     assert atoms["h"] == "127.0.0.1:80"
     assert atoms["l"] == "-"
     assert time.strptime(atoms["t"], "[%d/%b/%Y:%H:%M:%S %z]")
-    assert int(atoms["s"]) == 200
+    assert int(atoms["s"]) == 200  # noqa: PLR2004
     assert atoms["m"] == "GET"
     assert atoms["U"] == "/"
     assert atoms["q"] == "a=b"
     assert atoms["H"] == "2"
-    assert int(atoms["b"]) == 5
-    assert int(atoms["B"]) == 5
+    assert int(atoms["b"]) == 5  # noqa: PLR2004
+    assert int(atoms["B"]) == 5  # noqa: PLR2004
     assert atoms["f"] == "anycorn"
     assert atoms["a"] == "Anycorn"
     assert atoms["p"] == f"<{os.getpid()}>"
     assert atoms["not-atom"] == "-"
     assert int(atoms["T"]) == 0
-    assert int(atoms["D"]) == 23
+    assert int(atoms["D"]) == 23  # noqa: PLR2004
     assert atoms["L"] == "0.000023"
     assert atoms["r"] == "GET / 2"
     assert atoms["R"] == "GET /?a=b 2"
@@ -105,11 +111,11 @@ def test_access_no_log_header_atoms(http_scope: HTTPScope) -> None:
     assert atoms["{X-Anycorn}i"] == "Anycorn"
     assert atoms["{X-ANYCORN}i"] == "Anycorn"
     assert atoms["{not-atom}i"] == "-"
-    assert not any(key.startswith("{") and key.endswith("}o") for key in atoms.keys())
+    assert not any(key.startswith("{") and key.endswith("}o") for key in atoms)
 
 
 def test_access_log_environ_atoms(http_scope: HTTPScope, response: ResponseSummary) -> None:
-    os.environ["Random"] = "Environ"
+    os.environ["RANDOM"] = "Environ"
     atoms = AccessLogAtoms(http_scope, response, 0)
     assert atoms["{random}e"] == "Environ"
 

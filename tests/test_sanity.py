@@ -1,3 +1,5 @@
+"""Sanity tests for Anycorn."""
+
 from __future__ import annotations
 
 # from unittest.mock import Mock, PropertyMock

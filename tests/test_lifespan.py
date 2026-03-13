@@ -1,6 +1,9 @@
+"""Tests for ASGI lifespan protocol handling."""
+
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 import anyio
 import pytest
@@ -8,10 +11,12 @@ import pytest
 from anycorn.app_wrappers import ASGIWrapper
 from anycorn.config import Config
 from anycorn.lifespan import Lifespan
-from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope
 from anycorn.utils import LifespanFailureError, LifespanTimeoutError
 
 from .helpers import SlowLifespanFramework
+
+if TYPE_CHECKING:
+    from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope
 
 if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup
@@ -30,7 +35,7 @@ async def test_startup_timeout_error() -> None:
 
 
 async def _lifespan_failure(
-    scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
+    _scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
 ) -> None:
     async with anyio.create_task_group():
         while True:
@@ -43,9 +48,8 @@ async def _lifespan_failure(
 @pytest.mark.anyio
 async def test_startup_failure() -> None:
     lifespan = Lifespan(ASGIWrapper(_lifespan_failure), Config(), {})
-    try:
+    with pytest.raises(ExceptionGroup) as exc_info:  # noqa: PT012
         async with anyio.create_task_group() as tg:
             await tg.start(lifespan.handle_lifespan)
             await lifespan.wait_for_startup()
-    except ExceptionGroup as error:
-        assert error.subgroup(LifespanFailureError) is not None
+    assert exc_info.value.subgroup(LifespanFailureError) is not None

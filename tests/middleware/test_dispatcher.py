@@ -1,11 +1,17 @@
+"""Tests for dispatcher middleware."""
+
 from __future__ import annotations
 
-from typing import Callable, cast
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from anycorn.middleware.dispatcher import DispatcherMiddleware
-from anycorn.typing import HTTPScope, Scope
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from anycorn.typing import HTTPScope, Scope
 
 
 @pytest.mark.anyio
@@ -14,8 +20,8 @@ async def test_dispatcher_middleware(http_scope: HTTPScope) -> None:
         def __init__(self, name: str) -> None:
             self.name = name
 
-        async def __call__(self, scope: Scope, receive: Callable, send: Callable) -> None:
-            scope = cast(HTTPScope, scope)
+        async def __call__(self, scope: Scope, _receive: Callable, send: Callable) -> None:
+            scope = cast("HTTPScope", scope)
             response = f"{self.name}-{scope['path']}"
             await send(
                 {
@@ -34,9 +40,9 @@ async def test_dispatcher_middleware(http_scope: HTTPScope) -> None:
         nonlocal sent_events
         sent_events.append(message)
 
-    await app({**http_scope, **{"path": "/api/x/b"}}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
-    await app({**http_scope, **{"path": "/api/b"}}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
-    await app({**http_scope, **{"path": "/"}}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
+    await app({**http_scope, "path": "/api/x/b"}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
+    await app({**http_scope, "path": "/api/b"}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
+    await app({**http_scope, "path": "/"}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
     assert sent_events == [
         {"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"7")]},
         {"type": "http.response.body", "body": b"apix-/b"},
@@ -48,10 +54,12 @@ async def test_dispatcher_middleware(http_scope: HTTPScope) -> None:
 
 
 class ScopeFramework:
+    """A framework that handles scope-based events."""
+
     def __init__(self, name: str) -> None:
         self.name = name
 
-    async def __call__(self, scope: Scope, receive: Callable, send: Callable) -> None:
+    async def __call__(self, _scope: Scope, _receive: Callable, send: Callable) -> None:
         await send({"type": "lifespan.startup.complete"})
 
 

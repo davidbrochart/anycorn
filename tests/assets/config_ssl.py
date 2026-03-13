@@ -1,3 +1,5 @@
+"""Test SSL configuration for Anycorn."""
+
 from __future__ import annotations
 
 access_log_format = "bob"

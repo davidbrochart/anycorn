@@ -1,3 +1,5 @@
+"""Tests for the proxy fix middleware."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
