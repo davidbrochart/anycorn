@@ -2,9 +2,9 @@ name: Publish
 on:
   push:
     tags:
-      - "v[0-9]+.[0-9]+.[0-9]+" # normal release
-      - "v[0-9]+.[0-9]+.[0-9]+rc[0-9]+" # release candidate
-      - "v[0-9]+.[0-9]+.[0-9]+[ab][0-9]+" # alpha or beta release
+      - "[0-9]+.[0-9]+.[0-9]+" # normal release
+      - "[0-9]+.[0-9]+.[0-9]+rc[0-9]+" # release candidate
+      - "[0-9]+.[0-9]+.[0-9]+[ab][0-9]+" # alpha or beta release
 
 jobs:
   build:
@@ -14,7 +14,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
       - name: Set version from tag
-        run: uv version ${GITHUB_REF/refs\/tags\/v/}
+        run: uv version ${GITHUB_REF/refs\/tags\/}
       - name: Build package
         run: uv build
       - uses: actions/upload-artifact@v4

@@ -1,5 +1,9 @@
 # Version history
 
+## 0.18.4
+
+- Use `X.Y.Z` tag scheme (no `v` prefix).
+
 ## 0.18.3
 
 * Fix assignment of `max_requests_jitter` in config.
@@ -9,7 +13,7 @@
 
 * Support TLS extension.
 
-## 0.16.0 (2024-01-01)
+## 0.16.0 (2024-01-01)https://github.com/pydantic/monty
 
 * Add a max keep alive requests configuration option, this mitigates the HTTP/2 rapid reset attack.
 * Return subprocess exit code if non-zero.
