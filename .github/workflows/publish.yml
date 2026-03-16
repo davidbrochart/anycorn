@@ -19,19 +19,37 @@ jobs:
         run: uv build
       - uses: actions/upload-artifact@v4
         with:
-          path: ./dist
+          name: dist
+          path: dist
 
   pypi-publish:
-    needs: ['build']
-    environment: 'publish'
-
-    name: upload release to PyPI
+    name: Upload release to PyPI
+    needs: build
+    environment: publish
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
     steps:
-      - uses: actions/download-artifact@v4
-
+      - uses: actions/download-artifact@v5
+        with:
+          name: dist
+          path: dist
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+      name: Create GitHub release
+      needs: pypi-publish
+      runs-on: ubuntu-latest
+      permissions:
+        contents: write
+      steps:
+      - uses: actions/checkout@v5
+      - id: changelog
+        uses: agronholm/release-notes@v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
-          packages_dir: artifact/
+          path: CHANGELOG.md
+          version_pattern: ^\#\# ([0-9][^*]*)\n
+      - uses: ncipollo/release-action@v1
+        with:
+          body: ${{ steps.changelog.outputs.changelog }}
