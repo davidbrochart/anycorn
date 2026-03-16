@@ -199,6 +199,13 @@ def _load_config(config_path: str | None) -> Config:
     type=int,
 )
 @click.option(
+    "--websocket-permessage-deflate",
+    help='Enable WebSocket "permessage-deflate" compression.',
+    type=bool,
+    default=True,
+    show_default=True,
+)
+@click.option(
     "-w",
     "--workers",
     help="The number of workers to spawn and use",
@@ -239,6 +246,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     user: int | None,
     verify_mode: str | None,
     websocket_ping_interval: int | None,
+    websocket_permessage_deflate: bool,  # noqa: FBT001
     workers: int | None,
 ) -> int:
     """Configure and start the Anycorn server with the given options."""
@@ -261,8 +269,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
         cfg.cert_reqs = cert_reqs
     if ciphers is not None:
         cfg.ciphers = ciphers
-    if debug is not None:
-        cfg.debug = debug
+    cfg.debug = debug
     if error_logfile is not None:
         cfg.errorlog = error_logfile
     if graceful_timeout is not None:
@@ -287,8 +294,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
         cfg.pid_path = pid
     if root_path is not None:
         cfg.root_path = root_path
-    if reload is not None:
-        cfg.use_reloader = reload
+    cfg.use_reloader = reload
     if statsd_host is not None:
         cfg.statsd_host = statsd_host
     if statsd_prefix is not None:
@@ -303,6 +309,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
         cfg.verify_mode = ssl.VerifyMode[verify_mode]
     if websocket_ping_interval is not None:
         cfg.websocket_ping_interval = websocket_ping_interval
+    cfg.websocket_permessage_deflate = websocket_permessage_deflate
     if workers is not None:
         cfg.workers = workers
 
