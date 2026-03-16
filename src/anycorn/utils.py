@@ -463,7 +463,7 @@ def repr_socket_addr(family: int, address: tuple) -> str:
         return f"{address[0]}:{address[1]}"
     if family == socket.AF_INET6:
         return f"[{address[0]}]:{address[1]}"
-    if family == socket.AF_UNIX:  # type: ignore[unresolved-attribute]
+    if family == socket.AF_UNIX:
         return f"unix:{address}"
     return f"{address}"
 

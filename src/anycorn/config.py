@@ -264,7 +264,7 @@ class Config:
         for bind in binds:
             binding: Any = None
             if bind.startswith("unix:"):
-                sock = socket.socket(socket.AF_UNIX, type_)  # type: ignore[attr-defined]
+                sock = socket.socket(socket.AF_UNIX, type_)
                 binding = bind[5:]
                 with contextlib.suppress(FileNotFoundError):
                     if stat.S_ISSOCK(pathlib.Path(binding).stat().st_mode):
@@ -288,7 +288,7 @@ class Config:
 
                 if self.workers > 1:
                     with contextlib.suppress(AttributeError):
-                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)  # type: ignore[attr-defined]
+                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
                 binding = (host, port)
 
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

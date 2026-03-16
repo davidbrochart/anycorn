@@ -102,3 +102,6 @@ line-length = 100
     "SLF001",
     "TRY003"
 ]
+
+[tool.ty.rules]
+unused-type-ignore-comment = "error"
