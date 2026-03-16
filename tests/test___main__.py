@@ -1,15 +1,20 @@
+"""Tests for the anycorn __main__ CLI entry point."""
+
 from __future__ import annotations
 
 import inspect
-import os
+from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import Mock
 
 import pytest
-from _pytest.monkeypatch import MonkeyPatch
 from click.testing import CliRunner
 
 import anycorn.__main__
 from anycorn.config import Config
+
+if TYPE_CHECKING:
+    from _pytest.monkeypatch import MonkeyPatch
 
 
 def test_load_config_none() -> None:
@@ -38,7 +43,7 @@ def test_load_config(monkeypatch: MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    "flag, set_value, config_key",
+    ("flag", "set_value", "config_key"),
     [
         ("--access-logformat", "jeff", "access_log_format"),
         ("--backlog", 5, "backlog"),
@@ -58,7 +63,7 @@ def test_main_cli_override(
     runner = CliRunner()
     run_multiple = Mock()
     monkeypatch.setattr(anycorn.__main__, "run", run_multiple)
-    path = os.path.join(os.path.dirname(__file__), "assets/config_ssl.py")
+    path = str(Path(__file__).parent / "assets/config_ssl.py")
     raw_config = Config.from_pyfile(path)
 
     runner.invoke(

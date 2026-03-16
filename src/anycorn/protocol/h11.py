@@ -1,21 +1,14 @@
+"""HTTP/1.1 protocol implementation including WebSocket upgrade support."""
+
 from __future__ import annotations
 
-from collections.abc import Awaitable
 from itertools import chain
-from typing import Callable, cast
+from typing import TYPE_CHECKING, cast
 
 import h11
 
-from ..config import Config
-from ..events import Closed, Event, RawData, Updated
-from ..typing import (
-    AppWrapper,
-    ConnectionState,
-    H11SendableEvent,
-    TaskGroup,
-    TLSExtension,
-    WorkerContext,
-)
+from anycorn.events import Closed, Event, RawData, Updated
+
 from .events import (
     Body,
     Data,
@@ -32,11 +25,27 @@ from .events import (
 from .http_stream import HTTPStream
 from .ws_stream import WSStream
 
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from anycorn.config import Config
+    from anycorn.typing import (
+        AppWrapper,
+        ConnectionState,
+        H11SendableEvent,
+        TaskGroup,
+        TLSExtension,
+        WorkerContext,
+    )
+
 STREAM_ID = 1
 
 
 class H2CProtocolRequiredError(Exception):
+    """Raised when the client requests an upgrade to HTTP/2 cleartext (h2c)."""
+
     def __init__(self, data: bytes, request: h11.Request) -> None:
+        """Initialize with the buffered data and original request."""
         settings = ""
         headers = [(b":method", request.method), (b":path", request.target)]
         for name, value in request.headers:
@@ -52,43 +61,55 @@ class H2CProtocolRequiredError(Exception):
 
 
 class H2ProtocolAssumedError(Exception):
+    """Raised when the client sends an HTTP/2 preface without negotiation."""
+
     def __init__(self, data: bytes) -> None:
+        """Initialize with the already-received raw data."""
         self.data = data
 
 
 class H11WSConnection:
-    # This class matches the h11 interface, and either passes data
-    # through without altering it (for Data, EndData) or sends h11
-    # events (Response, Body, EndBody).
+    """h11-compatible connection adapter for WebSocket pass-through.
+
+    This class matches the h11 interface, and either passes data
+    through without altering it (for Data, EndData) or sends h11
+    events (Response, Body, EndBody).
+    """
+
     our_state = None  # Prevents recycling the connection
     they_are_waiting_for_100_continue = False
     their_state = None
     trailing_data = (b"", False)
 
     def __init__(self, h11_connection: h11.Connection) -> None:
+        """Initialize with an existing h11 connection."""
         self.buffer = bytearray(h11_connection.trailing_data[0])
         self.h11_connection = h11_connection
 
     def receive_data(self, data: bytes) -> None:
+        """Buffer incoming raw data."""
         self.buffer.extend(data)
 
     def next_event(self) -> Data | type[h11.NEED_DATA]:
+        """Return buffered data as a Data event, or NEED_DATA if empty."""
         if self.buffer:
             event = Data(stream_id=STREAM_ID, data=bytes(self.buffer))
             self.buffer = bytearray()
             return event
-        else:
-            return h11.NEED_DATA
+        return h11.NEED_DATA
 
     def send(self, event: H11SendableEvent) -> bytes:
+        """Encode and return an h11 event as bytes."""
         return self.h11_connection.send(event)
 
     def start_next_cycle(self) -> None:
-        pass
+        """No-op: WebSocket connections do not support keep-alive cycling."""
 
 
 class H11Protocol:
-    def __init__(
+    """HTTP/1.1 protocol handler supporting keep-alive and WebSocket upgrades."""
+
+    def __init__(  # noqa: PLR0913
         self,
         app: AppWrapper,
         config: Config,
@@ -100,6 +121,7 @@ class H11Protocol:
         send: Callable[[Event], Awaitable[None]],
         tls: TLSExtension | None,
     ) -> None:
+        """Initialize the H11 protocol handler."""
         self.app = app
         self.can_read = context.event_class()
         self.client = client
@@ -117,9 +139,10 @@ class H11Protocol:
         self.connection_state = connection_state
 
     async def initiate(self) -> None:
-        pass
+        """Initiate the protocol (no-op for HTTP/1.1)."""
 
     async def handle(self, event: Event) -> None:
+        """Handle an incoming connection event."""
         if isinstance(event, RawData):
             self.connection.receive_data(event.data)
             await self._handle_events()
@@ -128,8 +151,9 @@ class H11Protocol:
                 await self._close_stream()
 
     async def stream_send(self, event: StreamEvent) -> None:
+        """Send a stream event back to the client."""
         if isinstance(event, Response):
-            if event.status_code >= 200:
+            if event.status_code >= 200:  # noqa: PLR2004
                 headers = list(chain(event.headers, self.config.response_headers("h11")))
                 if self.keep_alive_requests >= self.config.keep_alive_max_requests:
                     headers.append((b"connection", b"close"))
@@ -159,7 +183,7 @@ class H11Protocol:
         elif isinstance(event, StreamClosed):
             await self._maybe_recycle()
 
-    async def _handle_events(self) -> None:
+    async def _handle_events(self) -> None:  # noqa: C901
         while True:
             if self.connection.they_are_waiting_for_100_continue:
                 await self._send_h11_event(
@@ -183,9 +207,11 @@ class H11Protocol:
                 elif event is h11.PAUSED:
                     await self.can_read.clear()
                     await self.can_read.wait()
-                elif isinstance(event, h11.ConnectionClosed) or event is h11.NEED_DATA:
-                    break
-                elif self.stream is None:
+                elif (
+                    isinstance(event, h11.ConnectionClosed)
+                    or event is h11.NEED_DATA
+                    or self.stream is None
+                ):
                     break
                 elif isinstance(event, h11.Data):
                     await self.stream.handle(Body(stream_id=STREAM_ID, data=event.data))
@@ -222,7 +248,7 @@ class H11Protocol:
                 STREAM_ID,
                 self.tls,
             )
-            self.connection = H11WSConnection(cast(h11.Connection, self.connection))
+            self.connection = H11WSConnection(cast("h11.Connection", self.connection))
         else:
             self.stream = HTTPStream(
                 self.app,
@@ -322,12 +348,15 @@ class H11Protocol:
             await self._send_h11_event(
                 h11.InformationalResponse(
                     status_code=101,
-                    headers=self.config.response_headers("h11")
-                    + [(b"connection", b"upgrade"), (b"upgrade", b"h2c")],
+                    headers=[
+                        *self.config.response_headers("h11"),
+                        (b"connection", b"upgrade"),
+                        (b"upgrade", b"h2c"),
+                    ],
                 )
             )
             raise H2CProtocolRequiredError(self.connection.trailing_data[0], event)
-        elif event.method == b"PRI" and event.target == b"*" and event.http_version == b"2.0":
+        if event.method == b"PRI" and event.target == b"*" and event.http_version == b"2.0":
             raise H2ProtocolAssumedError(
                 b"PRI * HTTP/2.0\r\n\r\n" + self.connection.trailing_data[0]
             )

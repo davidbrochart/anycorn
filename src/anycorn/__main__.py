@@ -1,3 +1,5 @@
+"""Command-line entry point for Anycorn."""
+
 from __future__ import annotations
 
 import ssl
@@ -12,12 +14,11 @@ from .run import run
 def _load_config(config_path: str | None) -> Config:
     if config_path is None:
         return Config()
-    elif config_path.startswith("python:"):
+    if config_path.startswith("python:"):
         return Config.from_object(config_path[len("python:") :])
-    elif config_path.startswith("file:"):
+    if config_path.startswith("file:"):
         return Config.from_pyfile(config_path[len("file:") :])
-    else:
-        return Config.from_toml(config_path)
+    return Config.from_toml(config_path)
 
 
 @click.command(
@@ -148,16 +149,6 @@ def _load_config(config_path: str | None) -> Config:
     "--pid",
     help="Location to write the PID (Program ID) to.",
 )
-# FIXME
-# parser.add_argument(
-#     "--quic-bind",
-#     dest="quic_binds",
-#     help="""The UDP/QUIC host/address to bind to. See *bind* for formatting
-#     options.
-#     """,
-#     default=[],
-#     action="append",
-# )
 @click.option(
     "--reload",
     help="Enable automatic reloads on code changes",
@@ -213,7 +204,7 @@ def _load_config(config_path: str | None) -> Config:
     help="The number of workers to spawn and use",
     type=int,
 )
-def main(
+def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     application: str,
     access_logfile: str | None,
     access_logformat: str | None,
@@ -224,7 +215,7 @@ def main(
     cert_reqs: int | None,
     ciphers: str | None,
     config: str | None,
-    debug: bool,
+    debug: bool,  # noqa: FBT001
     error_logfile: str | None,
     graceful_timeout: int | None,
     read_timeout: int | None,
@@ -239,7 +230,7 @@ def main(
     log_config: str | None,
     log_level: str | None,
     pid: str | None,
-    reload: bool,
+    reload: bool,  # noqa: FBT001
     root_path: str | None,
     server_names: list[str],
     statsd_host: str | None,
@@ -250,81 +241,79 @@ def main(
     websocket_ping_interval: int | None,
     workers: int | None,
 ) -> int:
-    config = _load_config(config)
-    config.application_path = application
+    """Configure and start the Anycorn server with the given options."""
+    cfg = _load_config(config)
+    cfg.application_path = application
 
     if log_level is not None:
-        config.loglevel = log_level
+        cfg.loglevel = log_level
     if access_logformat is not None:
-        config.access_log_format = access_logformat
+        cfg.access_log_format = access_logformat
     if access_logfile is not None:
-        config.accesslog = access_logfile
+        cfg.accesslog = access_logfile
     if backlog is not None:
-        config.backlog = backlog
+        cfg.backlog = backlog
     if ca_certs is not None:
-        config.ca_certs = ca_certs
+        cfg.ca_certs = ca_certs
     if certfile is not None:
-        config.certfile = certfile
+        cfg.certfile = certfile
     if cert_reqs is not None:
-        config.cert_reqs = cert_reqs
+        cfg.cert_reqs = cert_reqs
     if ciphers is not None:
-        config.ciphers = ciphers
+        cfg.ciphers = ciphers
     if debug is not None:
-        config.debug = debug
+        cfg.debug = debug
     if error_logfile is not None:
-        config.errorlog = error_logfile
+        cfg.errorlog = error_logfile
     if graceful_timeout is not None:
-        config.graceful_timeout = graceful_timeout
+        cfg.graceful_timeout = graceful_timeout
     if read_timeout is not None:
-        config.read_timeout = read_timeout
+        cfg.read_timeout = read_timeout
     if group is not None:
-        config.group = group
+        cfg.group = group
     if keep_alive is not None:
-        config.keep_alive_timeout = keep_alive
+        cfg.keep_alive_timeout = keep_alive
     if keyfile is not None:
-        config.keyfile = keyfile
+        cfg.keyfile = keyfile
     if keyfile_password is not None:
-        config.keyfile_password = keyfile_password
+        cfg.keyfile_password = keyfile_password
     if log_config is not None:
-        config.logconfig = log_config
+        cfg.logconfig = log_config
     if max_requests is not None:
-        config.max_requests = max_requests
+        cfg.max_requests = max_requests
     if max_requests_jitter is not None:
-        config.max_requests_jitter = max_requests_jitter
+        cfg.max_requests_jitter = max_requests_jitter
     if pid is not None:
-        config.pid_path = pid
+        cfg.pid_path = pid
     if root_path is not None:
-        config.root_path = root_path
+        cfg.root_path = root_path
     if reload is not None:
-        config.use_reloader = reload
+        cfg.use_reloader = reload
     if statsd_host is not None:
-        config.statsd_host = statsd_host
+        cfg.statsd_host = statsd_host
     if statsd_prefix is not None:
-        config.statsd_prefix = statsd_prefix
+        cfg.statsd_prefix = statsd_prefix
     if umask is not None:
-        config.umask = umask
+        cfg.umask = umask
     if user is not None:
-        config.user = user
+        cfg.user = user
     if worker_class is not None:
-        config.worker_class = worker_class
+        cfg.worker_class = worker_class
     if verify_mode is not None:
-        config.verify_mode = ssl.VerifyMode[verify_mode]
+        cfg.verify_mode = ssl.VerifyMode[verify_mode]
     if websocket_ping_interval is not None:
-        config.websocket_ping_interval = websocket_ping_interval
+        cfg.websocket_ping_interval = websocket_ping_interval
     if workers is not None:
-        config.workers = workers
+        cfg.workers = workers
 
     if len(binds) > 0:
-        config.bind = binds
+        cfg.bind = binds
     if len(insecure_binds) > 0:
-        config.insecure_bind = insecure_binds
-    # FIXME
-    # if len(args.quic_binds) > 0:
-    #     config.quic_bind = args.quic_binds
+        cfg.insecure_bind = insecure_binds
     if len(server_names) > 0:
-        config.server_names = server_names
+        cfg.server_names = server_names
 
-    return run(config)
+    return run(cfg)
 
 
 if __name__ == "__main__":

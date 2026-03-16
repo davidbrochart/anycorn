@@ -1,3 +1,5 @@
+"""Test configuration for Anycorn."""
+
 from __future__ import annotations
 
 import ssl  # noqa: F401

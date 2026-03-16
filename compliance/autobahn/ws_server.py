@@ -1,9 +1,17 @@
-async def app(scope, receive, send):
+"""WebSocket echo server for Autobahn compliance testing."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+async def app(_scope: Any, receive: Any, send: Any) -> None:  # noqa: ANN401
+    """Handle WebSocket connections by echoing received messages."""
     while True:
         event = await receive()
         if event["type"] == "websocket.disconnect":
             break
-        elif event["type"] == "websocket.connect":
+        if event["type"] == "websocket.connect":
             await send({"type": "websocket.accept"})
         elif event["type"] == "websocket.receive":
             await send(

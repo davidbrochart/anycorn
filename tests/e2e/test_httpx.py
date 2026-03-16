@@ -1,4 +1,8 @@
+"""End-to-end tests using httpx."""
+
 from __future__ import annotations
+
+from typing import Any
 
 import anyio
 import httpx
@@ -8,7 +12,7 @@ import anycorn
 from anycorn.config import Config
 
 
-async def app(scope, receive, send) -> None:  # type: ignore[no-untyped-def]
+async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
     assert scope["type"] == "http"
 
     await send(

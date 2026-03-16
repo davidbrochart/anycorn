@@ -1,3 +1,5 @@
+"""Tests for the proxy fix middleware."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
@@ -33,7 +35,7 @@ async def test_proxy_fix_legacy() -> None:
         "extensions": {},
         "state": ConnectionState({}),
     }
-    await app(scope, None, None)
+    await app(scope, None, None)  # type: ignore[invalid-argument-type]
     mock.assert_called()
     scope = mock.call_args[0][0]
     assert scope["client"] == ("127.0.0.2", 0)
@@ -64,7 +66,7 @@ async def test_proxy_fix_modern() -> None:
         "extensions": {},
         "state": ConnectionState({}),
     }
-    await app(scope, None, None)
+    await app(scope, None, None)  # type: ignore[invalid-argument-type]
     mock.assert_called()
     scope = mock.call_args[0][0]
     assert scope["client"] == ("127.0.0.2", 0)

@@ -1,10 +1,11 @@
+"""QUIC protocol handler that manages multiple HTTP/3 connections."""
+
 from __future__ import annotations
 
-from collections.abc import Awaitable
+import pathlib
 from dataclasses import dataclass
 from functools import partial
-from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING
 
 from aioquic.buffer import Buffer
 from aioquic.h3.connection import H3_ALPN
@@ -22,11 +23,25 @@ from aioquic.quic.packet import (
     pull_quic_header,
 )
 
-from ..config import Config
-from ..events import Closed, Event, RawData
-from ..typing import AppWrapper, ConnectionState, SingleTask, TaskGroup, TLSExtension, WorkerContext
-from ..utils import get_server_certificate_pem, tls_version_to_int
+from anycorn.events import Closed, Event, RawData
+from anycorn.typing import (
+    AppWrapper,
+    ConnectionState,
+    SingleTask,
+    TaskGroup,
+    TLSExtension,
+    WorkerContext,
+)
+from anycorn.utils import get_server_certificate_pem, tls_version_to_int
+
 from .h3 import H3Protocol
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from anycorn.config import Config
+
+MIN_INITIAL_DATAGRAM_SIZE = 1200
 
 
 @dataclass
@@ -38,7 +53,9 @@ class _Connection:
 
 
 class QuicProtocol:
-    def __init__(
+    """Manages QUIC connections and dispatches events to H3Protocol handlers."""
+
+    def __init__(  # noqa: PLR0913
         self,
         app: AppWrapper,
         config: Config,
@@ -48,6 +65,7 @@ class QuicProtocol:
         server: tuple[str, int] | None,
         send: Callable[[Event], Awaitable[None]],
     ) -> None:
+        """Initialize the QUIC protocol handler."""
         self.app = app
         self.config = config
         self.context = context
@@ -59,15 +77,19 @@ class QuicProtocol:
         self._server_cert_pem = get_server_certificate_pem(config)
 
         self.quic_config = QuicConfiguration(alpn_protocols=H3_ALPN, is_client=False)
+        assert config.certfile is not None
+        assert config.keyfile is not None
         self.quic_config.load_cert_chain(
-            certfile=Path(config.certfile), keyfile=Path(config.keyfile)
+            certfile=pathlib.Path(config.certfile), keyfile=pathlib.Path(config.keyfile)
         )
 
     @property
     def idle(self) -> bool:
+        """Return True when there are no active QUIC connections."""
         return len(self.connections) == 0
 
     async def handle(self, event: Event) -> None:
+        """Handle an incoming connection event."""
         if isinstance(event, RawData):
             try:
                 header = pull_quic_header(Buffer(data=event.data), host_cid_length=8)
@@ -88,7 +110,7 @@ class QuicProtocol:
             connection = self.connections.get(header.destination_cid)
             if (
                 connection is None
-                and len(event.data) >= 1200
+                and len(event.data) >= MIN_INITIAL_DATAGRAM_SIZE
                 and header.packet_type == PACKET_TYPE_INITIAL
                 and not self.context.terminated.is_set()
             ):
@@ -111,6 +133,7 @@ class QuicProtocol:
             pass
 
     async def send_all(self, connection: _Connection) -> None:
+        """Send all pending datagrams and reschedule the connection timer."""
         for data, address in connection.quic.datagrams_to_send(now=self.context.time()):
             await self.send(RawData(data=data, address=address))
 
@@ -120,7 +143,7 @@ class QuicProtocol:
                 self.task_group, partial(self._handle_timer, timer, connection)
             )
 
-    async def _handle_events(
+    async def _handle_events(  # noqa: C901
         self, connection: _Connection, client: tuple[str, int] | None = None
     ) -> None:
         event = connection.quic.next_event()

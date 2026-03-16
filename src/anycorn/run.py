@@ -1,29 +1,26 @@
+"""Entry points for running Anycorn workers."""
+
 from __future__ import annotations
 
 import platform
 import signal
 import sys
 import time
-from collections.abc import Awaitable
 from functools import partial
 from multiprocessing import get_context
 from multiprocessing.connection import wait
-from multiprocessing.context import BaseContext
-from multiprocessing.process import BaseProcess
-from multiprocessing.synchronize import Event as EventType
 from pickle import PicklingError
 from random import randint
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import anyio
+import anyio.abc
+import anyio.streams.tls
 
-from .config import Config, Sockets
 from .lifespan import Lifespan
 from .statsd import StatsdLogger
 from .tcp_server import tcp_server_handler
 from .typing import AppWrapper, ConnectionState, LifespanState, WorkerFunc
-
-# from .udp_server import UDPServer
 from .utils import (
     ShutdownError,
     check_for_updates,
@@ -36,11 +33,20 @@ from .utils import (
 )
 from .worker_context import WorkerContext
 
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+    from multiprocessing.context import BaseContext
+    from multiprocessing.process import BaseProcess
+    from multiprocessing.synchronize import Event as EventType
+
+    from .config import Config, Sockets
+
 if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup
 
 
-def run(config: Config) -> int:
+def run(config: Config) -> int:  # noqa: C901, PLR0912
+    """Start the server, blocking until it exits, and return an exit code."""
     if config.pid_path is not None:
         write_pid_file(config.pid_path)
 
@@ -50,7 +56,8 @@ def run(config: Config) -> int:
     sockets = config.create_sockets()
 
     if config.use_reloader and config.workers == 0:
-        raise RuntimeError("Cannot reload without workers")
+        msg = "Cannot reload without workers"
+        raise RuntimeError(msg)
 
     exitcode = 0
     if config.workers == 0:
@@ -66,7 +73,7 @@ def run(config: Config) -> int:
         active = True
         shutdown_event = ctx.Event()
 
-        def shutdown(*args: Any) -> None:
+        def shutdown(*_args: Any) -> None:  # noqa: ANN401
             nonlocal active, shutdown_event
             shutdown_event.set()
             active = False
@@ -80,7 +87,7 @@ def run(config: Config) -> int:
 
             _populate(processes, config, worker_func, sockets, shutdown_event, ctx)
 
-            for signal_name in {"SIGINT", "SIGTERM", "SIGBREAK"}:
+            for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
                 if hasattr(signal, signal_name):
                     signal.signal(getattr(signal, signal_name), shutdown)
 
@@ -119,7 +126,7 @@ def run(config: Config) -> int:
     return exitcode
 
 
-def _populate(
+def _populate(  # noqa: PLR0913
     processes: list[BaseProcess],
     config: Config,
     worker_func: WorkerFunc,
@@ -136,9 +143,8 @@ def _populate(
         try:
             process.start()
         except PicklingError as error:
-            raise RuntimeError(
-                "Cannot pickle the config, see https://docs.python.org/3/library/pickle.html#pickle-picklable"
-            ) from error
+            msg = "Cannot pickle the config, see https://docs.python.org/3/library/pickle.html#pickle-picklable"
+            raise RuntimeError(msg) from error
         processes.append(process)
         if platform.system() == "Windows":
             time.sleep(0.1)
@@ -156,7 +162,7 @@ def _join_exited(processes: list[BaseProcess]) -> int:
     return exitcode
 
 
-async def worker_serve(
+async def worker_serve(  # noqa: C901, PLR0915
     app: AppWrapper,
     config: Config,
     *,
@@ -164,13 +170,14 @@ async def worker_serve(
     shutdown_trigger: Callable[..., Awaitable[None]] | None = None,
     task_status: anyio.abc.TaskStatus[list[str]] = anyio.TASK_STATUS_IGNORED,
 ) -> None:
+    """Run the server workers, handling lifespan and connections."""
     config.set_statsd_logger_class(StatsdLogger)
 
     lifespan_state: LifespanState = {}
     lifespan = Lifespan(app, config, lifespan_state)
     max_requests = None
     if config.max_requests is not None:
-        max_requests = config.max_requests + randint(0, config.max_requests_jitter)
+        max_requests = config.max_requests + randint(0, config.max_requests_jitter)  # noqa: S311
     context = WorkerContext(max_requests)
 
     async with anyio.create_task_group() as lifespan_tg:
@@ -189,11 +196,12 @@ async def worker_serve(
             listeners: list[anyio.abc.SocketListener | anyio.streams.tls.TLSListener] = []
             binds = []
             for secure_sock in sockets.secure_sockets:
-                asynclib = anyio._core._eventloop.get_async_backend()
+                assert ssl_context is not None
+                asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001  # ty:ignore[possibly-missing-attribute]
                 secure_listener = anyio.streams.tls.TLSListener(
                     asynclib.create_tcp_listener(secure_sock),
                     ssl_context,
-                    True,
+                    True,  # noqa: FBT003
                     config.ssl_handshake_timeout,
                 )
                 listeners.append(secure_listener)
@@ -203,19 +211,13 @@ async def worker_serve(
                 await config.log.info("Running on %s (CTRL + C to quit)", url)
 
             for insecure_sock in sockets.insecure_sockets:
-                asynclib = anyio._core._eventloop.get_async_backend()
+                asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001  # ty:ignore[possibly-missing-attribute]
                 insecure_listener = asynclib.create_tcp_listener(insecure_sock)
                 listeners.append(insecure_listener)
                 bind = repr_socket_addr(insecure_sock.family, insecure_sock.getsockname())
                 url = f"http://{bind}"
                 binds.append(url)
                 await config.log.info("Running on %s (CTRL + C to quit)", url)
-
-            # FIXME
-            # for quic_sock in sockets.quic_sockets:
-            #     await server_tg.start(UDPServer(app, config, context, quic_sock).run)
-            #     bind = repr_socket_addr(quic_sock.family, quic_sock.getsockname())
-            #     await config.log.info(f"Running on https://{bind} (QUIC) (CTRL + C to quit)")
 
             task_status.started(binds)
             try:
@@ -238,7 +240,7 @@ async def worker_serve(
             except BaseExceptionGroup as error:
                 _, other_errors = error.split((ShutdownError, KeyboardInterrupt))
                 if other_errors is not None:
-                    raise other_errors
+                    raise other_errors from error
             finally:
                 await context.terminated.set()
                 server_tg.cancel_scope.deadline = anyio.current_time() + config.graceful_timeout
@@ -250,6 +252,7 @@ async def worker_serve(
 def anyio_worker(
     config: Config, sockets: Sockets | None = None, shutdown_event: EventType | None = None
 ) -> None:
+    """Run the anyio worker, loading the application and serving requests."""
     if sockets is not None:
         for sock in sockets.secure_sockets:
             sock.listen(config.backlog)

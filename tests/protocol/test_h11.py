@@ -1,11 +1,12 @@
+"""Tests for H11 protocol implementation."""
+
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock, call
 
 import h11
 import pytest
-from _pytest.monkeypatch import MonkeyPatch
 
 import anycorn.protocol.h11
 from anycorn.config import Config
@@ -15,6 +16,9 @@ from anycorn.protocol.h11 import H2CProtocolRequiredError, H2ProtocolAssumedErro
 from anycorn.protocol.http_stream import HTTPStream
 from anycorn.typing import ConnectionState
 from anycorn.typing import Event as IOEvent
+
+if TYPE_CHECKING:
+    from _pytest.monkeypatch import MonkeyPatch
 
 # from anycorn.worker_context import EventWrapper
 
@@ -30,7 +34,7 @@ BASIC_HEADERS = [("Host", "anycorn"), ("Connection", "close")]
 
 @pytest.fixture(name="protocol")
 async def _protocol(monkeypatch: MonkeyPatch) -> H11Protocol:
-    MockHTTPStream = Mock()
+    MockHTTPStream = Mock()  # noqa: N806
     MockHTTPStream.return_value = AsyncMock(spec=HTTPStream)
     monkeypatch.setattr(anycorn.protocol.h11, "HTTPStream", MockHTTPStream)
     context = Mock()
@@ -134,9 +138,14 @@ async def test_protocol_keep_alive_max_requests(protocol: H11Protocol) -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("keep_alive, expected", [(True, Updated(idle=True)), (False, Closed())])
+@pytest.mark.parametrize(
+    ("keep_alive", "expected"),
+    [(True, Updated(idle=True)), (False, Closed())],
+)
 async def test_protocol_send_stream_closed(
-    keep_alive: bool, expected: Any, protocol: H11Protocol
+    keep_alive: bool,  # noqa: FBT001
+    expected: Any,  # noqa: ANN401
+    protocol: H11Protocol,
 ) -> None:
     data = b"GET / HTTP/1.1\r\nHost: anycorn\r\n"
     if keep_alive:
@@ -234,7 +243,7 @@ async def test_protocol_handle_request(protocol: H11Protocol) -> None:
 async def test_protocol_handle_request_with_raw_headers(protocol: H11Protocol) -> None:
     protocol.config.h11_pass_raw_headers = True
     client = h11.Connection(h11.CLIENT)
-    headers = BASIC_HEADERS + [("FOO_BAR", "foobar")]
+    headers = [*BASIC_HEADERS, ("FOO_BAR", "foobar")]
     await protocol.handle(
         RawData(data=client.send(h11.Request(method="GET", target="/?a=b", headers=headers)))
     )
@@ -290,16 +299,16 @@ async def test_protocol_handle_send_client_error(protocol: H11Protocol) -> None:
 
 @pytest.mark.anyio
 async def test_protocol_handle_pipelining(protocol: H11Protocol) -> None:
-    protocol.can_read.wait.side_effect = Exception()  # type: ignore[attr-defined]
-    with pytest.raises(Exception):
+    protocol.can_read.wait.side_effect = Exception()
+    with pytest.raises(Exception, match=""):  # noqa: PT011
         await protocol.handle(
             RawData(
                 data=b"GET / HTTP/1.1\r\nHost: anycorn\r\nConnection: keep-alive\r\n\r\n"
                 b"GET / HTTP/1.1\r\nHost: anycorn\r\nConnection: close\r\n\r\n"
             )
         )
-    protocol.can_read.clear.assert_called()  # type: ignore[attr-defined]
-    protocol.can_read.wait.assert_called()  # type: ignore[attr-defined]
+    protocol.can_read.clear.assert_called()
+    protocol.can_read.wait.assert_called()
 
 
 @pytest.mark.anyio
@@ -311,8 +320,11 @@ async def test_protocol_handle_continue_request(protocol: H11Protocol) -> None:
                 h11.Request(
                     method="POST",
                     target="/?a=b",
-                    headers=BASIC_HEADERS
-                    + [("transfer-encoding", "chunked"), ("expect", "100-continue")],
+                    headers=[
+                        *BASIC_HEADERS,
+                        ("transfer-encoding", "chunked"),
+                        ("expect", "100-continue"),
+                    ],
                 )
             )
         )
@@ -326,7 +338,7 @@ async def test_protocol_handle_continue_request(protocol: H11Protocol) -> None:
 async def test_protocol_handle_max_incomplete(monkeypatch: MonkeyPatch) -> None:
     config = Config()
     config.h11_max_incomplete_size = 5
-    MockHTTPStream = AsyncMock()
+    MockHTTPStream = AsyncMock()  # noqa: N806
     MockHTTPStream.return_value = AsyncMock(spec=HTTPStream)
     monkeypatch.setattr(anycorn.protocol.h11, "HTTPStream", MockHTTPStream)
     context = Mock()

@@ -1,7 +1,10 @@
+"""Summarise Autobahn WebSocket compliance test results."""
+
 import json
+import pathlib
 import sys
 
-with open("reports/servers/index.json") as file_:
+with pathlib.Path("reports/servers/index.json").open() as file_:
     report = json.load(file_)
 
 failures = sum(value["behavior"] == "FAILED" for value in report["websockets"].values())

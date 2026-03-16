@@ -1,16 +1,22 @@
+"""Tests for anycorn configuration loading and socket creation."""
+
 from __future__ import annotations
 
 import os
 import socket
 import ssl
 import sys
+from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import Mock, NonCallableMock
 
 import pytest
-from _pytest.monkeypatch import MonkeyPatch
 
 import anycorn.config
 from anycorn.config import Config
+
+if TYPE_CHECKING:
+    from _pytest.monkeypatch import MonkeyPatch
 
 access_log_format = "bob"
 h11_max_incomplete_size = 4
@@ -23,33 +29,33 @@ def _check_standard_config(config: Config) -> None:
 
 
 def test_config_from_pyfile() -> None:
-    path = os.path.join(os.path.dirname(__file__), "assets/config.py")
+    path = str(Path(__file__).parent / "assets/config.py")
     config = Config.from_pyfile(path)
     _check_standard_config(config)
 
 
 def test_config_from_object() -> None:
-    sys.path.append(os.path.join(os.path.dirname(__file__)))
+    sys.path.append(str(Path(__file__).parent))
 
     config = Config.from_object("assets.config")
     _check_standard_config(config)
 
 
 def test_ssl_config_from_pyfile() -> None:
-    path = os.path.join(os.path.dirname(__file__), "assets/config_ssl.py")
+    path = str(Path(__file__).parent / "assets/config_ssl.py")
     config = Config.from_pyfile(path)
     _check_standard_config(config)
     assert config.ssl_enabled
 
 
 def test_config_from_toml() -> None:
-    path = os.path.join(os.path.dirname(__file__), "assets/config.toml")
+    path = str(Path(__file__).parent / "assets/config.toml")
     config = Config.from_toml(path)
     _check_standard_config(config)
 
 
 def test_create_ssl_context() -> None:
-    path = os.path.join(os.path.dirname(__file__), "assets/config_ssl.py")
+    path = str(Path(__file__).parent / "assets/config_ssl.py")
     config = Config.from_pyfile(path)
     context = config.create_ssl_context()
 
@@ -59,6 +65,7 @@ def test_create_ssl_context() -> None:
     #
     #       To overcome this, instead of checking that the result in True, we will check that it is
     #        equal to "context.options".
+    assert context is not None
     assert (
         context.options
         & (
@@ -73,7 +80,7 @@ def test_create_ssl_context() -> None:
 
 
 @pytest.mark.parametrize(
-    "bind, expected_family, expected_binding",
+    ("bind", "expected_family", "expected_binding"),
     [
         ("127.0.0.1:5000", socket.AF_INET, ("127.0.0.1", 5000)),
         ("127.0.0.1", socket.AF_INET, ("127.0.0.1", 8000)),
@@ -96,8 +103,8 @@ def test_create_sockets_ip(
     mock_socket.assert_called_with(expected_family, socket.SOCK_STREAM)
     sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
     sock.bind.assert_called_with(expected_binding)  # type: ignore[attr-defined]
-    sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]
-    sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]
+    sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]  # noqa: FBT003
+    sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]  # noqa: FBT003
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows is not Unix.")
@@ -109,11 +116,11 @@ def test_create_sockets_unix(monkeypatch: MonkeyPatch) -> None:
     config.bind = ["unix:/tmp/anycorn.sock"]
     sockets = config.create_sockets()
     sock = sockets.insecure_sockets[0]
-    mock_socket.assert_called_with(socket.AF_UNIX, socket.SOCK_STREAM)
+    mock_socket.assert_called_with(socket.AF_UNIX, socket.SOCK_STREAM)  # type: ignore[unresolved-attribute]
     sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
-    sock.bind.assert_called_with("/tmp/anycorn.sock")  # type: ignore[attr-defined]
-    sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]
-    sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]
+    sock.bind.assert_called_with("/tmp/anycorn.sock")  # type: ignore[attr-defined] # noqa: S108
+    sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]  # noqa: FBT003
+    sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]  # noqa: FBT003
 
 
 def test_create_sockets_fd(monkeypatch: MonkeyPatch) -> None:
@@ -128,8 +135,8 @@ def test_create_sockets_fd(monkeypatch: MonkeyPatch) -> None:
     mock_sock_class.assert_called_with(fileno=2)
     sock.getsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_TYPE)  # type: ignore[attr-defined]
     sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
-    sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]
-    sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]
+    sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]  # noqa: FBT003
+    sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]  # noqa: FBT003
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows is not Unix.")
@@ -140,7 +147,7 @@ def test_create_sockets_multiple(monkeypatch: MonkeyPatch) -> None:
     config = Config()
     config.bind = ["127.0.0.1", "unix:/tmp/anycorn.sock"]
     sockets = config.create_sockets()
-    assert len(sockets.insecure_sockets) == 2
+    assert len(sockets.insecure_sockets) == 2  # noqa: PLR2004
 
 
 def test_response_headers(monkeypatch: MonkeyPatch) -> None:

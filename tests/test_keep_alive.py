@@ -1,7 +1,8 @@
+"""Tests for HTTP keep-alive connection handling."""
+
 from __future__ import annotations
 
-from collections.abc import Awaitable  # , Generator
-from typing import Callable
+from typing import TYPE_CHECKING
 
 import anyio
 import h11
@@ -10,7 +11,11 @@ import h11
 # from anycorn.app_wrappers import ASGIWrapper
 # from anycorn.config import Config
 # from anycorn.tcp_server import TCPServer
-from anycorn.typing import ASGIReceiveEvent, ASGISendEvent, Scope
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from anycorn.typing import ASGIReceiveEvent, ASGISendEvent, Scope
 
 # from anycorn.worker_context import WorkerContext
 # from .helpers import MockSocket
@@ -21,7 +26,7 @@ REQUEST = h11.Request(method="GET", target="/", headers=[(b"host", b"anycorn")])
 
 
 async def slow_framework(
-    scope: Scope,
+    _scope: Scope,
     receive: Callable[[], Awaitable[ASGIReceiveEvent]],
     send: Callable[[ASGISendEvent], Awaitable[None]],
 ) -> None:
@@ -29,7 +34,7 @@ async def slow_framework(
         event = await receive()
         if event["type"] == "http.disconnect":
             break
-        elif event["type"] == "lifespan.startup":
+        if event["type"] == "lifespan.startup":
             await send({"type": "lifespan.startup.complete"})
         elif event["type"] == "lifespan.shutdown":
             await send({"type": "lifespan.shutdown.complete"})

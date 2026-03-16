@@ -1,3 +1,5 @@
+"""Tests for the HTTP/2 protocol handler."""
+
 from __future__ import annotations
 
 from unittest.mock import Mock, call

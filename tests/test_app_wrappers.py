@@ -1,13 +1,26 @@
+"""Tests for ASGI and WSGI application wrapper functionality."""
+
 from __future__ import annotations
 
 import math
-from typing import Any, Callable, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import anyio
+import anyio.from_thread
+import anyio.to_thread
 import pytest
 
-from anycorn.app_wrappers import ASGIReceiveCallable, InvalidPathError, WSGIWrapper, _build_environ
-from anycorn.typing import ASGIReceiveEvent, ASGISendEvent, ConnectionState, HTTPScope
+from anycorn.app_wrappers import InvalidPathError, WSGIWrapper, _build_environ
+from anycorn.typing import (
+    ASGIReceiveCallable,
+    ASGIReceiveEvent,
+    ASGISendEvent,
+    ConnectionState,
+    HTTPScope,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def echo_body(environ: dict, start_response: Callable) -> list[bytes]:
@@ -49,7 +62,7 @@ async def test_wsgi() -> None:
         nonlocal messages
         messages.append(message)
 
-    receive = cast(ASGIReceiveCallable, receive_channel.receive)
+    receive = cast("ASGIReceiveCallable", receive_channel.receive)
     await app(scope, receive, _send, anyio.to_thread.run_sync, anyio.from_thread.run)
     assert messages == [
         {
@@ -75,10 +88,10 @@ async def _run_app(app: WSGIWrapper, scope: HTTPScope, body: bytes = b"") -> lis
         nonlocal messages
         messages.append(message)
 
-    def _call_soon(func: Callable, *args: Any) -> Any:
+    def _call_soon(func: Callable, *args: Any) -> Any:  # noqa: ANN401
         return anyio.from_thread.run(func, *args)
 
-    receive = cast(ASGIReceiveCallable, recv_stream.receive)
+    receive = cast("ASGIReceiveCallable", recv_stream.receive)
     await app(scope, receive, _send, anyio.to_thread.run_sync, _call_soon)
     return messages
 
@@ -143,7 +156,7 @@ async def test_max_body_size() -> None:
     ]
 
 
-def no_start_response(environ: dict, start_response: Callable) -> list[bytes]:
+def no_start_response(_environ: dict, _start_response: Callable) -> list[bytes]:
     return [b"result"]
 
 

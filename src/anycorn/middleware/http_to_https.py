@@ -1,17 +1,25 @@
+"""Middleware that redirects HTTP and WS requests to HTTPS and WSS respectively."""
+
 from __future__ import annotations
 
-from typing import Callable
+from typing import TYPE_CHECKING
 from urllib.parse import urlunsplit
 
-from ..typing import ASGIFramework, HTTPScope, Scope, WebsocketScope, WWWScope
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from anycorn.typing import ASGIFramework, HTTPScope, Scope, WebsocketScope, WWWScope
 
 
 class HTTPToHTTPSRedirectMiddleware:
+    """ASGI middleware that issues 307 redirects from HTTP/WS to HTTPS/WSS."""
+
     def __init__(self, app: ASGIFramework, host: str | None) -> None:
         self.app = app
         self.host = host
 
     async def __call__(self, scope: Scope, receive: Callable, send: Callable) -> None:
+        """Handle the ASGI call, redirecting insecure connections to their secure equivalents."""
         if scope["type"] == "http" and scope["scheme"] == "http":
             await self._send_http_redirect(scope, send)
         elif scope["type"] == "websocket" and scope["scheme"] == "ws":
@@ -24,6 +32,7 @@ class HTTPToHTTPSRedirectMiddleware:
                 await send({"type": "websocket.close"})
         else:
             return await self.app(scope, receive, send)
+        return None
 
     async def _send_http_redirect(self, scope: HTTPScope, send: Callable) -> None:
         new_url = self._new_url("https", scope)
@@ -61,7 +70,8 @@ class HTTPToHTTPSRedirectMiddleware:
                     host = value.decode("latin-1")
                     break
         if host is None:
-            raise ValueError("Host to redirect to cannot be determined")
+            msg = "Host to redirect to cannot be determined"
+            raise ValueError(msg)
 
         path = scope.get("root_path", "") + scope["raw_path"].decode()
         return urlunsplit((scheme, host, path, scope["query_string"].decode(), ""))
