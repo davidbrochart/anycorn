@@ -1,5 +1,9 @@
 # Version history
 
+## 0.18.5
+
+- Add license file.
+
 ## 0.18.4
 
 - Use `X.Y.Z` tag scheme (no `v` prefix).
