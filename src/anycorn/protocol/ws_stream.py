@@ -72,10 +72,16 @@ class FrameTooLargeError(Exception):
 class Handshake:
     """Parses and validates a WebSocket upgrade handshake."""
 
-    def __init__(self, headers: list[tuple[bytes, bytes]], http_version: str) -> None:
+    def __init__(
+        self,
+        headers: list[tuple[bytes, bytes]],
+        http_version: str,
+        websocket_permessage_deflate: bool = False,  # noqa: FBT001,FBT002
+    ) -> None:
         """Parse WebSocket-related headers from the request."""
         self.accepted = False
         self.http_version = http_version
+        self.websocket_permessage_deflate = websocket_permessage_deflate
         self.connection_tokens: list[str] | None = None
         self.extensions: list[str] | None = None
         self.key: bytes | None = None
@@ -126,7 +132,9 @@ class Handshake:
                 raise Exception(msg)  # noqa: TRY002
             headers.append((b"sec-websocket-protocol", subprotocol.encode()))
 
-        extensions: list[Extension] = [PerMessageDeflate()]
+        extensions: list[Extension] = []
+        if self.websocket_permessage_deflate:
+            extensions.append(PerMessageDeflate())
         accepts = None
         if self.extensions is not None:
             accepts = server_extensions_handshake(self.extensions, extensions)
@@ -235,7 +243,9 @@ class WSStream:
             return
         if isinstance(event, Request):
             self.start_time = time()
-            self.handshake = Handshake(event.headers, event.http_version)
+            self.handshake = Handshake(
+                event.headers, event.http_version, self.config.websocket_permessage_deflate
+            )
             path, _, query_string = event.raw_path.partition(b"?")
             extensions = Extensions()
             if self.tls is not None:
