@@ -1,5 +1,9 @@
 # Version history
 
+## 0.18.6
+
+- Make WebSocket `permessage-deflate` compression optional.
+
 ## 0.18.5
 
 - Add license file.
