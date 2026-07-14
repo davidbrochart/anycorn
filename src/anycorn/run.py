@@ -236,7 +236,6 @@ async def worker_serve(  # noqa: C901, PLR0915
                             ),
                         )
 
-                    await anyio.Event().wait()
             except BaseExceptionGroup as error:
                 _, other_errors = error.split((ShutdownError, KeyboardInterrupt))
                 if other_errors is not None:
