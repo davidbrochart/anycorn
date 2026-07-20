@@ -231,7 +231,7 @@ async def worker_serve(  # noqa: C901, PLR0915
                             partial(
                                 listener.serve,
                                 tcp_server_handler(
-                                    app, config, context, ConnectionState(lifespan_state.copy())
+                                    app, config, context, ConnectionState(lifespan_state)
                                 ),
                             ),
                         )

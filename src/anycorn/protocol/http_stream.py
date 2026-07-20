@@ -10,6 +10,7 @@ from urllib.parse import unquote
 from anycorn.typing import (
     AppWrapper,
     ASGISendEvent,
+    ConnectionState,
     Extensions,
     HTTPResponseStartEvent,
     HTTPScope,
@@ -131,7 +132,7 @@ class HTTPStream:
                 headers=event.headers,
                 client=self.client,
                 server=self.server,
-                state=event.state,
+                state=ConnectionState(event.state.copy()),
                 extensions=extensions,
             )
 

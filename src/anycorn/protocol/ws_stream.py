@@ -36,6 +36,9 @@ from anycorn.typing import (
     WebsocketScope,
     WorkerContext,
 )
+from anycorn.typing import (
+    ConnectionState as ASGIConnectionState,
+)
 from anycorn.utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
@@ -263,7 +266,7 @@ class WSStream:
                 "headers": event.headers,
                 "client": self.client,
                 "server": self.server,
-                "state": event.state,
+                "state": ASGIConnectionState(event.state.copy()),
                 "subprotocols": self.handshake.subprotocols or [],
                 "extensions": extensions,
             }

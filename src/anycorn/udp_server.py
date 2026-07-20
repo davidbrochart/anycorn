@@ -53,7 +53,7 @@ class UDPServer:
                 self.config,
                 self.context,
                 task_group,
-                ConnectionState(self.state.copy()),
+                ConnectionState(self.state),
                 server,
                 self.protocol_send,
             )
