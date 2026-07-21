@@ -14,6 +14,7 @@ from .utils import parse_socket_addr
 
 if TYPE_CHECKING:
     from .config import Config
+    from .datagram import DatagramSocket
     from .worker_context import WorkerContext
 
 
@@ -26,7 +27,7 @@ class UDPServer:
         config: Config,
         context: WorkerContext,
         state: LifespanState,
-        socket: anyio.abc.UDPSocket,
+        socket: DatagramSocket,
     ) -> None:
         self.app = app
         self.config = config
@@ -43,10 +44,7 @@ class UDPServer:
         )
 
         task_status.started()
-        server = parse_socket_addr(
-            self.socket.extra(anyio.abc.SocketAttribute.raw_socket).family,  # noqa: S610
-            self.socket.extra(anyio.abc.SocketAttribute.raw_socket).getsockname(),  # noqa: S610
-        )
+        server = parse_socket_addr(self.socket.socket.family, self.socket.socket.getsockname())
         async with TaskGroup() as task_group:
             self.protocol = QuicProtocol(
                 self.app,

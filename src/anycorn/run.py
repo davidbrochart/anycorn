@@ -18,10 +18,12 @@ import anyio
 import anyio.abc
 import anyio.streams.tls
 
+from .datagram import wrap_datagram_socket
 from .lifespan import Lifespan
 from .statsd import StatsdLogger
 from .tcp_server import tcp_server_handler
 from .typing import AppWrapper, ConnectionState, LifespanState, WorkerFunc
+from .udp_server import UDPServer
 from .utils import (
     ShutdownError,
     check_for_updates,
@@ -118,13 +120,14 @@ def run(config: Config) -> int:  # noqa: C901, PLR0912
 
         exitcode = _join_exited(processes) if exitcode != 0 else exitcode
 
-        for sock in sockets.secure_sockets:
-            sock.close()
-
-        for sock in sockets.insecure_sockets:
-            sock.close()
+        _close_sockets(sockets)
 
     return exitcode
+
+
+def _close_sockets(sockets: Sockets) -> None:
+    for sock in (*sockets.secure_sockets, *sockets.insecure_sockets, *sockets.quic_sockets):
+        sock.close()
 
 
 def _populate(  # noqa: PLR0913
@@ -163,7 +166,7 @@ def _join_exited(processes: list[BaseProcess]) -> int:
     return exitcode
 
 
-async def worker_serve(  # noqa: C901, PLR0915
+async def worker_serve(  # noqa: C901, PLR0912, PLR0915
     app: AppWrapper,
     config: Config,
     *,
@@ -185,7 +188,7 @@ async def worker_serve(  # noqa: C901, PLR0915
         await lifespan_tg.start(lifespan.handle_lifespan)
         await lifespan.wait_for_startup()
 
-        async with anyio.create_task_group() as server_tg, AsyncExitStack() as listener_stack:
+        async with anyio.create_task_group() as server_tg, AsyncExitStack() as socket_stack:
             if sockets is None:
                 sockets = config.create_sockets()
                 for sock in sockets.secure_sockets:
@@ -205,7 +208,7 @@ async def worker_serve(  # noqa: C901, PLR0915
                     True,  # noqa: FBT003
                     config.ssl_handshake_timeout,
                 )
-                listeners.append(await listener_stack.enter_async_context(secure_listener))
+                listeners.append(await socket_stack.enter_async_context(secure_listener))
                 bind = repr_socket_addr(secure_sock.family, secure_sock.getsockname())
                 url = f"https://{bind}"
                 binds.append(url)
@@ -214,11 +217,23 @@ async def worker_serve(  # noqa: C901, PLR0915
             for insecure_sock in sockets.insecure_sockets:
                 asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001  # ty:ignore[possibly-missing-attribute]
                 insecure_listener = asynclib.create_tcp_listener(insecure_sock)
-                listeners.append(await listener_stack.enter_async_context(insecure_listener))
+                listeners.append(await socket_stack.enter_async_context(insecure_listener))
                 bind = repr_socket_addr(insecure_sock.family, insecure_sock.getsockname())
                 url = f"http://{bind}"
                 binds.append(url)
                 await config.log.info("Running on %s (CTRL + C to quit)", url)
+
+            udp_servers = []
+            for quic_sock in sockets.quic_sockets:
+                udp_socket = await wrap_datagram_socket(quic_sock)
+                socket_stack.push_async_callback(udp_socket.aclose)
+                udp_servers.append(
+                    UDPServer(app, config, context, lifespan_state.copy(), udp_socket)
+                )
+                bind = repr_socket_addr(quic_sock.family, quic_sock.getsockname())
+                url = f"https://{bind}"
+                binds.append(url)
+                await config.log.info("Running on %s (QUIC, CTRL + C to quit)", url)
 
             task_status.started(binds)
             try:
@@ -226,6 +241,9 @@ async def worker_serve(  # noqa: C901, PLR0915
                     if shutdown_trigger is not None:
                         tg.start_soon(raise_shutdown, shutdown_trigger)
                     tg.start_soon(raise_shutdown, context.terminate.wait)
+
+                    for udp_server in udp_servers:
+                        await tg.start(udp_server.run)
 
                     for listener in listeners:
                         tg.start_soon(

@@ -2,16 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import socket
-import sys
 from typing import TYPE_CHECKING, Any
 
-import anyio
-import anyio.abc
-import sniffio
-from anyio.abc import SocketAttribute
-
+from .datagram import DatagramSocket, connect_datagram_socket
 from .logging import Logger
 
 if TYPE_CHECKING:
@@ -121,96 +114,6 @@ class BaseStatsdLogger(Logger):
         raise NotImplementedError
 
 
-class _DatagramProtocol(asyncio.DatagramProtocol):
-    def __init__(self) -> None:
-        self.closed = asyncio.Event()
-        self.write_event = asyncio.Event()
-        self.write_event.set()
-
-    def pause_writing(self) -> None:
-        self.write_event.clear()
-
-    def resume_writing(self) -> None:
-        self.write_event.set()
-
-    def connection_lost(self, exc: Exception | None) -> None:  # noqa: ARG002
-        self.write_event.set()
-        self.closed.set()
-
-
-class _AsyncioSender:
-    """Sends datagrams via asyncio, so that the transport can be aborted on close.
-
-    Used only on Windows, where the proactor event loop will not schedule
-    `connection_lost()` from `transport.close()` whilst a write is in flight - leaving
-    the socket unclosed and anyio's `aclose()`, which waits for that event, hanging
-    forever. `abort()` carries no such condition, and anyio's UDP wrapper offers no way
-    to reach it. Every other platform uses `_AnyioSender`.
-    see https://github.com/agronholm/anyio/issues/1237
-    """
-
-    def __init__(self, transport: asyncio.DatagramTransport, protocol: _DatagramProtocol) -> None:
-        self._transport = transport
-        self._protocol = protocol
-        self.socket: socket.socket = transport.get_extra_info("socket")
-
-    @classmethod
-    async def create(cls, host: str, port: int) -> _AsyncioSender:
-        transport, protocol = await asyncio.get_running_loop().create_datagram_endpoint(
-            _DatagramProtocol,
-            remote_addr=(host, port),
-            family=socket.AddressFamily.AF_INET,
-        )
-        return cls(transport, protocol)
-
-    async def send(self, message: bytes) -> None:
-        # Datagram transports have no drain, so this is the transport's high/low water
-        # mark flow control, matching what anyio's own send() waits on
-        await self._protocol.write_event.wait()
-        self._transport.sendto(message)
-
-    async def aclose(self) -> None:
-        self._transport.close()
-        try:
-            # Give a completing write the chance to close the transport by itself
-            await asyncio.sleep(0)
-        finally:
-            # Unlike close(), abort() always schedules connection_lost, so this must
-            # run even if the checkpoint above is cancelled. Having scheduled it, the
-            # wait is bounded by a single iteration of the loop, so shield it: a
-            # cancelled close must still leave the socket released.
-            self._transport.abort()
-            with anyio.CancelScope(shield=True):
-                await self._protocol.closed.wait()
-
-
-class _AnyioSender:
-    """Sends datagrams via anyio, for backends other than asyncio.
-
-    The socket is deliberately left unconnected. A connected UDP socket is told about
-    ICMP port unreachable, surfacing a statsd daemon that is down as ECONNREFUSED on a
-    later send - which anyio raises as `BrokenResourceError`, from whichever request
-    happened to be logging at the time. Metrics are best effort and must not take the
-    request being measured down with them, so address each datagram instead.
-    """
-
-    def __init__(self, sock: anyio.abc.UDPSocket, host: str, port: int) -> None:
-        self._socket = sock
-        self._host = host
-        self._port = port
-        self.socket: socket.socket = sock.extra(SocketAttribute.raw_socket)  # noqa: S610
-
-    @classmethod
-    async def create(cls, host: str, port: int) -> _AnyioSender:
-        return cls(await anyio.create_udp_socket(family=socket.AddressFamily.AF_INET), host, port)
-
-    async def send(self, message: bytes) -> None:
-        await self._socket.sendto(message, self._host, self._port)
-
-    async def aclose(self) -> None:
-        await self._socket.aclose()
-
-
 class StatsdLogger(BaseStatsdLogger):
     """StatsD logger that sends metrics over UDP."""
 
@@ -218,15 +121,11 @@ class StatsdLogger(BaseStatsdLogger):
         super().__init__(config)
         assert config.statsd_host is not None
         self.address = tuple(config.statsd_host.rsplit(":", 1))
-        self._sender: _AsyncioSender | _AnyioSender | None = None
+        self._sender: DatagramSocket | None = None
 
     async def _socket_send(self, message: bytes) -> None:
         if self._sender is None:
-            host, port = self.address[0], int(self.address[1])
-            if sys.platform == "win32" and sniffio.current_async_library() == "asyncio":
-                self._sender = await _AsyncioSender.create(host, port)
-            else:
-                self._sender = await _AnyioSender.create(host, port)
+            self._sender = await connect_datagram_socket(self.address[0], int(self.address[1]))
 
         await self._sender.send(message)
 
