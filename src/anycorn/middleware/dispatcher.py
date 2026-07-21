@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 MAX_QUEUE_SIZE = 10
 
 
+async def _call_app(app: ASGIFramework, scope: Scope, receive: Callable, send: Callable) -> None:
+    # An ASGI app returns an Awaitable, whilst start_soon requires a coroutine function
+    await app(scope, receive, send)
+
+
 class _DispatcherMiddleware:
     def __init__(self, mounts: dict[str, ASGIFramework]) -> None:
         self.mounts = mounts
@@ -68,6 +73,7 @@ class DispatcherMiddleware(_DispatcherMiddleware):
             tg = await stack.enter_async_context(anyio.create_task_group())
             for path, app in self.mounts.items():
                 tg.start_soon(
+                    _call_app,
                     app,
                     scope,
                     self.app_queues[path][1].receive,
