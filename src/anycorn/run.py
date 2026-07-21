@@ -6,6 +6,7 @@ import platform
 import signal
 import sys
 import time
+from contextlib import AsyncExitStack
 from functools import partial
 from multiprocessing import get_context
 from multiprocessing.connection import wait
@@ -180,11 +181,11 @@ async def worker_serve(  # noqa: C901, PLR0915
         max_requests = config.max_requests + randint(0, config.max_requests_jitter)  # noqa: S311
     context = WorkerContext(max_requests)
 
-    async with anyio.create_task_group() as lifespan_tg:
+    async with config.log, anyio.create_task_group() as lifespan_tg:
         await lifespan_tg.start(lifespan.handle_lifespan)
         await lifespan.wait_for_startup()
 
-        async with anyio.create_task_group() as server_tg:
+        async with anyio.create_task_group() as server_tg, AsyncExitStack() as listener_stack:
             if sockets is None:
                 sockets = config.create_sockets()
                 for sock in sockets.secure_sockets:
@@ -204,7 +205,7 @@ async def worker_serve(  # noqa: C901, PLR0915
                     True,  # noqa: FBT003
                     config.ssl_handshake_timeout,
                 )
-                listeners.append(secure_listener)
+                listeners.append(await listener_stack.enter_async_context(secure_listener))
                 bind = repr_socket_addr(secure_sock.family, secure_sock.getsockname())
                 url = f"https://{bind}"
                 binds.append(url)
@@ -213,7 +214,7 @@ async def worker_serve(  # noqa: C901, PLR0915
             for insecure_sock in sockets.insecure_sockets:
                 asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001  # ty:ignore[possibly-missing-attribute]
                 insecure_listener = asynclib.create_tcp_listener(insecure_sock)
-                listeners.append(insecure_listener)
+                listeners.append(await listener_stack.enter_async_context(insecure_listener))
                 bind = repr_socket_addr(insecure_sock.family, insecure_sock.getsockname())
                 url = f"http://{bind}"
                 binds.append(url)

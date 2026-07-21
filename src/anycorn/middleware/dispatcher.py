@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -14,6 +15,11 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 MAX_QUEUE_SIZE = 10
+
+
+async def _call_app(app: ASGIFramework, scope: Scope, receive: Callable, send: Callable) -> None:
+    # An ASGI app returns an Awaitable, whilst start_soon requires a coroutine function
+    await app(scope, receive, send)
 
 
 class _DispatcherMiddleware:
@@ -59,9 +65,15 @@ class DispatcherMiddleware(_DispatcherMiddleware):
         self.startup_complete = dict.fromkeys(self.mounts, False)
         self.shutdown_complete = dict.fromkeys(self.mounts, False)
 
-        async with anyio.create_task_group() as tg:
+        async with AsyncExitStack() as stack:
+            for send_stream, receive_stream in self.app_queues.values():
+                await stack.enter_async_context(send_stream)
+                await stack.enter_async_context(receive_stream)
+
+            tg = await stack.enter_async_context(anyio.create_task_group())
             for path, app in self.mounts.items():
                 tg.start_soon(
+                    _call_app,
                     app,
                     scope,
                     self.app_queues[path][1].receive,

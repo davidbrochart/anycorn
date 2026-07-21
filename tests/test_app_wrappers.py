@@ -54,7 +54,6 @@ async def test_wsgi() -> None:
         "state": ConnectionState({}),
     }
     send_channel, receive_channel = anyio.create_memory_object_stream[ASGIReceiveEvent](1)
-    await send_channel.send({"type": "http.request"})  # type: ignore[arg-type, misc]
 
     messages = []
 
@@ -62,8 +61,10 @@ async def test_wsgi() -> None:
         nonlocal messages
         messages.append(message)
 
-    receive = cast("ASGIReceiveCallable", receive_channel.receive)
-    await app(scope, receive, _send, anyio.to_thread.run_sync, anyio.from_thread.run)
+    async with send_channel, receive_channel:
+        await send_channel.send({"type": "http.request"})  # type: ignore[arg-type, misc]
+        receive = cast("ASGIReceiveCallable", receive_channel.receive)
+        await app(scope, receive, _send, anyio.to_thread.run_sync, anyio.from_thread.run)
     assert messages == [
         {
             "headers": [
@@ -80,7 +81,6 @@ async def test_wsgi() -> None:
 
 async def _run_app(app: WSGIWrapper, scope: HTTPScope, body: bytes = b"") -> list[ASGISendEvent]:
     send_stream, recv_stream = anyio.create_memory_object_stream[dict](math.inf)
-    await send_stream.send({"type": "http.request", "body": body})
 
     messages = []
 
@@ -91,8 +91,10 @@ async def _run_app(app: WSGIWrapper, scope: HTTPScope, body: bytes = b"") -> lis
     def _call_soon(func: Callable, *args: Any) -> Any:  # noqa: ANN401
         return anyio.from_thread.run(func, *args)
 
-    receive = cast("ASGIReceiveCallable", recv_stream.receive)
-    await app(scope, receive, _send, anyio.to_thread.run_sync, _call_soon)
+    async with send_stream, recv_stream:
+        await send_stream.send({"type": "http.request", "body": body})
+        receive = cast("ASGIReceiveCallable", recv_stream.receive)
+        await app(scope, receive, _send, anyio.to_thread.run_sync, _call_soon)
     return messages
 
 

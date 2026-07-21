@@ -52,7 +52,7 @@ h3 = [
 test = [
     "anycorn[h3]",
     "httpx",
-    "pytest",
+    "pytest>=9.1.1",
     "mock",
     "trio",
 ]
@@ -66,8 +66,9 @@ dev = [
 anycorn = "anycorn.__main__:main"
 
 [tool.pytest.ini_options]
-addopts = "--showlocals --strict-markers --color=yes -v"
+addopts = "-W error --showlocals --strict-markers --color=yes -v"
 testpaths = ["tests"]
+strict = true
 
 [tool.ruff]
 lint.extend-select = [# https://docs.astral.sh/ruff/settings/#extend-select

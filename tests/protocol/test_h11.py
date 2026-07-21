@@ -299,8 +299,8 @@ async def test_protocol_handle_send_client_error(protocol: H11Protocol) -> None:
 
 @pytest.mark.anyio
 async def test_protocol_handle_pipelining(protocol: H11Protocol) -> None:
-    protocol.can_read.wait.side_effect = Exception()
-    with pytest.raises(Exception, match=""):  # noqa: PT011
+    protocol.can_read.wait.side_effect = Exception("pipelining")
+    with pytest.raises(Exception, match="pipelining"):
         await protocol.handle(
             RawData(
                 data=b"GET / HTTP/1.1\r\nHost: anycorn\r\nConnection: keep-alive\r\n\r\n"

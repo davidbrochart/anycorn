@@ -475,14 +475,15 @@ async def test_abnormal_close_logging() -> None:
         None,
     )
 
-    await stream.handle(
-        Request(
-            stream_id=1,
-            http_version="2",
-            headers=[],
-            raw_path=b"/?a=b",
-            method="GET",
-            state=ConnectionState({}),
+    async with config.log:
+        await stream.handle(
+            Request(
+                stream_id=1,
+                http_version="2",
+                headers=[],
+                raw_path=b"/?a=b",
+                method="GET",
+                state=ConnectionState({}),
+            )
         )
-    )
-    await stream.handle(StreamClosed(stream_id=1))
+        await stream.handle(StreamClosed(stream_id=1))
