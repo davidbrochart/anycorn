@@ -134,3 +134,9 @@ class StatsdLogger(BaseStatsdLogger):
                 self.address[0], int(self.address[1]), family=socket.AddressFamily.AF_INET
             )
         await self.socket.send(message)
+
+    async def aclose(self) -> None:
+        """Close the UDP socket, if one has been opened."""
+        if self.socket is not None:
+            await self.socket.aclose()
+            self.socket = None

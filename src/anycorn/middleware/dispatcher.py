@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AsyncExitStack
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -59,7 +60,12 @@ class DispatcherMiddleware(_DispatcherMiddleware):
         self.startup_complete = dict.fromkeys(self.mounts, False)
         self.shutdown_complete = dict.fromkeys(self.mounts, False)
 
-        async with anyio.create_task_group() as tg:
+        async with AsyncExitStack() as stack:
+            for send_stream, receive_stream in self.app_queues.values():
+                await stack.enter_async_context(send_stream)
+                await stack.enter_async_context(receive_stream)
+
+            tg = await stack.enter_async_context(anyio.create_task_group())
             for path, app in self.mounts.items():
                 tg.start_soon(
                     app,

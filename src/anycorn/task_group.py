@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sys
-from typing import TYPE_CHECKING, Any
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 import anyio.abc
 import anyio.from_thread
+import anyio.streams.memory
 import anyio.to_thread
 
 from .typing import AppWrapper, ASGIReceiveCallable, ASGIReceiveEvent, ASGISendEvent, Scope
@@ -29,13 +31,19 @@ async def _handle(  # noqa: PLR0913
     app: AppWrapper,
     config: Config,
     scope: Scope,
-    receive: ASGIReceiveCallable,
+    channels: tuple[
+        anyio.streams.memory.MemoryObjectSendStream[ASGIReceiveEvent],
+        anyio.streams.memory.MemoryObjectReceiveStream[ASGIReceiveEvent],
+    ],
     send: Callable[[ASGISendEvent | None], Awaitable[None]],
     sync_spawn: Callable,
     call_soon: Callable,
 ) -> None:
+    app_send_channel, app_receive_channel = channels
     try:
-        await app(scope, receive, send, sync_spawn, call_soon)
+        async with app_send_channel, app_receive_channel:
+            receive = cast("ASGIReceiveCallable", app_receive_channel.receive)
+            await app(scope, receive, send, sync_spawn, call_soon)
     except anyio.get_cancelled_exc_class():
         raise
     except BaseExceptionGroup as error:
@@ -74,12 +82,18 @@ class TaskGroup:
             app,
             config,
             scope,
-            app_receive_channel.receive,
+            (app_send_channel, app_receive_channel),
             send,
             anyio.to_thread.run_sync,
             anyio.from_thread.run,
         )
-        return app_send_channel.send
+
+        async def put(message: ASGIReceiveEvent) -> None:
+            # The app has finished if the channel is closed, so it will read no more messages
+            with suppress(anyio.BrokenResourceError, anyio.ClosedResourceError):
+                await app_send_channel.send(message)
+
+        return put
 
     def spawn(self, func: Callable, *args: Any) -> None:  # noqa: ANN401
         """Spawn an arbitrary coroutine function in the task group."""
