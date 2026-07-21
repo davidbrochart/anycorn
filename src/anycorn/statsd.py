@@ -146,6 +146,7 @@ class _AsyncioSender:
     the socket unclosed and anyio's `aclose()`, which waits for that event, hanging
     forever. `abort()` carries no such condition, and anyio's UDP wrapper offers no way
     to reach it. Every other platform uses `_AnyioSender`.
+    see https://github.com/agronholm/anyio/issues/1237
     """
 
     def __init__(self, transport: asyncio.DatagramTransport, protocol: _DatagramProtocol) -> None:
