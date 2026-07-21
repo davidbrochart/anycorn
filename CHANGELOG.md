@@ -1,5 +1,9 @@
 # Version history
 
+## 0.18.7
+
+- Close leaked sockets, streams and logger resources.
+
 ## 0.18.6
 
 - Make WebSocket `permessage-deflate` compression optional.
