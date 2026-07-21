@@ -173,10 +173,12 @@ class _AsyncioSender:
             await asyncio.sleep(0)
         finally:
             # Unlike close(), abort() always schedules connection_lost, so this must
-            # run even if the checkpoint above is cancelled
+            # run even if the checkpoint above is cancelled. Having scheduled it, the
+            # wait is bounded by a single iteration of the loop, so shield it: a
+            # cancelled close must still leave the socket released.
             self._transport.abort()
-
-        await self._protocol.closed.wait()
+            with anyio.CancelScope(shield=True):
+                await self._protocol.closed.wait()
 
 
 class _AnyioSender:
