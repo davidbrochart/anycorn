@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import anyio.abc
 import sniffio
+from anyio.abc import SocketAttribute
 
 from .logging import Logger
 
@@ -150,6 +151,7 @@ class _AsyncioSender:
     def __init__(self, transport: asyncio.DatagramTransport, protocol: _DatagramProtocol) -> None:
         self._transport = transport
         self._protocol = protocol
+        self.socket: socket.socket = transport.get_extra_info("socket")
 
     @classmethod
     async def create(cls, host: str, port: int) -> _AsyncioSender:
@@ -186,6 +188,7 @@ class _AnyioSender:
 
     def __init__(self, sock: anyio.abc.ConnectedUDPSocket) -> None:
         self._socket = sock
+        self.socket: socket.socket = sock.extra(SocketAttribute.raw_socket)  # noqa: S610
 
     @classmethod
     async def create(cls, host: str, port: int) -> _AnyioSender:
