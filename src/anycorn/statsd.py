@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 import anyio
 import anyio.abc
-import anyio.lowlevel
 
 from .logging import Logger
 
@@ -139,11 +138,5 @@ class StatsdLogger(BaseStatsdLogger):
     async def aclose(self) -> None:
         """Close the UDP socket, if one has been opened."""
         if self.socket is not None:
-            sock, self.socket = self.socket, None
-            try:
-                await sock.aclose()
-            finally:
-                # anyio only asks the transport to close; on asyncio the socket itself is
-                # released by a callback scheduled for the next loop iteration, so yield to
-                # let that run rather than leave it pending when the loop is torn down.
-                await anyio.lowlevel.cancel_shielded_checkpoint()
+            await self.socket.aclose()
+            self.socket = None
