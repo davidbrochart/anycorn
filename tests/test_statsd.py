@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING, cast
 
 import anyio
@@ -40,8 +41,13 @@ async def test_asyncio_sender_releases_socket() -> None:
 
 
 @pytest.mark.anyio
-async def test_anyio_sender_releases_socket() -> None:
+async def test_anyio_sender_releases_socket(anyio_backend_name: str) -> None:
     """The sender used on every platform other than Windows."""
+    if sys.platform == "win32" and anyio_backend_name == "asyncio":
+        # This is the combination StatsdLogger avoids: anyio's aclose() waits for a
+        # connection_lost() the proactor loop never delivers, so it would hang here
+        pytest.skip("anyio's UDP aclose() hangs on the proactor event loop")
+
     sender = await _AnyioSender.create("127.0.0.1", 9125)
     raw = cast("socket.socket", sender._socket.extra(SocketAttribute.raw_socket))  # noqa: S610
     await sender.send(b"anycorn.test:1|c")
