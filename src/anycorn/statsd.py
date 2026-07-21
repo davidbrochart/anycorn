@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import socket
+import sys
 from typing import TYPE_CHECKING, Any
 
 import anyio
 import anyio.abc
+import sniffio
 
 from .logging import Logger
 
@@ -117,26 +120,105 @@ class BaseStatsdLogger(Logger):
         raise NotImplementedError
 
 
+class _DatagramProtocol(asyncio.DatagramProtocol):
+    def __init__(self) -> None:
+        self.closed = asyncio.Event()
+        self.write_event = asyncio.Event()
+        self.write_event.set()
+
+    def pause_writing(self) -> None:
+        self.write_event.clear()
+
+    def resume_writing(self) -> None:
+        self.write_event.set()
+
+    def connection_lost(self, exc: Exception | None) -> None:  # noqa: ARG002
+        self.write_event.set()
+        self.closed.set()
+
+
+class _AsyncioSender:
+    """Sends datagrams via asyncio, so that the transport can be aborted on close.
+
+    Used only on Windows, where the proactor event loop will not schedule
+    `connection_lost()` from `transport.close()` whilst a write is in flight - leaving
+    the socket unclosed and anyio's `aclose()`, which waits for that event, hanging
+    forever. `abort()` carries no such condition, and anyio's UDP wrapper offers no way
+    to reach it. Every other platform uses `_AnyioSender`.
+    """
+
+    def __init__(self, transport: asyncio.DatagramTransport, protocol: _DatagramProtocol) -> None:
+        self._transport = transport
+        self._protocol = protocol
+
+    @classmethod
+    async def create(cls, host: str, port: int) -> _AsyncioSender:
+        transport, protocol = await asyncio.get_running_loop().create_datagram_endpoint(
+            _DatagramProtocol,
+            remote_addr=(host, port),
+            family=socket.AddressFamily.AF_INET,
+        )
+        return cls(transport, protocol)
+
+    async def send(self, message: bytes) -> None:
+        # Datagram transports have no drain, so this is the transport's high/low water
+        # mark flow control, matching what anyio's own send() waits on
+        await self._protocol.write_event.wait()
+        self._transport.sendto(message)
+
+    async def aclose(self) -> None:
+        self._transport.close()
+        try:
+            # Give a completing write the chance to close the transport by itself
+            await asyncio.sleep(0)
+        finally:
+            # Unlike close(), abort() always schedules connection_lost, so this must
+            # run even if the checkpoint above is cancelled
+            self._transport.abort()
+
+        await self._protocol.closed.wait()
+
+
+class _AnyioSender:
+    """Sends datagrams via anyio, for backends other than asyncio."""
+
+    def __init__(self, sock: anyio.abc.ConnectedUDPSocket) -> None:
+        self._socket = sock
+
+    @classmethod
+    async def create(cls, host: str, port: int) -> _AnyioSender:
+        return cls(
+            await anyio.create_connected_udp_socket(host, port, family=socket.AddressFamily.AF_INET)
+        )
+
+    async def send(self, message: bytes) -> None:
+        await self._socket.send(message)
+
+    async def aclose(self) -> None:
+        await self._socket.aclose()
+
+
 class StatsdLogger(BaseStatsdLogger):
     """StatsD logger that sends metrics over UDP."""
-
-    socket: anyio.abc.ConnectedUDPSocket | None
 
     def __init__(self, config: Config) -> None:
         super().__init__(config)
         assert config.statsd_host is not None
         self.address = tuple(config.statsd_host.rsplit(":", 1))
-        self.socket = None
+        self._sender: _AsyncioSender | _AnyioSender | None = None
 
     async def _socket_send(self, message: bytes) -> None:
-        if self.socket is None:
-            self.socket = await anyio.create_connected_udp_socket(
-                self.address[0], int(self.address[1]), family=socket.AddressFamily.AF_INET
-            )
-        await self.socket.send(message)
+        if self._sender is None:
+            host, port = self.address[0], int(self.address[1])
+            if sys.platform == "win32" and sniffio.current_async_library() == "asyncio":
+                self._sender = await _AsyncioSender.create(host, port)
+            else:
+                self._sender = await _AnyioSender.create(host, port)
+
+        await self._sender.send(message)
 
     async def aclose(self) -> None:
         """Close the UDP socket, if one has been opened."""
-        if self.socket is not None:
-            await self.socket.aclose()
-            self.socket = None
+        if self._sender is not None:
+            sender, self._sender = self._sender, None
+            await sender.aclose()

@@ -12,18 +12,16 @@ from http import HTTPStatus
 from logging.config import dictConfig, fileConfig
 from typing import IO, TYPE_CHECKING, Any
 
-if sys.version_info >= (3, 11):
-    from typing import Self
+from anyio.abc import AsyncResource
 
+if sys.version_info >= (3, 11):
     import tomllib
 else:
     import tomli as tomllib
-    from typing_extensions import Self
 
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from types import TracebackType
 
     from .config import Config
     from .typing import ResponseSummary, WWWScope
@@ -57,7 +55,7 @@ def _create_logger(
     return None
 
 
-class Logger:
+class Logger(AsyncResource):
     """Anycorn logger providing access and error logging."""
 
     def __init__(self, config: Config) -> None:
@@ -136,17 +134,6 @@ class Logger:
 
     async def aclose(self) -> None:
         """Release any resources held by the logger."""
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        await self.aclose()
 
     def atoms(
         self, request: WWWScope, response: ResponseSummary | None, request_time: float
