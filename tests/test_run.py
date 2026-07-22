@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import signal
 import socket
+import sys
 from functools import partial
 from pickle import PicklingError
 from typing import TYPE_CHECKING, Any
@@ -47,10 +48,11 @@ class _FakeSignalModule:
     other test, are never touched.
     """
 
-    SIGHUP = signal.SIGHUP
     SIGINT = signal.SIGINT
     SIGTERM = signal.SIGTERM
     SIG_IGN = signal.SIG_IGN
+    if hasattr(signal, "SIGHUP"):  # not defined on Windows
+        SIGHUP = signal.SIGHUP
 
     def __init__(self) -> None:
         self.calls: list[tuple[int, Callable]] = []
@@ -162,6 +164,7 @@ def test_populate_sets_process_daemon_from_config() -> None:
     assert processes[0].daemon is False
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGHUP does not exist on Windows.")
 def test_run_registers_sighup_to_reload_workers(
     tls_certs: TLSCerts, monkeypatch: pytest.MonkeyPatch
 ) -> None:
