@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import platform
 import signal
 import sys
@@ -180,10 +181,29 @@ def _join_exited(processes: list[BaseProcess]) -> int:
 
 
 async def _wait_for_shutdown_signal(signals: tuple[signal.Signals, ...]) -> None:
-    """Return once the first of *signals* is received."""
-    with anyio.open_signal_receiver(*signals) as received_signals:
-        async for _signum in received_signals:
-            return
+    """Return once the first of *signals* is received.
+
+    open_signal_receiver drives asyncio's loop.add_signal_handler, which raises
+    NotImplementedError on Windows. There we fall back to signal.signal, which
+    does work on Windows for these console signals - the same fallback
+    hypercorn's own asyncio backend makes, so --workers 0 stays gracefully
+    shutdownable there instead of crashing the worker on startup.
+    """
+    try:
+        with anyio.open_signal_receiver(*signals) as received_signals:
+            async for _signum in received_signals:
+                return
+    except NotImplementedError:
+        loop = asyncio.get_running_loop()
+        event = asyncio.Event()
+        previous = {sig: signal.getsignal(sig) for sig in signals}
+        for sig in signals:
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(event.set))
+        try:
+            await event.wait()
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
 
 
 async def worker_serve(  # noqa: C901, PLR0912, PLR0915
