@@ -17,9 +17,9 @@ from anycorn.worker_context import WorkerContext
 def _make_protocol() -> H3Protocol:
     """Build a fully initialised H3Protocol over mock collaborators.
 
-    Goes through __init__ (so streams, _reset_streams and the rest are real) rather
-    than __new__; the quic connection is a mock, and tests that drive the H3
-    connection stub protocol.connection on top of it.
+    Goes through the real constructor, so streams, _reset_streams and the rest are
+    set up as in production; the quic connection is a mock, and tests that drive the
+    H3 connection stub protocol.connection on top of it.
     """
     return H3Protocol(
         MagicMock(),  # app
