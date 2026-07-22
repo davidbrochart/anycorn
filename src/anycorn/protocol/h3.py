@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from aioquic.h3.connection import H3Connection
 from aioquic.h3.events import DataReceived, HeadersReceived
 from aioquic.h3.exceptions import NoAvailablePushIDError
+from aioquic.quic.events import StopSendingReceived, StreamReset
 
 from anycorn.utils import filter_pseudo_headers
 
@@ -62,12 +63,18 @@ class H3Protocol:
         self.send = send
         self.server = server
         self.streams: dict[int, HTTPStream | WSStream] = {}
+        # Streams the peer has reset (RESET_STREAM) or asked us to stop sending on
+        # (STOP_SENDING). aioquic resets our sender for these, so any further
+        # send on them would assert; we skip those sends instead.
+        self._reset_streams: set[int] = set()
         self.task_group = task_group
         self.state = state
         self.tls = tls
 
     async def handle(self, quic_event: QuicEvent) -> None:
         """Handle an incoming QUIC event."""
+        if isinstance(quic_event, (StreamReset, StopSendingReceived)):
+            await self._reset_stream(quic_event.stream_id)
         for event in self.connection.handle_event(quic_event):
             if isinstance(event, HeadersReceived):
                 if not self.context.terminated.is_set():
@@ -85,29 +92,48 @@ class H3Protocol:
 
     async def stream_send(self, event: StreamEvent) -> None:
         """Send a stream event to the remote client."""
-        if isinstance(event, (InformationalResponse, Response)):
-            self.connection.send_headers(
-                event.stream_id,
-                [
-                    (b":status", b"%d" % event.status_code),
-                    *event.headers,
-                    *self.config.response_headers("h3"),
-                ],
-            )
-            await self.send()
-        elif isinstance(event, (Body, Data)):
-            self.connection.send_data(event.stream_id, event.data, False)  # noqa: FBT003
-            await self.send()
-        elif isinstance(event, (EndBody, EndData)):
-            self.connection.send_data(event.stream_id, b"", True)  # noqa: FBT003
-            await self.send()
-        elif isinstance(event, Trailers):
-            self.connection.send_headers(event.stream_id, event.headers)
-            await self.send()
-        elif isinstance(event, StreamClosed):
+        if isinstance(event, StreamClosed):
             self.streams.pop(event.stream_id, None)
-        elif isinstance(event, Request):
+            self._reset_streams.discard(event.stream_id)
+            return
+        if isinstance(event, Request):
             await self._create_server_push(event.stream_id, event.raw_path, event.headers)
+            return
+        if event.stream_id in self._reset_streams:
+            # The peer reset this stream; sending on it would assert in aioquic
+            # ("cannot call write() after reset()") - the app just hasn't noticed
+            # the disconnect yet (hypercorn #352).
+            return
+        try:
+            if isinstance(event, (InformationalResponse, Response)):
+                self.connection.send_headers(
+                    event.stream_id,
+                    [
+                        (b":status", b"%d" % event.status_code),
+                        *event.headers,
+                        *self.config.response_headers("h3"),
+                    ],
+                )
+            elif isinstance(event, (Body, Data)):
+                self.connection.send_data(event.stream_id, event.data, False)  # noqa: FBT003
+            elif isinstance(event, (EndBody, EndData)):
+                self.connection.send_data(event.stream_id, b"", True)  # noqa: FBT003
+            elif isinstance(event, Trailers):
+                self.connection.send_headers(event.stream_id, event.headers)
+        except AssertionError:
+            # A reset that landed in the window before we recorded it: aioquic had
+            # already reset the sender, so the send asserts. Treat the stream as
+            # gone rather than letting it crash the connection (hypercorn #352).
+            await self._reset_stream(event.stream_id)
+            return
+        await self.send()
+
+    async def _reset_stream(self, stream_id: int) -> None:
+        """Forget a peer-reset stream, telling it to close so the app stops sending."""
+        self._reset_streams.add(stream_id)
+        stream = self.streams.pop(stream_id, None)
+        if stream is not None:
+            await stream.handle(StreamClosed(stream_id=stream_id))
 
     async def _create_stream(self, request: HeadersReceived) -> None:
         for name, value in request.headers:
