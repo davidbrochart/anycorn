@@ -10,6 +10,7 @@ from urllib.parse import unquote
 from anycorn.typing import (
     AppWrapper,
     ASGISendEvent,
+    ConnectionState,
     Extensions,
     HTTPResponseStartEvent,
     HTTPScope,
@@ -131,7 +132,10 @@ class HTTPStream:
                 headers=event.headers,
                 client=self.client,
                 server=self.server,
-                state=event.state,
+                # Per request, not per connection: ASGI passes a shallow copy into
+                # each request, so what one request stores cannot reach the next one
+                # sharing the connection
+                state=ConnectionState(event.state.copy()),
                 extensions=extensions,
             )
 
