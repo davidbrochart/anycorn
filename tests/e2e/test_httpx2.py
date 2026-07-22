@@ -33,9 +33,11 @@ async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
 
 
 @pytest.mark.anyio
-async def test_keep_alive_max_requests_regression() -> None:
+async def test_keep_alive_max_requests_regression(free_tcp_port: int) -> None:
     config = Config()
-    config.bind = ["127.0.0.1:1234"]
+    # A fixed port is one an unrelated listener, or a second job on the same machine,
+    # can already be holding
+    config.bind = [f"127.0.0.1:{free_tcp_port}"]
     config.accesslog = "-"  # Log to stdout/err
     config.errorlog = "-"
     config.keep_alive_max_requests = 2
@@ -43,18 +45,19 @@ async def test_keep_alive_max_requests_regression() -> None:
     async with anyio.create_task_group() as tg:
         shutdown = anyio.Event()
 
-        async def serve() -> None:
-            await anycorn.serve(app, config, shutdown_trigger=shutdown.wait)
+        # Started rather than spawned, so the socket is listening before the first
+        # request rather than merely likely to be
+        await tg.start(
+            lambda *, task_status: anycorn.serve(
+                app, config, shutdown_trigger=shutdown.wait, task_status=task_status
+            )
+        )
 
-        tg.start_soon(serve)
-
-        await anyio.wait_all_tasks_blocked()
-
-        async with httpx2.AsyncClient() as client:
+        async with httpx2.AsyncClient(base_url=f"http://127.0.0.1:{free_tcp_port}") as client:
             # Make sure that we properly clean up connections when `keep_alive_max_requests`
             # is hit such that the client stays good over multiple hangups.
             for _ in range(10):
-                result = await client.post("http://127.0.0.1:1234/test", json={"key": "value"})
+                result = await client.post("/test", json={"key": "value"})
                 result.raise_for_status()
 
         shutdown.set()
