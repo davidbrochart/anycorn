@@ -28,8 +28,6 @@ if TYPE_CHECKING:
     from tests.conftest import TLSCerts
 
 HOST = "127.0.0.1"
-PORT = 4433
-BIND = f"{HOST}:{PORT}"
 # QUIC drives loss recovery off timers, so one has to be serviced even when no
 # datagram arrives. Polling is coarser than the server's restartable timer task but
 # far harder to get wrong, and on loopback the difference does not show.
@@ -247,11 +245,11 @@ class _H3Transport(httpx2.AsyncBaseTransport):
 
 
 @asynccontextmanager
-async def _serving(certs: TLSCerts) -> AsyncIterator[None]:
-    """Run the worker on the QUIC bind, shutting it down on the way out."""
+async def _serving(certs: TLSCerts, tcp_port: int, quic_port: int) -> AsyncIterator[None]:
+    """Run the worker on the given ports, shutting it down on the way out."""
     config = Config()
-    config.bind = [BIND]
-    config.quic_bind = [BIND]
+    config.bind = [f"{HOST}:{tcp_port}"]
+    config.quic_bind = [f"{HOST}:{quic_port}"]
     config.certfile = str(certs.certfile)
     config.keyfile = str(certs.keyfile)
     config.accesslog = "-"
@@ -259,12 +257,11 @@ async def _serving(certs: TLSCerts) -> AsyncIterator[None]:
 
     shutdown = anyio.Event()
     async with anyio.create_task_group() as task_group:
-        binds = await task_group.start(
+        await task_group.start(
             lambda *, task_status: anycorn.serve(
                 app, config, shutdown_trigger=shutdown.wait, task_status=task_status
             )
         )
-        assert any(str(PORT) in bind for bind in binds)
         try:
             yield
         finally:
@@ -272,14 +269,14 @@ async def _serving(certs: TLSCerts) -> AsyncIterator[None]:
 
 
 @pytest.mark.anyio
-async def test_h3_request(tls_certs: TLSCerts) -> None:
+async def test_h3_request(tls_certs: TLSCerts, free_tcp_port: int, free_udp_port: int) -> None:
     async with (
-        _serving(tls_certs),
-        _H3Transport.connect(HOST, PORT, tls_certs) as transport,
+        _serving(tls_certs, free_tcp_port, free_udp_port),
+        _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
         httpx2.AsyncClient(transport=transport) as client,
     ):
         with anyio.fail_after(10):
-            response = await client.get(f"https://{BIND}/")
+            response = await client.get(f"https://{HOST}:{free_udp_port}/")
 
     assert response.status_code == 200  # noqa: PLR2004
     assert response.text == "Hello, h3!"
