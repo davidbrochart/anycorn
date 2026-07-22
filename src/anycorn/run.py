@@ -196,14 +196,11 @@ async def _wait_for_shutdown_signal(signals: tuple[signal.Signals, ...]) -> None
     except NotImplementedError:
         loop = asyncio.get_running_loop()
         event = asyncio.Event()
-        previous = {sig: signal.getsignal(sig) for sig in signals}
-        for sig in signals:
-            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(event.set))
-        try:
+        with ExitStack() as stack:
+            for sig in signals:
+                stack.callback(signal.signal, sig, signal.getsignal(sig))
+                signal.signal(sig, lambda *_: loop.call_soon_threadsafe(event.set))
             await event.wait()
-        finally:
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
 
 
 async def worker_serve(  # noqa: C901, PLR0912, PLR0915
