@@ -52,7 +52,7 @@ h3 = [
 [dependency-groups]
 test = [
     "anycorn[h3]",
-    "httpx",
+    "httpx2",
     "pytest>=9.1.1",
     "mock",
     "trio",

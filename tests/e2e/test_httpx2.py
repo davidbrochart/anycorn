@@ -1,11 +1,11 @@
-"""End-to-end tests using httpx."""
+"""End-to-end tests using httpx2."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import anyio
-import httpx
+import httpx2
 import pytest
 
 import anycorn
@@ -51,7 +51,7 @@ async def test_keep_alive_max_requests_regression() -> None:
 
         await anyio.wait_all_tasks_blocked()
 
-        async with httpx.AsyncClient() as client:
+        async with httpx2.AsyncClient() as client:
             # Make sure that we properly clean up connections when `keep_alive_max_requests`
             # is hit such that the client stays good over multiple hangups.
             for _ in range(10):
