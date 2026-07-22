@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from unittest.mock import Mock, call
 
+import anyio
 import pytest
 from h2.connection import H2Connection
 from h2.events import ConnectionTerminated
 
 from anycorn.config import Config
 from anycorn.events import Closed, RawData
-
-# from anycorn.protocol.h2 import BUFFER_HIGH_WATER
-from anycorn.protocol.h2 import BufferCompleteError, H2Protocol, StreamBuffer
+from anycorn.protocol.h2 import (
+    BUFFER_HIGH_WATER,
+    BufferCompleteError,
+    H2Protocol,
+    StreamBuffer,
+)
 from anycorn.typing import ConnectionState
 from anycorn.worker_context import EventWrapper, WorkerContext
 
@@ -23,37 +27,45 @@ except ImportError:
     from unittest.mock import AsyncMock
 
 
-# FIXME
-# @pytest.mark.asyncio
-# async def test_stream_buffer_push_and_pop(event_loop: asyncio.AbstractEventLoop) -> None:
-#     stream_buffer = StreamBuffer(EventWrapper)
-#
-#     async def _push_over_limit() -> bool:
-#         await stream_buffer.push(b"a" * (BUFFER_HIGH_WATER + 1))
-#         return True
-#
-#     task = event_loop.create_task(_push_over_limit())
-#     assert not task.done()  # Blocked as over high water
-#     await stream_buffer.pop(BUFFER_HIGH_WATER // 4)
-#     assert not task.done()  # Blocked as over low water
-#     await stream_buffer.pop(BUFFER_HIGH_WATER // 4)
-#     assert (await task) is True
+@pytest.mark.anyio
+async def test_stream_buffer_push_and_pop() -> None:
+    stream_buffer = StreamBuffer(EventWrapper)
+    pushed = False
+
+    async def _push_over_limit() -> None:
+        nonlocal pushed
+        await stream_buffer.push(b"a" * (BUFFER_HIGH_WATER + 1))
+        pushed = True
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(_push_over_limit)
+        await anyio.wait_all_tasks_blocked()
+        assert not pushed  # Blocked as over high water
+
+        await stream_buffer.pop(BUFFER_HIGH_WATER // 4)
+        await anyio.wait_all_tasks_blocked()
+        assert pushed  # Resumed, as the pop was under low water
 
 
-# FIXME
-# @pytest.mark.asyncio
-# async def test_stream_buffer_drain(event_loop: asyncio.AbstractEventLoop) -> None:
-#     stream_buffer = StreamBuffer(EventWrapper)
-#     await stream_buffer.push(b"a" * 10)
-#
-#     async def _drain() -> bool:
-#         await stream_buffer.drain()
-#         return True
-#
-#     task = event_loop.create_task(_drain())
-#     assert not task.done()  # Blocked
-#     await stream_buffer.pop(20)
-#     assert (await task) is True
+@pytest.mark.anyio
+async def test_stream_buffer_drain() -> None:
+    stream_buffer = StreamBuffer(EventWrapper)
+    await stream_buffer.push(b"a" * 10)
+    drained = False
+
+    async def _drain() -> None:
+        nonlocal drained
+        await stream_buffer.drain()
+        drained = True
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(_drain)
+        await anyio.wait_all_tasks_blocked()
+        assert not drained  # Blocked, as the buffer is not empty
+
+        await stream_buffer.pop(20)
+        await anyio.wait_all_tasks_blocked()
+        assert drained
 
 
 @pytest.mark.anyio
