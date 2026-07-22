@@ -68,9 +68,7 @@ class WSGIWrapper:
             msg = f"Unknown scope type, {scope['type']}"
             raise RuntimeError(msg)
 
-    async def _handle_lifespan(
-        self, receive: ASGIReceiveCallable, send: ASGISendCallable
-    ) -> None:
+    async def _handle_lifespan(self, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
         """Acknowledge the ASGI lifespan protocol; a WSGI app has no lifespan of its own.
 
         Returning immediately without ever awaiting receive() here (as this used to)
