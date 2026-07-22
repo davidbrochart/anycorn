@@ -10,18 +10,13 @@ a real child process is the only way to see the reload actually happen.
 from __future__ import annotations
 
 import signal
-import socket
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import anyio
 import httpx2
 import pytest
-
-if TYPE_CHECKING:
-    from anyio.pytest_plugin import FreePortFactory
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 APP_PATH = "tests/assets/pid_app.py:app"
@@ -54,22 +49,14 @@ async def _wait_for_pid(base_url: str, *, differs_from: str | None) -> str:
 
 
 @pytest.mark.anyio
-async def test_sighup_reloads_the_worker(
-    anyio_backend_name: str, free_tcp_port_factory: FreePortFactory
-) -> None:
+async def test_sighup_reloads_the_worker(anyio_backend_name: str, free_tcp_port: int) -> None:
     """A real SIGHUP to the anycorn parent process must gracefully restart its worker.
 
     The spawned worker's own event loop backend is pinned to match this test's
     anyio_backend, so the trio-parametrised run genuinely exercises a trio worker
     end-to-end instead of always falling back to anycorn's asyncio default
     regardless of which backend the test itself is using.
-
-    Port picked as AF_INET only: free_tcp_port would also probe AF_INET6, which
-    this sandbox's kernel rejects even though socket.has_ipv6 reports true - the
-    same pre-existing gap that skips tests/e2e/test_h3.py here, orthogonal to
-    anything this test is actually checking.
     """
-    free_tcp_port = free_tcp_port_factory(socket.AF_INET)
     process = await anyio.open_process(
         [
             sys.executable,
