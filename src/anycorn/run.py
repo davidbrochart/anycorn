@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import anyio.abc
 import anyio.streams.tls
+import sniffio
 
 from .datagram import wrap_datagram_socket
 from .lifespan import Lifespan
@@ -178,6 +179,14 @@ def _join_exited(processes: list[BaseProcess]) -> int:
     return exitcode
 
 
+async def _watch_shutdown_signals(signals: tuple[signal.Signals, ...], event: anyio.Event) -> None:
+    """Set *event* on the first of *signals* received, then stop watching."""
+    with anyio.open_signal_receiver(*signals) as received_signals:
+        async for _signum in received_signals:
+            event.set()
+            return
+
+
 async def worker_serve(  # noqa: C901, PLR0912, PLR0915
     app: AppWrapper,
     config: Config,
@@ -188,6 +197,25 @@ async def worker_serve(  # noqa: C901, PLR0912, PLR0915
 ) -> None:
     """Run the server workers, handling lifespan and connections."""
     config.set_statsd_logger_class(StatsdLogger)
+
+    watch_signals = None
+    if shutdown_trigger is None and sniffio.current_async_library() == "asyncio":
+        # Matches hypercorn's asyncio-backend fallback: without this, Ctrl-C/SIGTERM
+        # would bypass the graceful, graceful_timeout-respecting shutdown path every
+        # other trigger source here uses, and SIGTERM would go entirely unhandled.
+        # Not ported for trio: hypercorn's own trio backend has no equivalent,
+        # relying solely on trio's built-in SIGINT-to-cancellation behaviour.
+        shutdown_signal_event = anyio.Event()
+        shutdown_trigger = shutdown_signal_event.wait
+        watch_signals = partial(
+            _watch_shutdown_signals,
+            tuple(
+                sig
+                for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None))
+                if sig is not None
+            ),
+            shutdown_signal_event,
+        )
 
     lifespan_state: LifespanState = {}
     lifespan = Lifespan(app, config, lifespan_state)
@@ -250,6 +278,8 @@ async def worker_serve(  # noqa: C901, PLR0912, PLR0915
             task_status.started(binds)
             try:
                 async with anyio.create_task_group() as tg:
+                    if watch_signals is not None:
+                        tg.start_soon(watch_signals)
                     if shutdown_trigger is not None:
                         tg.start_soon(raise_shutdown, shutdown_trigger)
                     tg.start_soon(raise_shutdown, context.terminate.wait)

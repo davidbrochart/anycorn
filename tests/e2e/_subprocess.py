@@ -44,9 +44,14 @@ async def anycorn_subprocess(
     try:
         yield process
     finally:
-        process.terminate()
-        with anyio.move_on_after(5):
-            await process.wait()
+        # The process may already have exited on its own (e.g. a test that sends
+        # it a shutdown signal itself) - terminate()/kill() on an already-reaped
+        # process raises ProcessLookupError under the asyncio backend, so check
+        # returncode before each, not just before the second attempt
+        if process.returncode is None:
+            process.terminate()
+            with anyio.move_on_after(5):
+                await process.wait()
         if process.returncode is None:
             process.kill()
             with anyio.move_on_after(5):
