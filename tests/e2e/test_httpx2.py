@@ -33,7 +33,6 @@ async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("anyio_backend", ["asyncio"])  # FIXME
 async def test_keep_alive_max_requests_regression() -> None:
     config = Config()
     config.bind = ["127.0.0.1:1234"]
