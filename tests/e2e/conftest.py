@@ -42,12 +42,23 @@ async def _run(args: Sequence[str]) -> AsyncIterator[Process]:
 
 
 @pytest.fixture(name="anycorn_subprocess")
-def _anycorn_subprocess() -> Callable[[Sequence[str]], AbstractAsyncContextManager[Process]]:
+def _anycorn_subprocess(
+    anyio_backend_name: str,
+) -> Callable[[Sequence[str]], AbstractAsyncContextManager[Process]]:
     """Return an async context manager that runs anycorn as a real subprocess.
 
     Usage: ``async with anycorn_subprocess([app_path, "--bind", ...]) as process:``.
     Used by tests that need to observe behaviour only run.py's real, synchronous
     multiprocess orchestration produces (signal handling, worker daemon status) -
     nothing driven in-process via anycorn.serve() exercises that code at all.
+
+    Always appends ``--worker-class <anyio_backend_name>``, so the worker's own
+    event loop backend matches this test's. Without it, the worker would default
+    to asyncio regardless of which backend the test itself is parametrised under,
+    silently skipping half the coverage a trio-parametrised run is meant to give.
     """
-    return _run
+
+    def _run_with_matching_backend(args: Sequence[str]) -> AbstractAsyncContextManager[Process]:
+        return _run([*args, "--worker-class", anyio_backend_name])
+
+    return _run_with_matching_backend

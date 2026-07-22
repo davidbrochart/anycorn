@@ -53,26 +53,11 @@ async def _wait_for_pid(base_url: str, *, differs_from: str | None) -> str:
 
 @pytest.mark.anyio
 async def test_sighup_reloads_the_worker(
-    anyio_backend_name: str,
     free_tcp_port: int,
     anycorn_subprocess: Callable[[Sequence[str]], AbstractAsyncContextManager[Process]],
 ) -> None:
-    """A real SIGHUP to the anycorn parent process must gracefully restart its worker.
-
-    The spawned worker's own event loop backend is pinned to match this test's
-    anyio_backend, so the trio-parametrised run genuinely exercises a trio worker
-    end-to-end instead of always falling back to anycorn's asyncio default
-    regardless of which backend the test itself is using.
-    """
-    args = [
-        APP_PATH,
-        "--bind",
-        f"127.0.0.1:{free_tcp_port}",
-        "--workers",
-        "1",
-        "--worker-class",
-        anyio_backend_name,
-    ]
+    """A real SIGHUP to the anycorn parent process must gracefully restart its worker."""
+    args = [APP_PATH, "--bind", f"127.0.0.1:{free_tcp_port}", "--workers", "1"]
     async with anycorn_subprocess(args) as process:
         base_url = f"http://127.0.0.1:{free_tcp_port}"
         pid_before = await _wait_for_pid(base_url, differs_from=None)
