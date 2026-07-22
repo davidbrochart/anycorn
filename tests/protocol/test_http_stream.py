@@ -12,6 +12,7 @@ from anycorn.logging import Logger
 from anycorn.protocol.events import (
     Body,
     EndBody,
+    Event,
     InformationalResponse,
     Request,
     Response,
@@ -221,6 +222,50 @@ async def test_send_response(stream: HTTPStream) -> None:
         call(StreamClosed(stream_id=1)),
     ]
     stream.config._log.access.assert_called()  # type: ignore[unresolved-attribute]
+
+
+@pytest.mark.anyio
+async def test_send_closed_does_not_double_log_on_concurrent_stream_close(
+    stream: HTTPStream,
+) -> None:
+    """A StreamClosed racing the response's completion must not log the request twice.
+
+    hypercorn #357: when the client closes just as the response finalises, the reader
+    task can handle StreamClosed while EndBody is still in flight. Unless the stream
+    is already CLOSED by then, that path logs the request (response=None) and
+    _send_closed goes on to log it again with the full response. Marking CLOSED before
+    the EndBody send closes the window; here the race is forced deterministically by
+    handling StreamClosed from inside the EndBody send itself.
+    """
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="1.1",
+            headers=[],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(
+        cast(
+            "HTTPResponseStartEvent",
+            {"type": "http.response.start", "status": 200, "headers": []},
+        )
+    )
+
+    async def _close_during_end_body(event: Event) -> None:
+        # The reader task running mid-send, exactly as the race schedules it.
+        if isinstance(event, EndBody):
+            await stream.handle(StreamClosed(stream_id=1))
+
+    stream.send = AsyncMock(side_effect=_close_during_end_body)
+
+    await stream.app_send(
+        cast("HTTPResponseBodyEvent", {"type": "http.response.body", "body": b"Body"})
+    )
+
+    assert stream.config._log.access.call_count == 1  # type: ignore[attr-defined]
 
 
 @pytest.mark.anyio
