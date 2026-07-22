@@ -6,7 +6,7 @@ import platform
 import signal
 import sys
 import time
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, ExitStack
 from functools import partial
 from multiprocessing import get_context
 from multiprocessing.connection import wait
@@ -58,76 +58,76 @@ def run(config: Config) -> int:  # noqa: C901, PLR0912
 
     sockets = config.create_sockets()
 
-    if config.use_reloader and config.workers == 0:
-        msg = "Cannot reload without workers"
-        raise RuntimeError(msg)
+    with ExitStack() as cleanup_stack:
+        # Whatever happens next - a worker failing to spawn, the reloader raising -
+        # the parent is left holding these, and each is closed independently so one
+        # refusing does not strand the rest
+        for sock in (*sockets.secure_sockets, *sockets.insecure_sockets, *sockets.quic_sockets):
+            cleanup_stack.enter_context(sock)
 
-    exitcode = 0
-    if config.workers == 0:
-        worker_func(config, sockets)
-    else:
-        if config.use_reloader:
-            # Load the application so that the correct paths are checked for
-            # changes, but only when the reloader is being used.
-            load_application(config.application_path, config.wsgi_max_body_size)
+        if config.use_reloader and config.workers == 0:
+            msg = "Cannot reload without workers"
+            raise RuntimeError(msg)
 
-        ctx = get_context("spawn")
-
-        active = True
-        shutdown_event = ctx.Event()
-
-        def shutdown(*_args: Any) -> None:  # noqa: ANN401
-            nonlocal active, shutdown_event
-            shutdown_event.set()
-            active = False
-
-        processes: list[BaseProcess] = []
-        while active:
-            # Ignore SIGINT before creating the processes, so that they
-            # inherit the signal handling. This means that the shutdown
-            # function controls the shutdown.
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-            _populate(processes, config, worker_func, sockets, shutdown_event, ctx)
-
-            for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
-                if hasattr(signal, signal_name):
-                    signal.signal(getattr(signal, signal_name), shutdown)
-
+        exitcode = 0
+        if config.workers == 0:
+            worker_func(config, sockets)
+        else:
             if config.use_reloader:
-                files = files_to_watch()
-                while True:
-                    finished = wait((process.sentinel for process in processes), timeout=1)
-                    updated = check_for_updates(files)
-                    if updated:
-                        shutdown_event.set()
-                        for process in processes:
-                            process.join()
-                        shutdown_event.clear()
-                        break
-                    if len(finished) > 0:
-                        break
-            else:
-                wait(process.sentinel for process in processes)
+                # Load the application so that the correct paths are checked for
+                # changes, but only when the reloader is being used.
+                load_application(config.application_path, config.wsgi_max_body_size)
 
-            exitcode = _join_exited(processes)
-            if exitcode != 0:
+            ctx = get_context("spawn")
+
+            active = True
+            shutdown_event = ctx.Event()
+
+            def shutdown(*_args: Any) -> None:  # noqa: ANN401
+                nonlocal active, shutdown_event
                 shutdown_event.set()
                 active = False
 
-        for process in processes:
-            process.terminate()
+            processes: list[BaseProcess] = []
+            # Registered after the sockets, so it unwinds first: signal the children,
+            # then close what the parent is still holding. A worker that fails to
+            # spawn would otherwise leave its siblings running
+            cleanup_stack.callback(_terminate, processes)
+            while active:
+                # Ignore SIGINT before creating the processes, so that they
+                # inherit the signal handling. This means that the shutdown
+                # function controls the shutdown.
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-        exitcode = _join_exited(processes) if exitcode != 0 else exitcode
+                _populate(processes, config, worker_func, sockets, shutdown_event, ctx)
 
-        _close_sockets(sockets)
+                for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+                    if hasattr(signal, signal_name):
+                        signal.signal(getattr(signal, signal_name), shutdown)
 
-    return exitcode
+                if config.use_reloader:
+                    files = files_to_watch()
+                    while True:
+                        finished = wait((process.sentinel for process in processes), timeout=1)
+                        updated = check_for_updates(files)
+                        if updated:
+                            shutdown_event.set()
+                            for process in processes:
+                                process.join()
+                            shutdown_event.clear()
+                            break
+                        if len(finished) > 0:
+                            break
+                else:
+                    wait(process.sentinel for process in processes)
 
+                exitcode = _join_exited(processes)
+                if exitcode != 0:
+                    shutdown_event.set()
+                    active = False
 
-def _close_sockets(sockets: Sockets) -> None:
-    for sock in (*sockets.secure_sockets, *sockets.insecure_sockets, *sockets.quic_sockets):
-        sock.close()
+            exitcode = _join_exited(processes) if exitcode != 0 else exitcode
+        return exitcode
 
 
 def _populate(  # noqa: PLR0913
@@ -152,6 +152,12 @@ def _populate(  # noqa: PLR0913
         processes.append(process)
         if platform.system() == "Windows":
             time.sleep(0.1)
+
+
+def _terminate(processes: list[BaseProcess]) -> None:
+    """Signal every worker still running. Reaped ones have already left the list."""
+    for process in processes:
+        process.terminate()
 
 
 def _join_exited(processes: list[BaseProcess]) -> int:

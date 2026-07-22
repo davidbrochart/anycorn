@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import socket
 from functools import partial
+from pickle import PicklingError
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 import anyio
 import pytest
 
+import anycorn.run
 from anycorn.config import Config
 from anycorn.datagram import wrap_datagram_socket
 from anycorn.events import RawData
-from anycorn.run import worker_serve
+from anycorn.run import run, worker_serve
 from anycorn.udp_server import UDPServer
 from anycorn.utils import wrap_app
 from anycorn.worker_context import WorkerContext
@@ -83,3 +85,61 @@ async def test_udp_server_serialises_concurrent_sends() -> None:
                 )
     finally:
         await datagram_socket.aclose()
+
+
+def test_run_closes_sockets_when_it_raises(
+    tls_certs: TLSCerts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The parent's sockets are closed however run() exits, not only when it finishes."""
+    config = Config()
+    config.bind = ["127.0.0.1:0"]
+    config.quic_bind = ["127.0.0.1:0"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+    sockets = config.create_sockets()
+    monkeypatch.setattr(config, "create_sockets", lambda: sockets)
+
+    # The earliest thing run() refuses to do, so it raises with the sockets already open
+    config.use_reloader = True
+    config.workers = 0
+    with pytest.raises(RuntimeError, match="Cannot reload without workers"):
+        run(config)
+
+    opened = [*sockets.secure_sockets, *sockets.insecure_sockets, *sockets.quic_sockets]
+    assert opened, "expected create_sockets to bind something"
+    assert [sock.fileno() for sock in opened] == [-1] * len(opened)
+
+
+def test_run_terminates_workers_when_it_raises(
+    tls_certs: TLSCerts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that fails partway signals its workers rather than orphaning them."""
+    config = Config()
+    config.bind = ["127.0.0.1:0"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+    sockets = config.create_sockets()
+    monkeypatch.setattr(config, "create_sockets", lambda: sockets)
+    config.workers = 2
+
+    terminated: list[object] = []
+
+    class _Process:
+        sentinel = None
+        exitcode = None
+
+        def terminate(self) -> None:
+            terminated.append(self)
+
+    def _spawn_then_fail(processes: list, *_args: object, **_kwargs: object) -> None:
+        # One worker up, the next refusing - the shape that used to walk past the
+        # terminate loop entirely
+        processes.append(_Process())
+        raise PicklingError
+
+    monkeypatch.setattr(anycorn.run, "_populate", _spawn_then_fail)
+
+    with pytest.raises(PicklingError):
+        run(config)
+
+    assert len(terminated) == 1
