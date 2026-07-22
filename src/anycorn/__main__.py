@@ -335,7 +335,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
         cfg.bind = binds
     if len(insecure_binds) > 0:
         cfg.insecure_bind = insecure_binds
-    if len(quic_binds) > 0:
+    if quic_binds:
         cfg.quic_bind = quic_binds
     if len(server_names) > 0:
         cfg.server_names = server_names
