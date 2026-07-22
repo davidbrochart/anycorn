@@ -20,7 +20,7 @@ from anycorn.config import Config
 from anycorn.datagram import wrap_datagram_socket
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
 
     from aioquic.h3.events import H3Event
 
@@ -76,10 +76,18 @@ class _H3Transport(httpx2.AsyncBaseTransport):
         self._quic = quic
         self._socket = sock
         self._address = address
-        self._http: H3Connection | None = None
+        # Read now and kept: the socket is gone by the time a test asserts on it
+        host, port = sock.socket.getsockname()[:2]
+        self.local_address = (host, port)
+        # Built now rather than once the handshake lands: the server's control and
+        # QPACK encoder streams arrive with it, and anything received before this
+        # exists is dropped - leaving later responses blocked on dynamic table
+        # entries whose instructions were never seen
+        self._http = H3Connection(quic)
         self._read_queue: dict[int, list[H3Event]] = {}
         self._read_ready: dict[int, anyio.Event] = {}
         self._connected = anyio.Event()
+        self.handshakes = 0
         self._terminated = anyio.Event()
         self._send_lock = anyio.Lock()
 
@@ -109,7 +117,6 @@ class _H3Transport(httpx2.AsyncBaseTransport):
 
                 with anyio.fail_after(10):
                     await self._connected.wait()
-                self._http = H3Connection(quic)
                 await self._transmit()
 
                 try:
@@ -123,7 +130,6 @@ class _H3Transport(httpx2.AsyncBaseTransport):
             await datagram_socket.aclose()
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        assert self._http is not None
         stream_id = self._quic.get_next_available_stream_id()
         self._read_queue[stream_id] = []
         self._read_ready[stream_id] = anyio.Event()
@@ -177,15 +183,15 @@ class _H3Transport(httpx2.AsyncBaseTransport):
         event = self._quic.next_event()
         while event is not None:
             if isinstance(event, HandshakeCompleted):
+                self.handshakes += 1
                 self._connected.set()
             elif isinstance(event, ConnectionTerminated):
                 self._terminated.set()
                 for ready in self._read_ready.values():
                     ready.set()
 
-            if self._http is not None:
-                for h3_event in self._http.handle_event(event):
-                    self._queue_http_event(h3_event)
+            for h3_event in self._http.handle_event(event):
+                self._queue_http_event(h3_event)
 
             event = self._quic.next_event()
 
@@ -245,7 +251,9 @@ class _H3Transport(httpx2.AsyncBaseTransport):
 
 
 @asynccontextmanager
-async def _serving(certs: TLSCerts, tcp_port: int, quic_port: int) -> AsyncIterator[None]:
+async def _serving(
+    certs: TLSCerts, tcp_port: int, quic_port: int, application: Callable = app
+) -> AsyncIterator[None]:
     """Run the worker on the given ports, shutting it down on the way out."""
     config = Config()
     config.bind = [f"{HOST}:{tcp_port}"]
@@ -259,7 +267,7 @@ async def _serving(certs: TLSCerts, tcp_port: int, quic_port: int) -> AsyncItera
     async with anyio.create_task_group() as task_group:
         await task_group.start(
             lambda *, task_status: anycorn.serve(
-                app, config, shutdown_trigger=shutdown.wait, task_status=task_status
+                application, config, shutdown_trigger=shutdown.wait, task_status=task_status
             )
         )
         try:
@@ -282,3 +290,77 @@ async def test_h3_request(tls_certs: TLSCerts, free_tcp_port: int, free_udp_port
     assert response.text == "Hello, h3!"
     assert response.headers["content-type"] == "text/plain"
     assert response.extensions["http_version"] == b"HTTP/3"
+
+
+CONCURRENT_REQUESTS = 3
+
+
+def _rendezvous_app(
+    arrived: list[str], clients: list[tuple[str, int] | None], released: anyio.Event
+) -> Callable:
+    """Return an app that answers nothing until every request has arrived.
+
+    Which only completes if the server is carrying them at once. Were it taking them
+    one at a time - a connection per request, or a stream at a time - the first would
+    sit waiting for siblings that cannot be read yet, and the test would time out.
+    """
+
+    async def _app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
+        assert scope["type"] == "http"
+        arrived.append(scope["path"])
+        clients.append(scope["client"])
+        if len(arrived) == CONCURRENT_REQUESTS:
+            released.set()
+        await released.wait()
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/plain")],
+            }
+        )
+        await send({"type": "http.response.body", "body": scope["path"].encode()})
+
+    return _app
+
+
+@pytest.mark.anyio
+async def test_concurrent_requests_share_one_connection(
+    tls_certs: TLSCerts, free_tcp_port: int, free_udp_port: int
+) -> None:
+    """HTTP/3 multiplexes concurrent requests over a single QUIC connection."""
+    arrived: list[str] = []
+    clients: list[tuple[str, int] | None] = []
+    released = anyio.Event()
+    responses: dict[str, str] = {}
+
+    async with (
+        _serving(
+            tls_certs,
+            free_tcp_port,
+            free_udp_port,
+            _rendezvous_app(arrived, clients, released),
+        ),
+        _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
+        httpx2.AsyncClient(transport=transport) as client,
+    ):
+
+        async def _request(path: str) -> None:
+            response = await client.get(f"https://{HOST}:{free_udp_port}{path}")
+            assert response.status_code == 200  # noqa: PLR2004
+            responses[path] = response.text
+
+        paths = [f"/{index}" for index in range(CONCURRENT_REQUESTS)]
+        with anyio.fail_after(10):
+            async with anyio.create_task_group() as task_group:
+                for path in paths:
+                    task_group.start_soon(_request, path)
+
+    # Every request answered, and answered as itself rather than as a sibling
+    assert responses == {path: path for path in paths}
+    assert sorted(arrived) == sorted(paths)
+    # Every request came from the one client address, which is the socket the
+    # transport is actually holding - so they shared a UDP flow, seen server side
+    assert clients == [transport.local_address] * CONCURRENT_REQUESTS
+    # And a single handshake, so that flow carried one connection rather than three
+    assert transport.handshakes == 1
