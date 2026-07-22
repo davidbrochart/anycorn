@@ -105,11 +105,11 @@ async def test_workers_0_ctrl_break_shutdown(anyio_backend_name: str, free_tcp_p
     async with anycorn_subprocess(
         args,
         anyio_backend_name=anyio_backend_name,
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
     ) as process:
         await _wait_until_ready(f"http://127.0.0.1:{free_tcp_port}")
 
-        process.send_signal(signal.CTRL_BREAK_EVENT)
+        process.send_signal(signal.CTRL_BREAK_EVENT)  # ty:ignore[unresolved-attribute]
 
         with anyio.fail_after(10):
             returncode = await process.wait()
