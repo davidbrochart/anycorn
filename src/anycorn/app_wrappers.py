@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from functools import partial
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -18,6 +18,13 @@ if TYPE_CHECKING:
         Scope,
         WSGIFramework,
     )
+
+
+@runtime_checkable
+class _SupportsClose(Protocol):
+    """A WSGI iterable that carries the optional close() hook from PEP 3333."""
+
+    def close(self) -> None: ...
 
 
 class InvalidPathError(Exception):
@@ -63,10 +70,26 @@ class WSGIWrapper:
         elif scope["type"] == "websocket":
             await send({"type": "websocket.close"})  # type: ignore[arg-type, misc]
         elif scope["type"] == "lifespan":
-            return
+            await self._handle_lifespan(receive, send)
         else:
             msg = f"Unknown scope type, {scope['type']}"
             raise RuntimeError(msg)
+
+    async def _handle_lifespan(self, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
+        """Acknowledge the ASGI lifespan protocol; a WSGI app has no lifespan of its own.
+
+        Returning immediately without ever awaiting receive() here (as this used to)
+        leaves Lifespan.supported still True, since that only flips to False when the
+        app *raises* - so wait_for_startup() goes on to send into a channel this
+        wrapper never reads from, which Lifespan's cleanup has by then already closed.
+        """
+        while True:
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            elif message["type"] == "lifespan.shutdown":
+                await send({"type": "lifespan.shutdown.complete"})
+                return
 
     async def handle_http(
         self,
@@ -119,16 +142,18 @@ class WSGIWrapper:
 
         response_body = self.app(environ, start_response)
 
-        if not response_started:
-            msg = "WSGI app did not call start_response"
-            raise RuntimeError(msg)
-
-        send({"type": "http.response.start", "status": status_code, "headers": headers})
         try:
+            first_chunk = True
             for output in response_body:
+                if first_chunk:
+                    if not response_started:
+                        msg = "WSGI app did not call start_response"
+                        raise RuntimeError(msg)
+                    send({"type": "http.response.start", "status": status_code, "headers": headers})
+                    first_chunk = False
                 send({"type": "http.response.body", "body": output, "more_body": True})
         finally:
-            if hasattr(response_body, "close"):
+            if isinstance(response_body, _SupportsClose):
                 response_body.close()
 
 

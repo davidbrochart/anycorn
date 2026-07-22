@@ -150,6 +150,10 @@ def test_create_sockets_multiple(monkeypatch: MonkeyPatch) -> None:
     assert len(sockets.insecure_sockets) == 2  # noqa: PLR2004
 
 
+def test_daemon_defaults_true() -> None:
+    assert Config().daemon is True
+
+
 def test_response_headers(monkeypatch: MonkeyPatch) -> None:
     monkeypatch.setattr(anycorn.config, "time", lambda: 1_512_229_395)
     config = Config()

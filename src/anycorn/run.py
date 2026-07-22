@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import platform
 import signal
 import sys
@@ -17,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import anyio.abc
 import anyio.streams.tls
+import sniffio
 
 from .datagram import wrap_datagram_socket
 from .lifespan import Lifespan
@@ -48,7 +50,7 @@ if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup
 
 
-def run(config: Config) -> int:  # noqa: C901, PLR0912
+def run(config: Config) -> int:  # noqa: C901, PLR0912, PLR0915
     """Start the server, blocking until it exits, and return an exit code."""
     if config.pid_path is not None:
         write_pid_file(config.pid_path)
@@ -88,6 +90,12 @@ def run(config: Config) -> int:  # noqa: C901, PLR0912
                 shutdown_event.set()
                 active = False
 
+            def reload(*_args: Any) -> None:  # noqa: ANN401
+                shutdown_event.set()
+                for process in processes:
+                    process.join()
+                shutdown_event.clear()
+
             processes: list[BaseProcess] = []
             # Registered after the sockets, so it unwinds first: signal the children,
             # then close what the parent is still holding. A worker that fails to
@@ -105,16 +113,16 @@ def run(config: Config) -> int:  # noqa: C901, PLR0912
                     if hasattr(signal, signal_name):
                         signal.signal(getattr(signal, signal_name), shutdown)
 
+                if hasattr(signal, "SIGHUP"):
+                    signal.signal(signal.SIGHUP, reload)
+
                 if config.use_reloader:
                     files = files_to_watch()
                     while True:
                         finished = wait((process.sentinel for process in processes), timeout=1)
                         updated = check_for_updates(files)
                         if updated:
-                            shutdown_event.set()
-                            for process in processes:
-                                process.join()
-                            shutdown_event.clear()
+                            reload()
                             break
                         if len(finished) > 0:
                             break
@@ -143,7 +151,7 @@ def _populate(  # noqa: PLR0913
             target=worker_func,
             kwargs={"config": config, "shutdown_event": shutdown_event, "sockets": sockets},
         )
-        process.daemon = True
+        process.daemon = config.daemon
         try:
             process.start()
         except PicklingError as error:
@@ -172,6 +180,29 @@ def _join_exited(processes: list[BaseProcess]) -> int:
     return exitcode
 
 
+async def _wait_for_shutdown_signal(signals: tuple[signal.Signals, ...]) -> None:
+    """Return once the first of *signals* is received.
+
+    open_signal_receiver drives asyncio's loop.add_signal_handler, which raises
+    NotImplementedError on Windows. There we fall back to signal.signal, which
+    does work on Windows for these console signals - the same fallback
+    hypercorn's own asyncio backend makes, so --workers 0 stays gracefully
+    shutdownable there instead of crashing the worker on startup.
+    """
+    try:
+        with anyio.open_signal_receiver(*signals) as received_signals:
+            async for _signum in received_signals:
+                return
+    except NotImplementedError:
+        loop = asyncio.get_running_loop()
+        event = asyncio.Event()
+        with ExitStack() as stack:
+            for sig in signals:
+                stack.callback(signal.signal, sig, signal.getsignal(sig))
+                signal.signal(sig, lambda *_: loop.call_soon_threadsafe(event.set))
+            await event.wait()
+
+
 async def worker_serve(  # noqa: C901, PLR0912, PLR0915
     app: AppWrapper,
     config: Config,
@@ -182,6 +213,21 @@ async def worker_serve(  # noqa: C901, PLR0912, PLR0915
 ) -> None:
     """Run the server workers, handling lifespan and connections."""
     config.set_statsd_logger_class(StatsdLogger)
+
+    if shutdown_trigger is None and sniffio.current_async_library() == "asyncio":
+        # Matches hypercorn's asyncio-backend fallback: without this, Ctrl-C/SIGTERM
+        # would bypass the graceful, graceful_timeout-respecting shutdown path every
+        # other trigger source here uses, and SIGTERM would go entirely unhandled.
+        # Not ported for trio: hypercorn's own trio backend has no equivalent,
+        # relying solely on trio's built-in SIGINT-to-cancellation behaviour.
+        shutdown_trigger = partial(
+            _wait_for_shutdown_signal,
+            tuple(
+                sig
+                for sig in (signal.SIGINT, signal.SIGTERM, getattr(signal, "SIGBREAK", None))
+                if sig is not None
+            ),
+        )
 
     lifespan_state: LifespanState = {}
     lifespan = Lifespan(app, config, lifespan_state)

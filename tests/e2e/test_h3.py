@@ -18,6 +18,9 @@ from aioquic.quic.events import ConnectionTerminated, HandshakeCompleted
 import anycorn
 from anycorn.config import Config
 from anycorn.datagram import wrap_datagram_socket
+from anycorn.udp_server import UDPServer
+from anycorn.utils import wrap_app
+from anycorn.worker_context import WorkerContext
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -294,6 +297,65 @@ async def test_h3_request(tls_certs: TLSCerts, free_tcp_port: int, free_udp_port
     assert response.extensions["http_version"] == b"HTTP/3"
 
 
+@pytest.mark.anyio
+async def test_stream_closed_forgets_the_stream(tls_certs: TLSCerts, free_udp_port: int) -> None:
+    """H3Protocol must forget a stream once it closes, not accumulate it forever.
+
+    stream_send's StreamClosed handling used to be `pass  # ??`, silently leaving
+    every finished stream's HTTPStream/WSStream sitting in self.streams for the
+    life of the QUIC connection - an unbounded leak on any connection that outlives
+    more than a handful of requests. This drives a real HTTP/3 request through a
+    real running server and inspects the actual H3Protocol instance's own streams
+    dict afterward, rather than constructing one directly and calling stream_send
+    by hand.
+
+    UDPServer is constructed directly here rather than via anycorn.serve(), so the
+    test can hold a real reference to it and walk udp_server.protocol.connections
+    to the H3Protocol instance the server itself created - both genuinely public
+    attributes - instead of reaching for the class via monkeypatching.
+    """
+    config = Config()
+    config.bind = []  # only QUIC is needed for this test, so skip the TCP listener
+    config.quic_bind = [f"{HOST}:{free_udp_port}"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+    config.accesslog = "-"
+    config.errorlog = "-"
+
+    sockets = config.create_sockets()
+    assert sockets.quic_sockets, "expected create_sockets to bind a QUIC socket"
+    datagram_socket = await wrap_datagram_socket(sockets.quic_sockets[0])
+    app_wrapper = wrap_app(app, config.wsgi_max_body_size, None)
+    context = WorkerContext(None)
+    udp_server = UDPServer(app_wrapper, config, context, {}, datagram_socket)
+
+    try:
+        async with anyio.create_task_group() as tg:
+            await tg.start(udp_server.run)
+            try:
+                async with (
+                    _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
+                    httpx2.AsyncClient(transport=transport) as client,
+                ):
+                    with anyio.fail_after(10):
+                        response = await client.get(f"https://{HOST}:{free_udp_port}/")
+                assert response.status_code == 200  # noqa: PLR2004
+
+                connection = next(iter(udp_server.protocol.connections.values()))
+                assert connection.h3 is not None
+                # StreamClosed is sent after the response body, so the client seeing
+                # the full response does not guarantee the server has processed it yet -
+                # wait for the server's own task to go idle rather than for a fixed delay
+                with anyio.fail_after(10):
+                    await anyio.wait_all_tasks_blocked()
+
+                assert connection.h3.streams == {}
+            finally:
+                tg.cancel_scope.cancel()
+    finally:
+        await datagram_socket.aclose()
+
+
 CONCURRENT_REQUESTS = 3
 
 
@@ -386,12 +448,16 @@ async def test_concurrent_requests_are_multiplexed(
     assert transport.handshakes == 1
 
 
-def _state_app(seen: list[tuple[str, dict, int, tuple[str, int] | None]]) -> Callable:
+def _state_app(seen: list[tuple[str, dict, dict, tuple[str, int] | None]]) -> Callable:
     """Return an app that records the state it was handed, then writes to it."""
 
     async def _app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
         state = scope["state"]
-        seen.append((scope["path"], dict(state), id(state), scope["client"]))
+        # Hold the real state object, not id(state): a freed namespace's address can
+        # be reused by the next connection's, so identities only tell them apart while
+        # all are kept alive. Snapshot the contents separately, since the next line
+        # mutates the live object.
+        seen.append((scope["path"], dict(state), state, scope["client"]))
         state["secret"] = scope["path"]
         await send(
             {
@@ -420,7 +486,7 @@ async def test_state_is_not_shared_between_connections(
     behind it is defence in depth, so this asserts the guarantee rather than either
     layer.
     """
-    seen: list[tuple[str, dict, int, tuple[str, int] | None]] = []
+    seen: list[tuple[str, dict, dict, tuple[str, int] | None]] = []
     client_port = free_udp_port_factory()
 
     async with _serving(tls_certs, free_tcp_port, free_udp_port, _state_app(seen)):
@@ -440,6 +506,6 @@ async def test_state_is_not_shared_between_connections(
     # The same peer both times, so the server had no address to tell them apart by
     assert [client for _, _, _, client in seen] == [(HOST, client_port)] * 2
     # And still neither the first's contents nor its namespace
-    assert [state for _, state, _, _ in seen] == [{}, {}]
-    first_id, second_id = (ident for _, _, ident, _ in seen)
-    assert first_id != second_id
+    assert [snapshot for _, snapshot, _, _ in seen] == [{}, {}]
+    first_state, second_state = (state for _, _, state, _ in seen)
+    assert first_state is not second_state

@@ -70,6 +70,13 @@ def _load_config(config_path: str | None) -> Config:
     "or when prefixed with `python:` a Python module.",
 )
 @click.option(
+    "-D",
+    "--daemon",
+    help="Run the workers as daemons",
+    is_flag=True,
+    default=None,
+)
+@click.option(
     "--debug",
     help="Enable debug mode, i.e. extra logging and checks",
     is_flag=True,
@@ -131,6 +138,13 @@ def _load_config(config_path: str | None) -> Config:
     "insecure_binds",
     help="The TCP host/address to bind to. SSL options will not apply to these binds. "
     "See *bind* for formatting options. Care must be taken! See HTTP -> HTTPS redirection docs.",
+    default=[],
+    multiple=True,
+)
+@click.option(
+    "--quic-bind",
+    "quic_binds",
+    help="The UDP host/address to bind to for QUIC/HTTP-3. See *bind* for formatting options.",
     default=[],
     multiple=True,
 )
@@ -222,6 +236,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     cert_reqs: int | None,
     ciphers: str | None,
     config: str | None,
+    daemon: bool | None,  # noqa: FBT001
     debug: bool,  # noqa: FBT001
     error_logfile: str | None,
     graceful_timeout: int | None,
@@ -234,6 +249,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     keyfile: str | None,
     keyfile_password: str | None,
     insecure_binds: list[str],
+    quic_binds: list[str],
     log_config: str | None,
     log_level: str | None,
     pid: str | None,
@@ -269,6 +285,8 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
         cfg.cert_reqs = cert_reqs
     if ciphers is not None:
         cfg.ciphers = ciphers
+    if daemon is not None:
+        cfg.daemon = daemon
     cfg.debug = debug
     if error_logfile is not None:
         cfg.errorlog = error_logfile
@@ -317,6 +335,8 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
         cfg.bind = binds
     if len(insecure_binds) > 0:
         cfg.insecure_bind = insecure_binds
+    if quic_binds:
+        cfg.quic_bind = quic_binds
     if len(server_names) > 0:
         cfg.server_names = server_names
 

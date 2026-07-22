@@ -11,6 +11,7 @@ from h2.events import ConnectionTerminated
 
 from anycorn.config import Config
 from anycorn.events import Closed, RawData
+from anycorn.protocol.events import Trailers
 from anycorn.protocol.h2 import (
     BUFFER_HIGH_WATER,
     BufferCompleteError,
@@ -135,3 +136,28 @@ async def test_protocol_keep_alive_max_requests() -> None:
     protocol.send.assert_awaited()  # type: ignore[attr-defined]
     events = client.receive_data(protocol.send.call_args_list[1].args[0].data)  # type: ignore[attr-defined]
     assert isinstance(events[-1], ConnectionTerminated)
+
+
+@pytest.mark.anyio
+async def test_stream_send_trailers_ends_stream() -> None:
+    protocol = H2Protocol(
+        Mock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        ConnectionState({}),
+        None,
+        None,
+        AsyncMock(),
+        None,
+    )
+    protocol.connection.send_headers = Mock()  # type: ignore[method-assign]
+    protocol.priority.insert_stream(1)
+    protocol.stream_buffers[1] = StreamBuffer(EventWrapper)
+    protocol.stream_buffers[1].set_complete()
+    await protocol.stream_buffers[1]._is_empty.set()
+
+    with anyio.fail_after(2):
+        await protocol.stream_send(Trailers(stream_id=1, headers=[(b"x", b"y")]))
+
+    protocol.connection.send_headers.assert_called_once_with(1, [(b"x", b"y")], end_stream=True)
