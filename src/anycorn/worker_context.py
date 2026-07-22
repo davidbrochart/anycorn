@@ -102,3 +102,13 @@ class WorkerContext:
     def time() -> float:
         """Return the current event-loop time."""
         return anyio.current_time()
+
+    @staticmethod
+    def move_on_after(delay: float | None) -> anyio.CancelScope:
+        """Return a scope that cancels itself once *delay* seconds have passed.
+
+        Goes through the context alongside `sleep()` and `time()` so that the clock a
+        connection ages by is the worker's rather than the wall's, which is what lets
+        tests fire a timeout at a chosen moment instead of waiting one out.
+        """
+        return anyio.move_on_after(delay)

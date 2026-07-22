@@ -159,6 +159,7 @@ async def serve_in_memory(
     config: Config | None = None,
     *,
     alpn_protocol: str | None = None,
+    context: WorkerContext | None = None,
 ) -> AsyncIterator[MemoryClientStream]:
     """Run a `TCPServer` against an in-memory socket, yielding the client end.
 
@@ -173,7 +174,7 @@ async def serve_in_memory(
     server = TCPServer(
         ASGIWrapper(app),
         config if config is not None else Config(),
-        WorkerContext(None),
+        context if context is not None else WorkerContext(None),
         {},
         server_stream,
     )
