@@ -35,11 +35,21 @@ class AnyioSingleTask:
         self._lock = anyio.Lock()
 
     async def restart(self, task_group: TaskGroup, action: Callable) -> None:
-        """Cancel any running task and start *action* as the new task."""
+        """Cancel any running task and start *action* as the new task.
+
+        The new task is started *before* the old one is cancelled, not after. The
+        QUIC connection timer reschedules itself - _handle_timer ends up calling
+        restart on the very SingleTask running it - and cancelling the old handle
+        first tears the running task down at restart's own ``await``, before the
+        replacement is armed, so the timer would fire once and then stop. Starting
+        the replacement first means the reschedule survives the self-cancel, which
+        is what keeps QUIC retransmitting after a lost datagram.
+        """
         async with self._lock:
-            if self._handle is not None:
-                self._handle.cancel()
+            previous = self._handle
             self._handle = await task_group._task_group.start(_cancel_wrapper(action))  # type: ignore[attr-defined]  # noqa: SLF001
+            if previous is not None:
+                previous.cancel()
 
     async def stop(self) -> None:
         """Cancel and clear the current task, if any."""
