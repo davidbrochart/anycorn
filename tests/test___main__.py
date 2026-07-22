@@ -110,6 +110,31 @@ def test_daemon_cli_omitted_preserves_existing_config(monkeypatch: MonkeyPatch) 
     assert config.daemon is False
 
 
+def test_quic_bind_cli_flag(monkeypatch: MonkeyPatch) -> None:
+    runner = CliRunner()
+    run_multiple = Mock()
+    monkeypatch.setattr(anycorn.__main__, "run", run_multiple)
+
+    runner.invoke(
+        anycorn.__main__.main,
+        ["--quic-bind", "127.0.0.1:4433", "--quic-bind", "127.0.0.1:4434", "asgi:App"],
+    )
+    run_multiple.assert_called()
+    config = run_multiple.call_args_list[0][0][0]
+    assert list(config.quic_bind) == ["127.0.0.1:4433", "127.0.0.1:4434"]
+
+
+def test_quic_bind_cli_omitted_preserves_default(monkeypatch: MonkeyPatch) -> None:
+    runner = CliRunner()
+    run_multiple = Mock()
+    monkeypatch.setattr(anycorn.__main__, "run", run_multiple)
+
+    runner.invoke(anycorn.__main__.main, ["asgi:App"])
+    run_multiple.assert_called()
+    config = run_multiple.call_args_list[0][0][0]
+    assert config.quic_bind == []
+
+
 def test_verify_mode_conversion(monkeypatch: MonkeyPatch) -> None:
     runner = CliRunner()
     run_multiple = Mock()

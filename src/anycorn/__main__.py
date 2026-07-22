@@ -142,6 +142,13 @@ def _load_config(config_path: str | None) -> Config:
     multiple=True,
 )
 @click.option(
+    "--quic-bind",
+    "quic_binds",
+    help="The UDP host/address to bind to for QUIC/HTTP-3. See *bind* for formatting options.",
+    default=[],
+    multiple=True,
+)
+@click.option(
     "--log-config",
     help="A Python logging configuration file. This can be prefixed with "
     "'json:' or 'toml:' to load the configuration from a file in "
@@ -242,6 +249,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     keyfile: str | None,
     keyfile_password: str | None,
     insecure_binds: list[str],
+    quic_binds: list[str],
     log_config: str | None,
     log_level: str | None,
     pid: str | None,
@@ -327,6 +335,8 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
         cfg.bind = binds
     if len(insecure_binds) > 0:
         cfg.insecure_bind = insecure_binds
+    if len(quic_binds) > 0:
+        cfg.quic_bind = quic_binds
     if len(server_names) > 0:
         cfg.server_names = server_names
 
