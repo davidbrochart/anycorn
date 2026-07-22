@@ -448,12 +448,16 @@ async def test_concurrent_requests_are_multiplexed(
     assert transport.handshakes == 1
 
 
-def _state_app(seen: list[tuple[str, dict, int, tuple[str, int] | None]]) -> Callable:
+def _state_app(seen: list[tuple[str, dict, dict, tuple[str, int] | None]]) -> Callable:
     """Return an app that records the state it was handed, then writes to it."""
 
     async def _app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
         state = scope["state"]
-        seen.append((scope["path"], dict(state), id(state), scope["client"]))
+        # Hold the real state object, not id(state): a freed namespace's address can
+        # be reused by the next connection's, so identities only tell them apart while
+        # all are kept alive. Snapshot the contents separately, since the next line
+        # mutates the live object.
+        seen.append((scope["path"], dict(state), state, scope["client"]))
         state["secret"] = scope["path"]
         await send(
             {
@@ -482,7 +486,7 @@ async def test_state_is_not_shared_between_connections(
     behind it is defence in depth, so this asserts the guarantee rather than either
     layer.
     """
-    seen: list[tuple[str, dict, int, tuple[str, int] | None]] = []
+    seen: list[tuple[str, dict, dict, tuple[str, int] | None]] = []
     client_port = free_udp_port_factory()
 
     async with _serving(tls_certs, free_tcp_port, free_udp_port, _state_app(seen)):
@@ -502,6 +506,6 @@ async def test_state_is_not_shared_between_connections(
     # The same peer both times, so the server had no address to tell them apart by
     assert [client for _, _, _, client in seen] == [(HOST, client_port)] * 2
     # And still neither the first's contents nor its namespace
-    assert [state for _, state, _, _ in seen] == [{}, {}]
-    first_id, second_id = (ident for _, _, ident, _ in seen)
-    assert first_id != second_id
+    assert [snapshot for _, snapshot, _, _ in seen] == [{}, {}]
+    first_state, second_state = (state for _, _, state, _ in seen)
+    assert first_state is not second_state
