@@ -18,7 +18,9 @@ from aioquic.quic.events import ConnectionTerminated, HandshakeCompleted
 import anycorn
 from anycorn.config import Config
 from anycorn.datagram import wrap_datagram_socket
-from anycorn.protocol.h3 import H3Protocol
+from anycorn.udp_server import UDPServer
+from anycorn.utils import wrap_app
+from anycorn.worker_context import WorkerContext
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -296,12 +298,7 @@ async def test_h3_request(tls_certs: TLSCerts, free_tcp_port: int, free_udp_port
 
 
 @pytest.mark.anyio
-async def test_stream_closed_forgets_the_stream(
-    tls_certs: TLSCerts,
-    free_tcp_port: int,
-    free_udp_port: int,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_stream_closed_forgets_the_stream(tls_certs: TLSCerts, free_udp_port: int) -> None:
     """H3Protocol must forget a stream once it closes, not accumulate it forever.
 
     stream_send's StreamClosed handling used to be `pass  # ??`, silently leaving
@@ -311,35 +308,54 @@ async def test_stream_closed_forgets_the_stream(
     real running server and inspects the actual H3Protocol instance's own streams
     dict afterward, rather than constructing one directly and calling stream_send
     by hand.
+
+    UDPServer is constructed directly here rather than via anycorn.serve(), so the
+    test can hold a real reference to it and walk udp_server.protocol.connections
+    to the H3Protocol instance the server itself created - both genuinely public
+    attributes - instead of reaching for the class via monkeypatching.
     """
-    captured: list[H3Protocol] = []
-    original_init = H3Protocol.__init__
+    config = Config()
+    config.bind = []  # only QUIC is needed for this test, so skip the TCP listener
+    config.quic_bind = [f"{HOST}:{free_udp_port}"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+    config.accesslog = "-"
+    config.errorlog = "-"
 
-    def _capturing_init(self: H3Protocol, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
-        original_init(self, *args, **kwargs)
-        captured.append(self)
+    sockets = config.create_sockets()
+    assert sockets.quic_sockets, "expected create_sockets to bind a QUIC socket"
+    datagram_socket = await wrap_datagram_socket(sockets.quic_sockets[0])
+    app_wrapper = wrap_app(app, config.wsgi_max_body_size, None)
+    context = WorkerContext(None)
+    udp_server = UDPServer(app_wrapper, config, context, {}, datagram_socket)
 
-    monkeypatch.setattr(H3Protocol, "__init__", _capturing_init)
+    try:
+        async with anyio.create_task_group() as tg:
+            await tg.start(udp_server.run)
+            try:
+                async with (
+                    _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
+                    httpx2.AsyncClient(transport=transport) as client,
+                ):
+                    with anyio.fail_after(10):
+                        response = await client.get(f"https://{HOST}:{free_udp_port}/")
+                assert response.status_code == 200  # noqa: PLR2004
 
-    async with (
-        _serving(tls_certs, free_tcp_port, free_udp_port),
-        _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
-        httpx2.AsyncClient(transport=transport) as client,
-    ):
-        with anyio.fail_after(10):
-            response = await client.get(f"https://{HOST}:{free_udp_port}/")
-        assert response.status_code == 200  # noqa: PLR2004
+                connection = next(iter(udp_server.protocol.connections.values()))
+                assert connection.h3 is not None
+                # StreamClosed is sent after the response body, so the client seeing
+                # the full response does not guarantee the server has processed it yet
+                with anyio.fail_after(10):
+                    while True:
+                        if not connection.h3.streams:
+                            break
+                        await anyio.sleep(0.01)
 
-        assert len(captured) == 1
-        # StreamClosed is sent after the response body, so the client seeing the
-        # full response does not guarantee the server has processed it yet
-        with anyio.fail_after(10):
-            while True:
-                if not captured[0].streams:
-                    break
-                await anyio.sleep(0.01)
-
-    assert captured[0].streams == {}
+                assert connection.h3.streams == {}
+            finally:
+                tg.cancel_scope.cancel()
+    finally:
+        await datagram_socket.aclose()
 
 
 CONCURRENT_REQUESTS = 3
