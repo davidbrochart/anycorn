@@ -86,7 +86,12 @@ async def test_access_log_records_the_full_request_path_through_dispatcher(
     # extended - not a truncated path with root_path left alone
     assert response.text == "path=/api/hello root_path=/api"
 
-    assert len(handler.records) == 1
-    logged_args = handler.records[0].args
-    assert isinstance(logged_args, dict)
-    assert logged_args["U"] == "/api/hello"
+    # Every access record anycorn emitted must show the full requested path; a
+    # dispatcher that mutated scope["path"] in place would leak "/hello" here.
+    # The count is deliberately not asserted: a client that disconnects just as
+    # the response finalises can prompt a second, response-less access record
+    # (http_stream logs the stream close too), and both still read the same
+    # scope path - so the path is the property under test, not the record count.
+    assert handler.records, "expected at least one access log record"
+    logged_paths = {record.args["U"] for record in handler.records if isinstance(record.args, dict)}
+    assert logged_paths == {"/api/hello"}
