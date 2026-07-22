@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import signal
 import socket
 from functools import partial
 from pickle import PicklingError
@@ -21,6 +22,8 @@ from anycorn.utils import wrap_app
 from anycorn.worker_context import WorkerContext
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from tests.conftest import TLSCerts
 
 
@@ -131,6 +134,49 @@ def test_populate_sets_process_daemon_from_config() -> None:
     processes: list = []
     anycorn.run._populate(processes, config, lambda **_kwargs: None, None, None, _Ctx())  # type: ignore[arg-type]
     assert processes[0].daemon is False
+
+
+def test_run_registers_sighup_to_reload_workers(
+    tls_certs: TLSCerts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SIGHUP must be wired up to gracefully restart workers, not left to the default action."""
+    config = Config()
+    config.bind = ["127.0.0.1:0"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+    sockets = config.create_sockets()
+    monkeypatch.setattr(config, "create_sockets", lambda: sockets)
+    config.workers = 1
+
+    class _Process:
+        def __init__(self) -> None:
+            self.sentinel = object()
+            self.exitcode = 1  # non-zero, so run() stops after a single pass
+
+        def join(self) -> None:
+            pass
+
+        def terminate(self) -> None:
+            pass
+
+    def _populate(processes: list, *_args: object, **_kwargs: object) -> None:
+        if not processes:
+            processes.append(_Process())
+
+    signal_calls: list[tuple[int, Callable]] = []
+
+    def _record_signal(signalnum: int, handler: Callable) -> None:
+        signal_calls.append((signalnum, handler))
+
+    monkeypatch.setattr(anycorn.run, "_populate", _populate)
+    monkeypatch.setattr(anycorn.run, "wait", lambda _sentinels: None)
+    monkeypatch.setattr(anycorn.run.signal, "signal", _record_signal)
+
+    run(config)
+
+    sighup_handlers = [handler for signalnum, handler in signal_calls if signalnum == signal.SIGHUP]
+    assert len(sighup_handlers) == 1
+    assert getattr(sighup_handlers[0], "__name__", None) == "reload"
 
 
 def test_run_terminates_workers_when_it_raises(
