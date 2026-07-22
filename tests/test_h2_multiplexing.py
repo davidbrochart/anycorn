@@ -1,4 +1,4 @@
-"""Tests that HTTP/2 carries concurrent requests on a single connection."""
+"""Tests that HTTP/2 carries concurrent requests at once, rather than in turn."""
 
 from __future__ import annotations
 
@@ -29,7 +29,6 @@ class _Rendezvous:
     def __init__(self, expected: int) -> None:
         self.expected = expected
         self.arrived: list[str] = []
-        self.states: list[int] = []
         self.released = anyio.Event()
 
     async def __call__(
@@ -38,9 +37,6 @@ class _Rendezvous:
         assert scope["type"] == "http"
         assert scope["http_version"] == "2"
         self.arrived.append(scope["path"])
-        # Identity, not contents: ASGI copies this per connection, so one namespace
-        # across every request means one connection carried them
-        self.states.append(id(scope["state"]))
         if len(self.arrived) >= self.expected:
             self.released.set()
 
@@ -81,8 +77,13 @@ async def _read_responses(
 
 
 @pytest.mark.anyio
-async def test_concurrent_requests_share_one_connection() -> None:
-    """HTTP/2 multiplexes concurrent requests rather than taking them in turn."""
+async def test_concurrent_requests_are_multiplexed() -> None:
+    """The server carries concurrent HTTP/2 requests at once, on one connection.
+
+    The single connection is the harness's doing - there is one stream pair - so it is
+    the fixed condition rather than the finding. What is being tested is that three
+    requests are carried over it simultaneously instead of one at a time.
+    """
     app = _Rendezvous(CONCURRENT_REQUESTS)
 
     async with serve_in_memory(app, alpn_protocol="h2") as client_stream:
@@ -115,5 +116,3 @@ async def test_concurrent_requests_share_one_connection() -> None:
     # Each answered, and answered as itself rather than as a sibling
     assert bodies == {stream_id: path.encode() for stream_id, path in paths.items()}
     assert sorted(app.arrived) == sorted(paths.values())
-    # One state namespace, so one connection served all three
-    assert len(set(app.states)) == 1

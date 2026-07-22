@@ -300,7 +300,6 @@ CONCURRENT_REQUESTS = 3
 def _rendezvous_app(
     arrived: list[str],
     clients: list[tuple[str, int] | None],
-    states: list[int],
     released: anyio.Event,
 ) -> Callable:
     """Return an app that answers nothing until every request has arrived.
@@ -314,9 +313,6 @@ def _rendezvous_app(
         assert scope["type"] == "http"
         arrived.append(scope["path"])
         clients.append(scope["client"])
-        # Identity, not contents: ASGI copies this per connection, so one namespace
-        # across all three is the server saying one connection carried them
-        states.append(id(scope["state"]))
         if len(arrived) == CONCURRENT_REQUESTS:
             released.set()
         await released.wait()
@@ -333,13 +329,18 @@ def _rendezvous_app(
 
 
 @pytest.mark.anyio
-async def test_concurrent_requests_share_one_connection(
+async def test_concurrent_requests_are_multiplexed(
     tls_certs: TLSCerts, free_tcp_port: int, free_udp_port: int
 ) -> None:
-    """HTTP/3 multiplexes concurrent requests over a single QUIC connection."""
+    """The server carries concurrent HTTP/3 requests at once, on one connection.
+
+    That there is one connection is the harness's doing - a transport wraps a single
+    QuicConnection on a single socket - so it is the fixed condition here rather than
+    the finding. What is being tested is that the server carries three requests over
+    it simultaneously instead of taking them in turn.
+    """
     arrived: list[str] = []
     clients: list[tuple[str, int] | None] = []
-    states: list[int] = []
     released = anyio.Event()
     responses: dict[str, str] = {}
 
@@ -348,7 +349,7 @@ async def test_concurrent_requests_share_one_connection(
             tls_certs,
             free_tcp_port,
             free_udp_port,
-            _rendezvous_app(arrived, clients, states, released),
+            _rendezvous_app(arrived, clients, released),
         ),
         _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
         httpx2.AsyncClient(transport=transport) as client,
@@ -368,12 +369,8 @@ async def test_concurrent_requests_share_one_connection(
     # Every request answered, and answered as itself rather than as a sibling
     assert responses == {path: path for path in paths}
     assert sorted(arrived) == sorted(paths)
-    # One connection served all three, said by the server rather than inferred from
-    # the client: a fresh connection per request would be a namespace per request
-    assert len(set(states)) == 1
-    # The rest describes the harness rather than testing the server - a transport
-    # wraps one QUIC connection on one socket, so it could not have done otherwise.
-    # Kept because it is what makes the assertion above meaningful
+    # The conditions the rendezvous was met under: one socket, one handshake, so the
+    # three were carried together over one connection rather than spread across three
     assert clients == [transport.local_address] * CONCURRENT_REQUESTS
     assert transport.handshakes == 1
 
@@ -404,12 +401,13 @@ async def test_state_is_not_shared_between_connections(
     free_udp_port: int,
     free_udp_port_factory: Callable[[], int],
 ) -> None:
-    """ASGI state is per connection, so one client cannot read the last one's.
+    """One client cannot read what the last one left behind.
 
     Both connections are made from the same client port, so the server sees one
-    address throughout. Anything keyed on where the datagrams came from - a copy per
-    UDP socket, or per peer - would hand the second connection the first's namespace;
-    only keying on the connection itself keeps them apart.
+    address throughout and has nothing to tell them apart by except the connection
+    itself. Copying per request is what enforces this now; the per-connection copy
+    behind it is defence in depth, so this asserts the guarantee rather than either
+    layer.
     """
     seen: list[tuple[str, dict, int, tuple[str, int] | None]] = []
     client_port = free_udp_port_factory()
