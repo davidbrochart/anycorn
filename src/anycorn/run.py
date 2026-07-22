@@ -84,7 +84,7 @@ def run(config: Config) -> int:  # noqa: C901, PLR0912
             shutdown_event = ctx.Event()
 
             def shutdown(*_args: Any) -> None:  # noqa: ANN401
-                nonlocal active, shutdown_event
+                nonlocal active
                 shutdown_event.set()
                 active = False
 
