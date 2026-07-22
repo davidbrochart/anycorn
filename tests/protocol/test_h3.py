@@ -5,17 +5,40 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aioquic.quic.events import StopSendingReceived, StreamReset
+from aioquic.quic.events import QuicEvent, StopSendingReceived, StreamReset
 
+from anycorn.config import Config
 from anycorn.protocol.events import Body, EndBody, StreamClosed
 from anycorn.protocol.h3 import H3Protocol
+from anycorn.typing import ConnectionState, TLSExtension
+from anycorn.worker_context import WorkerContext
+
+
+def _make_protocol() -> H3Protocol:
+    """Build a fully initialised H3Protocol over mock collaborators.
+
+    Goes through __init__ (so streams, _reset_streams and the rest are real) rather
+    than __new__; the quic connection is a mock, and tests that drive the H3
+    connection stub protocol.connection on top of it.
+    """
+    return H3Protocol(
+        MagicMock(),  # app
+        Config(),
+        WorkerContext(None),
+        MagicMock(),  # task_group
+        ConnectionState({}),
+        TLSExtension(),
+        None,  # client
+        None,  # server
+        MagicMock(),  # quic
+        AsyncMock(),  # send
+    )
 
 
 @pytest.mark.anyio
 async def test_stream_send_stream_closed_removes_stream() -> None:
-    protocol = H3Protocol.__new__(H3Protocol)
-    protocol.streams = {1: object(), 2: object()}
-    protocol._reset_streams = set()
+    protocol = _make_protocol()
+    protocol.streams = {1: object(), 2: object()}  # type: ignore[dict-item]
 
     await protocol.stream_send(StreamClosed(stream_id=1))
 
@@ -24,9 +47,7 @@ async def test_stream_send_stream_closed_removes_stream() -> None:
 
 @pytest.mark.anyio
 async def test_stream_send_stream_closed_is_idempotent() -> None:
-    protocol = H3Protocol.__new__(H3Protocol)
-    protocol.streams = {}
-    protocol._reset_streams = set()
+    protocol = _make_protocol()
 
     await protocol.stream_send(StreamClosed(stream_id=1))
 
@@ -41,17 +62,16 @@ async def test_stream_send_stream_closed_is_idempotent() -> None:
         StreamReset(error_code=0, stream_id=1),
     ],
 )
-async def test_peer_reset_closes_the_stream(quic_event: object) -> None:
+async def test_peer_reset_closes_the_stream(quic_event: QuicEvent) -> None:
     """A peer STOP_SENDING/RESET_STREAM must tear the stream down, so the app stops.
 
     aioquic resets our sender on these, so nothing more can be sent; the stream is
     dropped and handed a StreamClosed so the app sees http.disconnect (hypercorn #352).
     """
-    protocol = H3Protocol.__new__(H3Protocol)
+    protocol = _make_protocol()
     stream = MagicMock()
     stream.handle = AsyncMock()
     protocol.streams = {1: stream}
-    protocol._reset_streams = set()
     protocol.connection = MagicMock()
     protocol.connection.handle_event = MagicMock(return_value=[])
 
@@ -68,17 +88,15 @@ async def test_stream_send_skips_a_reset_stream() -> None:
 
     Sending would hit aioquic's "cannot call write() after reset()" assertion.
     """
-    protocol = H3Protocol.__new__(H3Protocol)
-    protocol.streams = {}
+    protocol = _make_protocol()
     protocol._reset_streams = {1}
     protocol.connection = MagicMock()
-    protocol.send = AsyncMock()
 
     await protocol.stream_send(Body(stream_id=1, data=b"late"))
     await protocol.stream_send(EndBody(stream_id=1))
 
     protocol.connection.send_data.assert_not_called()
-    protocol.send.assert_not_awaited()
+    protocol.send.assert_not_awaited()  # type: ignore[attr-defined]
 
 
 @pytest.mark.anyio
@@ -88,17 +106,15 @@ async def test_stream_send_survives_a_racing_reset_assertion() -> None:
     If the reset is recorded only after the app's send has begun, the aioquic call
     asserts. stream_send swallows it and forgets the stream instead (hypercorn #352).
     """
-    protocol = H3Protocol.__new__(H3Protocol)
+    protocol = _make_protocol()
     stream = MagicMock()
     stream.handle = AsyncMock()
     protocol.streams = {1: stream}
-    protocol._reset_streams = set()
     protocol.connection = MagicMock()
     protocol.connection.send_data.side_effect = AssertionError("cannot call write() after reset()")
-    protocol.send = AsyncMock()
 
     await protocol.stream_send(EndBody(stream_id=1))  # must not raise
 
     assert 1 in protocol._reset_streams
     assert 1 not in protocol.streams
-    protocol.send.assert_not_awaited()
+    protocol.send.assert_not_awaited()  # type: ignore[attr-defined]
