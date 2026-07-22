@@ -170,7 +170,10 @@ class QuicProtocol:
                     self.config,
                     self.context,
                     self.task_group,
-                    self.state,
+                    # Copied per connection, as TCPServer does. One UDP socket carries
+                    # every QUIC connection it is sent, so sharing the worker's state
+                    # would hand one client's namespace to the next
+                    ConnectionState(self.state.copy()),
                     tls_extension,
                     client,
                     self.server,

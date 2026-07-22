@@ -6,7 +6,7 @@ import platform
 import signal
 import sys
 import time
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, ExitStack
 from functools import partial
 from multiprocessing import get_context
 from multiprocessing.connection import wait
@@ -18,10 +18,12 @@ import anyio
 import anyio.abc
 import anyio.streams.tls
 
+from .datagram import wrap_datagram_socket
 from .lifespan import Lifespan
 from .statsd import StatsdLogger
 from .tcp_server import tcp_server_handler
 from .typing import AppWrapper, ConnectionState, LifespanState, WorkerFunc
+from .udp_server import UDPServer
 from .utils import (
     ShutdownError,
     check_for_updates,
@@ -56,75 +58,76 @@ def run(config: Config) -> int:  # noqa: C901, PLR0912
 
     sockets = config.create_sockets()
 
-    if config.use_reloader and config.workers == 0:
-        msg = "Cannot reload without workers"
-        raise RuntimeError(msg)
+    with ExitStack() as cleanup_stack:
+        # Whatever happens next - a worker failing to spawn, the reloader raising -
+        # the parent is left holding these, and each is closed independently so one
+        # refusing does not strand the rest
+        for sock in (*sockets.secure_sockets, *sockets.insecure_sockets, *sockets.quic_sockets):
+            cleanup_stack.enter_context(sock)
 
-    exitcode = 0
-    if config.workers == 0:
-        worker_func(config, sockets)
-    else:
-        if config.use_reloader:
-            # Load the application so that the correct paths are checked for
-            # changes, but only when the reloader is being used.
-            load_application(config.application_path, config.wsgi_max_body_size)
+        if config.use_reloader and config.workers == 0:
+            msg = "Cannot reload without workers"
+            raise RuntimeError(msg)
 
-        ctx = get_context("spawn")
-
-        active = True
-        shutdown_event = ctx.Event()
-
-        def shutdown(*_args: Any) -> None:  # noqa: ANN401
-            nonlocal active, shutdown_event
-            shutdown_event.set()
-            active = False
-
-        processes: list[BaseProcess] = []
-        while active:
-            # Ignore SIGINT before creating the processes, so that they
-            # inherit the signal handling. This means that the shutdown
-            # function controls the shutdown.
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-            _populate(processes, config, worker_func, sockets, shutdown_event, ctx)
-
-            for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
-                if hasattr(signal, signal_name):
-                    signal.signal(getattr(signal, signal_name), shutdown)
-
+        exitcode = 0
+        if config.workers == 0:
+            worker_func(config, sockets)
+        else:
             if config.use_reloader:
-                files = files_to_watch()
-                while True:
-                    finished = wait((process.sentinel for process in processes), timeout=1)
-                    updated = check_for_updates(files)
-                    if updated:
-                        shutdown_event.set()
-                        for process in processes:
-                            process.join()
-                        shutdown_event.clear()
-                        break
-                    if len(finished) > 0:
-                        break
-            else:
-                wait(process.sentinel for process in processes)
+                # Load the application so that the correct paths are checked for
+                # changes, but only when the reloader is being used.
+                load_application(config.application_path, config.wsgi_max_body_size)
 
-            exitcode = _join_exited(processes)
-            if exitcode != 0:
+            ctx = get_context("spawn")
+
+            active = True
+            shutdown_event = ctx.Event()
+
+            def shutdown(*_args: Any) -> None:  # noqa: ANN401
+                nonlocal active
                 shutdown_event.set()
                 active = False
 
-        for process in processes:
-            process.terminate()
+            processes: list[BaseProcess] = []
+            # Registered after the sockets, so it unwinds first: signal the children,
+            # then close what the parent is still holding. A worker that fails to
+            # spawn would otherwise leave its siblings running
+            cleanup_stack.callback(_terminate, processes)
+            while active:
+                # Ignore SIGINT before creating the processes, so that they
+                # inherit the signal handling. This means that the shutdown
+                # function controls the shutdown.
+                signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-        exitcode = _join_exited(processes) if exitcode != 0 else exitcode
+                _populate(processes, config, worker_func, sockets, shutdown_event, ctx)
 
-        for sock in sockets.secure_sockets:
-            sock.close()
+                for signal_name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+                    if hasattr(signal, signal_name):
+                        signal.signal(getattr(signal, signal_name), shutdown)
 
-        for sock in sockets.insecure_sockets:
-            sock.close()
+                if config.use_reloader:
+                    files = files_to_watch()
+                    while True:
+                        finished = wait((process.sentinel for process in processes), timeout=1)
+                        updated = check_for_updates(files)
+                        if updated:
+                            shutdown_event.set()
+                            for process in processes:
+                                process.join()
+                            shutdown_event.clear()
+                            break
+                        if len(finished) > 0:
+                            break
+                else:
+                    wait(process.sentinel for process in processes)
 
-    return exitcode
+                exitcode = _join_exited(processes)
+                if exitcode != 0:
+                    shutdown_event.set()
+                    active = False
+
+            exitcode = _join_exited(processes) if exitcode != 0 else exitcode
+        return exitcode
 
 
 def _populate(  # noqa: PLR0913
@@ -151,6 +154,12 @@ def _populate(  # noqa: PLR0913
             time.sleep(0.1)
 
 
+def _terminate(processes: list[BaseProcess]) -> None:
+    """Signal every worker still running. Reaped ones have already left the list."""
+    for process in processes:
+        process.terminate()
+
+
 def _join_exited(processes: list[BaseProcess]) -> int:
     exitcode = 0
     for index in reversed(range(len(processes))):
@@ -163,7 +172,7 @@ def _join_exited(processes: list[BaseProcess]) -> int:
     return exitcode
 
 
-async def worker_serve(  # noqa: C901, PLR0915
+async def worker_serve(  # noqa: C901, PLR0912, PLR0915
     app: AppWrapper,
     config: Config,
     *,
@@ -185,7 +194,7 @@ async def worker_serve(  # noqa: C901, PLR0915
         await lifespan_tg.start(lifespan.handle_lifespan)
         await lifespan.wait_for_startup()
 
-        async with anyio.create_task_group() as server_tg, AsyncExitStack() as listener_stack:
+        async with anyio.create_task_group() as server_tg, AsyncExitStack() as socket_stack:
             if sockets is None:
                 sockets = config.create_sockets()
                 for sock in sockets.secure_sockets:
@@ -205,7 +214,7 @@ async def worker_serve(  # noqa: C901, PLR0915
                     True,  # noqa: FBT003
                     config.ssl_handshake_timeout,
                 )
-                listeners.append(await listener_stack.enter_async_context(secure_listener))
+                listeners.append(await socket_stack.enter_async_context(secure_listener))
                 bind = repr_socket_addr(secure_sock.family, secure_sock.getsockname())
                 url = f"https://{bind}"
                 binds.append(url)
@@ -214,11 +223,23 @@ async def worker_serve(  # noqa: C901, PLR0915
             for insecure_sock in sockets.insecure_sockets:
                 asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001  # ty:ignore[possibly-missing-attribute]
                 insecure_listener = asynclib.create_tcp_listener(insecure_sock)
-                listeners.append(await listener_stack.enter_async_context(insecure_listener))
+                listeners.append(await socket_stack.enter_async_context(insecure_listener))
                 bind = repr_socket_addr(insecure_sock.family, insecure_sock.getsockname())
                 url = f"http://{bind}"
                 binds.append(url)
                 await config.log.info("Running on %s (CTRL + C to quit)", url)
+
+            udp_servers = []
+            for quic_sock in sockets.quic_sockets:
+                udp_socket = await wrap_datagram_socket(quic_sock)
+                socket_stack.push_async_callback(udp_socket.aclose)
+                udp_servers.append(
+                    UDPServer(app, config, context, lifespan_state.copy(), udp_socket)
+                )
+                bind = repr_socket_addr(quic_sock.family, quic_sock.getsockname())
+                url = f"https://{bind}"
+                binds.append(url)
+                await config.log.info("Running on %s (QUIC, CTRL + C to quit)", url)
 
             task_status.started(binds)
             try:
@@ -226,6 +247,9 @@ async def worker_serve(  # noqa: C901, PLR0915
                     if shutdown_trigger is not None:
                         tg.start_soon(raise_shutdown, shutdown_trigger)
                     tg.start_soon(raise_shutdown, context.terminate.wait)
+
+                    for udp_server in udp_servers:
+                        await tg.start(udp_server.run)
 
                     for listener in listeners:
                         tg.start_soon(
