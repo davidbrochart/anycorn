@@ -13,17 +13,11 @@ its own.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 import anyio
 import httpx2
 import pytest
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
-    from contextlib import AbstractAsyncContextManager
-
-    from anyio.abc import Process
+from tests.e2e._subprocess import anycorn_subprocess
 
 APP_PATH = "tests/assets/daemon_app.py:app"
 DAEMON_FALSE_CONFIG = "file:tests/assets/config_daemon_false.py"
@@ -50,12 +44,11 @@ async def _fetch_body(base_url: str) -> str:
 
 @pytest.mark.anyio
 async def test_daemon_worker_cannot_spawn_children(
-    free_tcp_port: int,
-    anycorn_subprocess: Callable[[Sequence[str]], AbstractAsyncContextManager[Process]],
+    anyio_backend_name: str, free_tcp_port: int
 ) -> None:
     """Config.daemon defaults to True, matching what run.py used to hardcode."""
     args = [APP_PATH, "--bind", f"127.0.0.1:{free_tcp_port}", "--workers", "1"]
-    async with anycorn_subprocess(args):
+    async with anycorn_subprocess(args, anyio_backend_name=anyio_backend_name):
         body = await _fetch_body(f"http://127.0.0.1:{free_tcp_port}")
 
     assert body == "daemonic processes are not allowed to have children"
@@ -63,8 +56,7 @@ async def test_daemon_worker_cannot_spawn_children(
 
 @pytest.mark.anyio
 async def test_non_daemon_worker_can_spawn_children(
-    free_tcp_port: int,
-    anycorn_subprocess: Callable[[Sequence[str]], AbstractAsyncContextManager[Process]],
+    anyio_backend_name: str, free_tcp_port: int
 ) -> None:
     """With daemon=False configured, the worker is free to create its own children."""
     args = [
@@ -76,7 +68,7 @@ async def test_non_daemon_worker_can_spawn_children(
         "--config",
         DAEMON_FALSE_CONFIG,
     ]
-    async with anycorn_subprocess(args):
+    async with anycorn_subprocess(args, anyio_backend_name=anyio_backend_name):
         body = await _fetch_body(f"http://127.0.0.1:{free_tcp_port}")
 
     assert body == "ok"

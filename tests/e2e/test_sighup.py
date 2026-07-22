@@ -10,17 +10,12 @@ a real child process is the only way to see the reload actually happen.
 from __future__ import annotations
 
 import signal
-from typing import TYPE_CHECKING
 
 import anyio
 import httpx2
 import pytest
 
-if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
-    from contextlib import AbstractAsyncContextManager
-
-    from anyio.abc import Process
+from tests.e2e._subprocess import anycorn_subprocess
 
 APP_PATH = "tests/assets/pid_app.py:app"
 
@@ -52,13 +47,10 @@ async def _wait_for_pid(base_url: str, *, differs_from: str | None) -> str:
 
 
 @pytest.mark.anyio
-async def test_sighup_reloads_the_worker(
-    free_tcp_port: int,
-    anycorn_subprocess: Callable[[Sequence[str]], AbstractAsyncContextManager[Process]],
-) -> None:
+async def test_sighup_reloads_the_worker(anyio_backend_name: str, free_tcp_port: int) -> None:
     """A real SIGHUP to the anycorn parent process must gracefully restart its worker."""
     args = [APP_PATH, "--bind", f"127.0.0.1:{free_tcp_port}", "--workers", "1"]
-    async with anycorn_subprocess(args) as process:
+    async with anycorn_subprocess(args, anyio_backend_name=anyio_backend_name) as process:
         base_url = f"http://127.0.0.1:{free_tcp_port}"
         pid_before = await _wait_for_pid(base_url, differs_from=None)
         assert pid_before.isdigit()
