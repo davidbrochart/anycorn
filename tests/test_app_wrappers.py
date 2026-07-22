@@ -20,7 +20,7 @@ from anycorn.typing import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 
 def echo_body(environ: dict, start_response: Callable) -> list[bytes]:
@@ -183,6 +183,45 @@ async def test_no_start_response() -> None:
     }
     with pytest.raises(RuntimeError):
         await _run_app(app, scope)
+
+
+def deferred_start_response(_environ: dict, start_response: Callable) -> Iterator[bytes]:
+    # A generator function's body, including any call to start_response, does not
+    # run until the generator is first iterated - not when it is called.
+    start_response("200 OK", [("Content-Length", "5")])
+    yield b"hello"
+
+
+@pytest.mark.anyio
+async def test_wsgi_generator_app_defers_start_response() -> None:
+    """A generator-based WSGI app must not raise before it is ever iterated."""
+    app = WSGIWrapper(deferred_start_response, 2**16)
+    scope: HTTPScope = {
+        "http_version": "1.1",
+        "asgi": {},
+        "method": "GET",
+        "headers": [],
+        "path": "/",
+        "root_path": "/",
+        "query_string": b"a=b",
+        "raw_path": b"/",
+        "scheme": "http",
+        "type": "http",
+        "client": ("localhost", 80),
+        "server": None,
+        "extensions": {},
+        "state": ConnectionState({}),
+    }
+    messages = await _run_app(app, scope)
+    assert messages == [
+        {
+            "headers": [(b"content-length", b"5")],
+            "status": 200,
+            "type": "http.response.start",
+        },
+        {"body": b"hello", "type": "http.response.body", "more_body": True},
+        {"body": b"", "type": "http.response.body", "more_body": False},
+    ]
 
 
 def test_build_environ_encoding() -> None:

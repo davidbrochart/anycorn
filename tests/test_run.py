@@ -110,6 +110,29 @@ def test_run_closes_sockets_when_it_raises(
     assert [sock.fileno() for sock in opened] == [-1] * len(opened)
 
 
+def test_populate_sets_process_daemon_from_config() -> None:
+    """Each spawned worker process must pick up config.daemon, not a hardcoded value."""
+
+    class _Process:
+        def __init__(self, target: Any, kwargs: dict) -> None:  # noqa: ANN401
+            self.target = target
+            self.kwargs = kwargs
+            self.daemon = False
+
+        def start(self) -> None:
+            pass
+
+    class _Ctx:
+        def Process(self, *, target: Any, kwargs: dict) -> _Process:  # noqa: ANN401, N802
+            return _Process(target, kwargs)
+
+    config = Config()
+    config.daemon = False
+    processes: list = []
+    anycorn.run._populate(processes, config, lambda **_kwargs: None, None, None, _Ctx())  # type: ignore[arg-type]
+    assert processes[0].daemon is False
+
+
 def test_run_terminates_workers_when_it_raises(
     tls_certs: TLSCerts, monkeypatch: pytest.MonkeyPatch
 ) -> None:

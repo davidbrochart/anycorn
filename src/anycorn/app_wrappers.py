@@ -119,17 +119,20 @@ class WSGIWrapper:
 
         response_body = self.app(environ, start_response)
 
-        if not response_started:
-            msg = "WSGI app did not call start_response"
-            raise RuntimeError(msg)
-
-        send({"type": "http.response.start", "status": status_code, "headers": headers})
         try:
+            first_chunk = True
             for output in response_body:
+                if first_chunk:
+                    if not response_started:
+                        msg = "WSGI app did not call start_response"
+                        raise RuntimeError(msg)
+                    send({"type": "http.response.start", "status": status_code, "headers": headers})
+                    first_chunk = False
                 send({"type": "http.response.body", "body": output, "more_body": True})
         finally:
-            if hasattr(response_body, "close"):
-                response_body.close()
+            close = getattr(response_body, "close", None)
+            if close is not None:
+                close()
 
 
 def _build_environ(scope: HTTPScope, body: bytes) -> dict:

@@ -82,6 +82,34 @@ def test_main_cli_override(
     assert getattr(config, config_key) == set_value
 
 
+def test_daemon_cli_flag(monkeypatch: MonkeyPatch) -> None:
+    runner = CliRunner()
+    run_multiple = Mock()
+    monkeypatch.setattr(anycorn.__main__, "run", run_multiple)
+
+    runner.invoke(anycorn.__main__.main, ["--daemon", "asgi:App"])
+    run_multiple.assert_called()
+    config = run_multiple.call_args_list[0][0][0]
+    assert config.daemon is True
+
+
+def test_daemon_cli_omitted_preserves_existing_config(monkeypatch: MonkeyPatch) -> None:
+    runner = CliRunner()
+    run_multiple = Mock()
+    monkeypatch.setattr(anycorn.__main__, "run", run_multiple)
+
+    def _load_config(_path: str | None) -> Config:
+        config = Config()
+        config.daemon = False
+        return config
+
+    monkeypatch.setattr(anycorn.__main__, "_load_config", _load_config)
+    runner.invoke(anycorn.__main__.main, ["asgi:App"])
+    run_multiple.assert_called()
+    config = run_multiple.call_args_list[0][0][0]
+    assert config.daemon is False
+
+
 def test_verify_mode_conversion(monkeypatch: MonkeyPatch) -> None:
     runner = CliRunner()
     run_multiple = Mock()

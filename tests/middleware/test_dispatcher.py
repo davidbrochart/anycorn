@@ -22,7 +22,7 @@ async def test_dispatcher_middleware(http_scope: HTTPScope) -> None:
 
         async def __call__(self, scope: Scope, _receive: Callable, send: Callable) -> None:
             scope = cast("HTTPScope", scope)
-            response = f"{self.name}-{scope['path']}"
+            response = f"{self.name}-{scope['root_path']}-{scope['path']}"
             await send(
                 {
                     "type": "http.response.start",
@@ -40,14 +40,30 @@ async def test_dispatcher_middleware(http_scope: HTTPScope) -> None:
         nonlocal sent_events
         sent_events.append(message)
 
-    await app({**http_scope, "path": "/api/x/b"}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
+    scope1: HTTPScope = {**http_scope, "path": "/api/x/b"}  # type: ignore[typeddict-item, typeddict-unknown-key]
+    await app(scope1, None, send)  # type: ignore[arg-type]
     await app({**http_scope, "path": "/api/b"}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
     await app({**http_scope, "path": "/"}, None, send)  # type: ignore[typeddict-item, typeddict-unknown-key]
+
+    # the caller's scope must not be mutated in place
+    assert scope1["path"] == "/api/x/b"
+    assert scope1["root_path"] == ""
+
+    response1 = b"apix-/api/x-/api/x/b"
+    response2 = b"api-/api-/api/b"
     assert sent_events == [
-        {"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"7")]},
-        {"type": "http.response.body", "body": b"apix-/b"},
-        {"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"6")]},
-        {"type": "http.response.body", "body": b"api-/b"},
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-length", b"%d" % len(response1))],
+        },
+        {"type": "http.response.body", "body": response1},
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-length", b"%d" % len(response2))],
+        },
+        {"type": "http.response.body", "body": response2},
         {"type": "http.response.start", "status": 404, "headers": [(b"content-length", b"0")]},
         {"type": "http.response.body"},
     ]

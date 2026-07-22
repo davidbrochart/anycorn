@@ -48,7 +48,7 @@ if sys.version_info < (3, 11):
     from exceptiongroup import BaseExceptionGroup
 
 
-def run(config: Config) -> int:  # noqa: C901, PLR0912
+def run(config: Config) -> int:  # noqa: C901, PLR0912, PLR0915
     """Start the server, blocking until it exits, and return an exit code."""
     if config.pid_path is not None:
         write_pid_file(config.pid_path)
@@ -88,6 +88,12 @@ def run(config: Config) -> int:  # noqa: C901, PLR0912
                 shutdown_event.set()
                 active = False
 
+            def reload(*_args: Any) -> None:  # noqa: ANN401
+                shutdown_event.set()
+                for process in processes:
+                    process.join()
+                shutdown_event.clear()
+
             processes: list[BaseProcess] = []
             # Registered after the sockets, so it unwinds first: signal the children,
             # then close what the parent is still holding. A worker that fails to
@@ -105,16 +111,16 @@ def run(config: Config) -> int:  # noqa: C901, PLR0912
                     if hasattr(signal, signal_name):
                         signal.signal(getattr(signal, signal_name), shutdown)
 
+                if hasattr(signal, "SIGHUP"):
+                    signal.signal(signal.SIGHUP, reload)
+
                 if config.use_reloader:
                     files = files_to_watch()
                     while True:
                         finished = wait((process.sentinel for process in processes), timeout=1)
                         updated = check_for_updates(files)
                         if updated:
-                            shutdown_event.set()
-                            for process in processes:
-                                process.join()
-                            shutdown_event.clear()
+                            reload()
                             break
                         if len(finished) > 0:
                             break
@@ -143,7 +149,7 @@ def _populate(  # noqa: PLR0913
             target=worker_func,
             kwargs={"config": config, "shutdown_event": shutdown_event, "sockets": sockets},
         )
-        process.daemon = True
+        process.daemon = config.daemon
         try:
             process.start()
         except PicklingError as error:

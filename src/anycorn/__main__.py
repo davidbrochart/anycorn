@@ -70,6 +70,13 @@ def _load_config(config_path: str | None) -> Config:
     "or when prefixed with `python:` a Python module.",
 )
 @click.option(
+    "-D",
+    "--daemon",
+    help="Run the workers as daemons",
+    is_flag=True,
+    default=None,
+)
+@click.option(
     "--debug",
     help="Enable debug mode, i.e. extra logging and checks",
     is_flag=True,
@@ -222,6 +229,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     cert_reqs: int | None,
     ciphers: str | None,
     config: str | None,
+    daemon: bool | None,  # noqa: FBT001
     debug: bool,  # noqa: FBT001
     error_logfile: str | None,
     graceful_timeout: int | None,
@@ -269,6 +277,8 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
         cfg.cert_reqs = cert_reqs
     if ciphers is not None:
         cfg.ciphers = ciphers
+    if daemon is not None:
+        cfg.daemon = daemon
     cfg.debug = debug
     if error_logfile is not None:
         cfg.errorlog = error_logfile
