@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock, call
 
+import anyio
 import h11
 import pytest
 
@@ -16,11 +17,10 @@ from anycorn.protocol.h11 import H2CProtocolRequiredError, H2ProtocolAssumedErro
 from anycorn.protocol.http_stream import HTTPStream
 from anycorn.typing import ConnectionState
 from anycorn.typing import Event as IOEvent
+from anycorn.worker_context import EventWrapper
 
 if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch
-
-# from anycorn.worker_context import EventWrapper
 
 try:
     from unittest.mock import AsyncMock
@@ -30,6 +30,11 @@ except ImportError:
 
 
 BASIC_HEADERS = [("Host", "anycorn"), ("Connection", "close")]
+
+
+async def _handle_then_set(protocol: H11Protocol, data: bytes, done: anyio.Event) -> None:
+    await protocol.handle(RawData(data=data))
+    done.set()
 
 
 @pytest.fixture(name="protocol")
@@ -160,30 +165,37 @@ async def test_protocol_send_stream_closed(
     assert protocol.send.call_args_list[3] == call(expected)  # type: ignore[attr-defined]
 
 
-# FIXME
-# @pytest.mark.asyncio
-# async def test_protocol_instant_recycle(
-#     protocol: H11Protocol, event_loop: asyncio.AbstractEventLoop
-# ) -> None:
-#     # This test task acts as the asgi app, spawned tasks act as the
-#     # server.
-#     data = b"GET / HTTP/1.1\r\nHost: anycorn\r\n\r\n"
-#     # This test requires a real event as the handling should pause on
-#     # the instant receipt
-#     protocol.can_read = EventWrapper()
-#     task = event_loop.create_task(protocol.handle(RawData(data=data)))
-#     await asyncio.sleep(0)  # Switch to task
-#     assert protocol.stream is not None
-#     assert task.done()
-#     await protocol.stream_send(Response(stream_id=1, status_code=200, headers=[]))
-#     await protocol.stream_send(EndBody(stream_id=1))
-#     task = event_loop.create_task(protocol.handle(RawData(data=data)))
-#     await asyncio.sleep(0)  # Switch to task
-#     await protocol.stream_send(StreamClosed(stream_id=1))
-#     await asyncio.sleep(0)  # Switch to task
-#     # Should have recycled, i.e. a stream should exist
-#     assert protocol.stream is not None
-#     assert task.done()
+@pytest.mark.anyio
+async def test_protocol_instant_recycle(protocol: H11Protocol) -> None:
+    # This test task acts as the asgi app, spawned tasks act as the
+    # server.
+    data = b"GET / HTTP/1.1\r\nHost: anycorn\r\n\r\n"
+    # This test requires a real event as the handling should pause on
+    # the instant receipt
+    protocol.can_read = EventWrapper()
+
+    async with anyio.create_task_group() as task_group:
+        handled = anyio.Event()
+        task_group.start_soon(_handle_then_set, protocol, data, handled)
+        await anyio.wait_all_tasks_blocked()
+        assert protocol.stream is not None
+        assert handled.is_set()
+
+        await protocol.stream_send(Response(stream_id=1, status_code=200, headers=[]))
+        await protocol.stream_send(EndBody(stream_id=1))
+
+        # The second request arrives whilst the first stream is still open, so
+        # handling it must wait rather than drop it
+        recycled = anyio.Event()
+        task_group.start_soon(_handle_then_set, protocol, data, recycled)
+        await anyio.wait_all_tasks_blocked()
+        assert not recycled.is_set()
+
+        await protocol.stream_send(StreamClosed(stream_id=1))
+        await anyio.wait_all_tasks_blocked()
+        # Should have recycled, i.e. a stream should exist
+        assert protocol.stream is not None
+        assert recycled.is_set()
 
 
 @pytest.mark.anyio

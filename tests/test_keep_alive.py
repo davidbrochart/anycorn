@@ -6,22 +6,23 @@ from typing import TYPE_CHECKING
 
 import anyio
 import h11
+import pytest
 
-# import pytest
-# from anycorn.app_wrappers import ASGIWrapper
-# from anycorn.config import Config
-# from anycorn.tcp_server import TCPServer
+from anycorn.config import Config
+
+from .helpers import serve_in_memory
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from anycorn.typing import ASGIReceiveEvent, ASGISendEvent, Scope
 
-# from anycorn.worker_context import WorkerContext
-# from .helpers import MockSocket
+    from .helpers import MemoryClientStream
 
 
 KEEP_ALIVE_TIMEOUT = 0.01
+OK = 200
+PIPELINED_REQUESTS = 2
 REQUEST = h11.Request(method="GET", target="/", headers=[(b"host", b"anycorn")])
 
 
@@ -51,75 +52,76 @@ async def slow_framework(
             break
 
 
-# FIXME
-# @pytest.fixture(name="client_stream", scope="function")
-# def _client_stream(
-#     nursery: trio._core._run.Nursery,
-# ) -> Generator[trio.testing._memory_streams.MemorySendStream, None, None]:
-#     config = Config()
-#     config.keep_alive_timeout = KEEP_ALIVE_TIMEOUT
-#     client_stream, server_stream = trio.testing.memory_stream_pair()
-#     server_stream.socket = MockSocket()
-#     server = TCPServer(ASGIWrapper(slow_framework), config, WorkerContext(None), server_stream)
-#     nursery.start_soon(server.run)
-#     yield client_stream
+def _config() -> Config:
+    config = Config()
+    config.keep_alive_timeout = KEEP_ALIVE_TIMEOUT
+    return config
 
 
-# FIXME
-# @pytest.mark.trio
-# async def test_http1_keep_alive_pre_request(
-#     client_stream: trio.testing._memory_streams.MemorySendStream,
-# ) -> None:
-#     await client_stream.send_all(b"GET")
-#     await trio.sleep(2 * KEEP_ALIVE_TIMEOUT)
-#     # Only way to confirm closure is to invoke an error
-#     with pytest.raises(trio.BrokenResourceError):
-#         await client_stream.send_all(b"a")
+async def _read_response(client: h11.Connection, client_stream: MemoryClientStream) -> h11.Response:
+    """Read one complete response, returning its head."""
+    response = None
+    while True:
+        event = client.next_event()
+        if event is h11.NEED_DATA:
+            client.receive_data(await client_stream.receive_some(1024))
+        elif isinstance(event, h11.Response):
+            response = event
+        elif isinstance(event, h11.EndOfMessage):
+            assert response is not None
+            return response
 
 
-# FIXME
-# @pytest.mark.trio
-# async def test_http1_keep_alive_during(
-#     client_stream: trio.testing._memory_streams.MemorySendStream,
-# ) -> None:
-#     client = h11.Connection(h11.CLIENT)
-#     await client_stream.send_all(client.send(REQUEST))
-#     await trio.sleep(2 * KEEP_ALIVE_TIMEOUT)
-#     # Key is that this doesn't error
-#     await client_stream.send_all(client.send(h11.EndOfMessage()))
+@pytest.mark.anyio
+async def test_http1_keep_alive_pre_request() -> None:
+    """A connection idle before its request completes is closed."""
+    async with serve_in_memory(slow_framework, _config()) as client_stream:
+        await client_stream.send_all(b"GET")
+        await anyio.sleep(2 * KEEP_ALIVE_TIMEOUT)
+        # Only way to confirm closure is to invoke an error
+        with pytest.raises(anyio.BrokenResourceError):
+            await client_stream.send_all(b"a")
 
 
-# FIXME
-# @pytest.mark.trio
-# async def test_http1_keep_alive(
-#     client_stream: trio.testing._memory_streams.MemorySendStream,
-# ) -> None:
-#     client = h11.Connection(h11.CLIENT)
-#     await client_stream.send_all(client.send(REQUEST))
-#     await trio.sleep(2 * KEEP_ALIVE_TIMEOUT)
-#     await client_stream.send_all(client.send(h11.EndOfMessage()))
-#     while True:
-#         event = client.next_event()
-#         if event == h11.NEED_DATA:
-#             data = await client_stream.receive_some(2**16)
-#             client.receive_data(data)
-#         elif isinstance(event, h11.EndOfMessage):
-#             break
-#     client.start_next_cycle()
-#     await client_stream.send_all(client.send(REQUEST))
-#     await trio.sleep(2 * KEEP_ALIVE_TIMEOUT)
-#     # Key is that this doesn't error
-#     await client_stream.send_all(client.send(h11.EndOfMessage()))
+@pytest.mark.anyio
+async def test_http1_keep_alive_during() -> None:
+    """The idle timeout must not fire whilst the app is still working."""
+    async with serve_in_memory(slow_framework, _config()) as client_stream:
+        client = h11.Connection(h11.CLIENT)
+        await client_stream.send_all(client.send(REQUEST))
+        await client_stream.send_all(client.send(h11.EndOfMessage()))
+        # The framework sleeps for longer than the keep alive timeout before it
+        # responds, so a response arriving at all is the assertion
+        assert (await _read_response(client, client_stream)).status_code == OK
 
 
-# FIXME
-# @pytest.mark.trio
-# async def test_http1_keep_alive_pipelining(
-#     client_stream: trio.testing._memory_streams.MemorySendStream,
-# ) -> None:
-#     await client_stream.send_all(
-#         b"GET / HTTP/1.1\r\nHost: hypercorn\r\n\r\nGET / HTTP/1.1\r\nHost: hypercorn\r\n\r\n"
-#     )
-#     await client_stream.receive_some(2**16)
-#     await trio.sleep(2 * KEEP_ALIVE_TIMEOUT)
-#     await client_stream.send_all(b"")
+@pytest.mark.anyio
+async def test_http1_keep_alive() -> None:
+    """A second request on the same connection is served."""
+    async with serve_in_memory(slow_framework, _config()) as client_stream:
+        client = h11.Connection(h11.CLIENT)
+        await client_stream.send_all(client.send(REQUEST))
+        await client_stream.send_all(client.send(h11.EndOfMessage()))
+        assert (await _read_response(client, client_stream)).status_code == OK
+
+        client.start_next_cycle()
+        await client_stream.send_all(client.send(REQUEST))
+        await client_stream.send_all(client.send(h11.EndOfMessage()))
+        assert (await _read_response(client, client_stream)).status_code == OK
+
+
+@pytest.mark.anyio
+async def test_http1_keep_alive_pipelining() -> None:
+    """Two requests sent back to back are both served."""
+    async with serve_in_memory(slow_framework, _config()) as client_stream:
+        await client_stream.send_all(
+            b"GET / HTTP/1.1\r\nHost: anycorn\r\n\r\nGET / HTTP/1.1\r\nHost: anycorn\r\n\r\n"
+        )
+        # Read the responses off the wire rather than through h11, which drives one
+        # request/response cycle at a time and so cannot parse a pipelined pair
+        received = b""
+        with anyio.fail_after(5):
+            while received.count(b"HTTP/1.1 200") < PIPELINED_REQUESTS:
+                chunk = await client_stream.receive_some(1024)
+                assert chunk != b"", "connection closed before both responses arrived"
+                received += chunk
