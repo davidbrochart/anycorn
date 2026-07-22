@@ -139,7 +139,7 @@ class TCPServer:
             await self.stream.aclose()
 
     async def _idle_timeout(self) -> None:
-        with anyio.move_on_after(self.config.keep_alive_timeout):
+        with self.context.move_on_after(self.config.keep_alive_timeout):
             await self.context.terminated.wait()
 
         with anyio.CancelScope(shield=True):
