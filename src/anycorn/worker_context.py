@@ -40,7 +40,7 @@ class AnyioSingleTask:
         The new task is started *before* the old one is cancelled, not after. The
         QUIC connection timer reschedules itself - _handle_timer ends up calling
         restart on the very SingleTask running it - and cancelling the old handle
-        first tears the running task down at restart's own ``await``, before the
+        first tears the running task down at restart's own `await`, before the
         replacement is armed, so the timer would fire once and then stop. Starting
         the replacement first means the reschedule survives the self-cancel, which
         is what keeps QUIC retransmitting after a lost datagram.
