@@ -146,9 +146,8 @@ class WSGIWrapper:
                     first_chunk = False
                 send({"type": "http.response.body", "body": output, "more_body": True})
         finally:
-            close = getattr(response_body, "close", None)
-            if close is not None:
-                close()
+            if hasattr(response_body, "close"):
+                response_body.close()
 
 
 def _build_environ(scope: HTTPScope, body: bytes) -> dict:
