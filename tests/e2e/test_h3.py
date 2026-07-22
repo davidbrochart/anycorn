@@ -298,7 +298,10 @@ CONCURRENT_REQUESTS = 3
 
 
 def _rendezvous_app(
-    arrived: list[str], clients: list[tuple[str, int] | None], released: anyio.Event
+    arrived: list[str],
+    clients: list[tuple[str, int] | None],
+    states: list[int],
+    released: anyio.Event,
 ) -> Callable:
     """Return an app that answers nothing until every request has arrived.
 
@@ -311,6 +314,9 @@ def _rendezvous_app(
         assert scope["type"] == "http"
         arrived.append(scope["path"])
         clients.append(scope["client"])
+        # Identity, not contents: ASGI copies this per connection, so one namespace
+        # across all three is the server saying one connection carried them
+        states.append(id(scope["state"]))
         if len(arrived) == CONCURRENT_REQUESTS:
             released.set()
         await released.wait()
@@ -333,6 +339,7 @@ async def test_concurrent_requests_share_one_connection(
     """HTTP/3 multiplexes concurrent requests over a single QUIC connection."""
     arrived: list[str] = []
     clients: list[tuple[str, int] | None] = []
+    states: list[int] = []
     released = anyio.Event()
     responses: dict[str, str] = {}
 
@@ -341,7 +348,7 @@ async def test_concurrent_requests_share_one_connection(
             tls_certs,
             free_tcp_port,
             free_udp_port,
-            _rendezvous_app(arrived, clients, released),
+            _rendezvous_app(arrived, clients, states, released),
         ),
         _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
         httpx2.AsyncClient(transport=transport) as client,
@@ -361,10 +368,13 @@ async def test_concurrent_requests_share_one_connection(
     # Every request answered, and answered as itself rather than as a sibling
     assert responses == {path: path for path in paths}
     assert sorted(arrived) == sorted(paths)
-    # Every request came from the one client address, which is the socket the
-    # transport is actually holding - so they shared a UDP flow, seen server side
+    # One connection served all three, said by the server rather than inferred from
+    # the client: a fresh connection per request would be a namespace per request
+    assert len(set(states)) == 1
+    # The rest describes the harness rather than testing the server - a transport
+    # wraps one QUIC connection on one socket, so it could not have done otherwise.
+    # Kept because it is what makes the assertion above meaningful
     assert clients == [transport.local_address] * CONCURRENT_REQUESTS
-    # And a single handshake, so that flow carried one connection rather than three
     assert transport.handshakes == 1
 
 
