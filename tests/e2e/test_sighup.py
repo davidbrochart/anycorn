@@ -10,6 +10,7 @@ a real child process is the only way to see the reload actually happen.
 from __future__ import annotations
 
 import signal
+import sys
 
 import anyio
 import httpx2
@@ -47,6 +48,7 @@ async def _wait_for_pid(base_url: str, *, differs_from: str | None) -> str:
 
 
 @pytest.mark.anyio
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGHUP does not exist on Windows.")
 async def test_sighup_reloads_the_worker(anyio_backend_name: str, free_tcp_port: int) -> None:
     """A real SIGHUP to the anycorn parent process must gracefully restart its worker."""
     args = [APP_PATH, "--bind", f"127.0.0.1:{free_tcp_port}", "--workers", "1"]
