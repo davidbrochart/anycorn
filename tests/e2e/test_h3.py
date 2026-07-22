@@ -300,6 +300,7 @@ CONCURRENT_REQUESTS = 3
 def _rendezvous_app(
     arrived: list[str],
     clients: list[tuple[str, int] | None],
+    states: list[dict],
     released: anyio.Event,
 ) -> Callable:
     """Return an app that answers nothing until every request has arrived.
@@ -313,6 +314,10 @@ def _rendezvous_app(
         assert scope["type"] == "http"
         arrived.append(scope["path"])
         clients.append(scope["client"])
+        # Held rather than recorded by id: a freed namespace's address can be handed
+        # straight to the next one, so ids only tell them apart whilst all are alive
+        states.append(scope["state"])
+        scope["state"]["secret"] = scope["path"]
         if len(arrived) == CONCURRENT_REQUESTS:
             released.set()
         await released.wait()
@@ -341,6 +346,7 @@ async def test_concurrent_requests_are_multiplexed(
     """
     arrived: list[str] = []
     clients: list[tuple[str, int] | None] = []
+    states: list[dict] = []
     released = anyio.Event()
     responses: dict[str, str] = {}
 
@@ -349,7 +355,7 @@ async def test_concurrent_requests_are_multiplexed(
             tls_certs,
             free_tcp_port,
             free_udp_port,
-            _rendezvous_app(arrived, clients, released),
+            _rendezvous_app(arrived, clients, states, released),
         ),
         _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
         httpx2.AsyncClient(transport=transport) as client,
@@ -369,6 +375,11 @@ async def test_concurrent_requests_are_multiplexed(
     # Every request answered, and answered as itself rather than as a sibling
     assert responses == {path: path for path in paths}
     assert sorted(arrived) == sorted(paths)
+    # Sharing the connection is not sharing a namespace: each was handed its own, and
+    # all three were in flight together, so any sharing would have been visible
+    assert len({id(state) for state in states}) == CONCURRENT_REQUESTS
+    assert [state["secret"] for state in states] == arrived
+
     # The conditions the rendezvous was met under: one socket, one handshake, so the
     # three were carried together over one connection rather than spread across three
     assert clients == [transport.local_address] * CONCURRENT_REQUESTS
