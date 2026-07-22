@@ -6,6 +6,7 @@ from typing import Any, cast
 from unittest.mock import Mock, call
 
 import anyio
+import anyio.lowlevel
 import pytest
 from wsproto.events import BytesMessage, TextMessage
 
@@ -489,9 +490,37 @@ async def test_send_connection(stream: WSStream) -> None:
     ]
 
 
+class _PingClock:
+    """Stands in for the ping loop's sleep, so the test decides how often it wakes.
+
+    Lets a fixed number of intervals elapse instantly and then parks, which pins the
+    number of pings to exactly what the test asked for. Sleeping for real instead
+    would tie the count to how fast the machine happens to be.
+    """
+
+    def __init__(self, intervals: int) -> None:
+        self.waits: list[float] = []
+        self._remaining = intervals
+        self._released = anyio.Event()
+
+    async def sleep(self, wait: float) -> None:
+        self.waits.append(wait)
+        if self._remaining > 0:
+            self._remaining -= 1
+            await anyio.lowlevel.checkpoint()
+            return
+        await self._released.wait()
+
+    def release(self) -> None:
+        """Let the parked sleep return, so the loop can notice the stream closed."""
+        self._released.set()
+
+
 @pytest.mark.anyio
 async def test_pings(stream: WSStream) -> None:
     stream.config.websocket_ping_interval = 0.1
+    clock = _PingClock(intervals=1)
+    stream.context.sleep = clock.sleep  # type: ignore[method-assign]
     await stream.handle(
         Request(
             stream_id=1,
@@ -506,13 +535,16 @@ async def test_pings(stream: WSStream) -> None:
         stream.task_group = task_group
         await stream.app_send(cast("WebsocketAcceptEvent", {"type": "websocket.accept"}))
         stream.app_put = AsyncMock()
-        await anyio.sleep(0.15)
+        # One interval elapses, so the loop pings, waits, pings, and then parks
+        await anyio.wait_all_tasks_blocked()
         assert stream.send.call_args_list == [  # type: ignore[attr-defined]
             call(Response(stream_id=1, headers=[], status_code=200)),
             call(Data(stream_id=1, data=b"\x89\x00")),
             call(Data(stream_id=1, data=b"\x89\x00")),
         ]
+        assert clock.waits == [0.1, 0.1]
         await stream.handle(StreamClosed(stream_id=1))
+        clock.release()
 
 
 @pytest.mark.anyio
