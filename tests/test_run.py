@@ -33,6 +33,32 @@ async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
     await send({"type": "http.response.body", "body": b""})
 
 
+class _FakeSignalModule:
+    """Stands in for the real ``signal`` module, scoped to run.py's own namespace.
+
+    Any test that drives run() into its multiprocess branch needs this: the very
+    first thing that branch does, before calling _populate or anything else, is
+    a real ``signal.signal(SIGINT, SIG_IGN)``. Replacing the real, process-wide
+    module's ``.signal`` attribute would intercept calls from unrelated code
+    running during the test too, and a signal handler actually installed on the
+    real module would outlive monkeypatch's undo (it only reverts attribute
+    assignments, not OS-level signal state). Rebinding the ``signal`` name
+    inside anycorn.run's own namespace avoids both: the real module, and every
+    other test, are never touched.
+    """
+
+    SIGHUP = signal.SIGHUP
+    SIGINT = signal.SIGINT
+    SIGTERM = signal.SIGTERM
+    SIG_IGN = signal.SIG_IGN
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, Callable]] = []
+
+    def signal(self, signalnum: int, handler: Callable) -> None:
+        self.calls.append((signalnum, handler))
+
+
 @pytest.mark.anyio
 async def test_worker_serve_closes_quic_sockets(tls_certs: TLSCerts) -> None:
     """QUIC sockets are opened by create_sockets(), so the worker must close them."""
@@ -163,29 +189,6 @@ def test_run_registers_sighup_to_reload_workers(
         if not processes:
             processes.append(_Process())
 
-    class _FakeSignalModule:
-        """Stands in for the real ``signal`` module, scoped to run.py's own namespace.
-
-        run() must never see a genuine ``signal.signal`` call here: replacing the
-        real, process-wide module's ``.signal`` attribute would intercept calls
-        from unrelated code running during this test too, and a signal handler
-        actually installed on the real module would outlive monkeypatch's undo
-        (it only reverts attribute assignments, not OS-level signal state).
-        Rebinding the ``signal`` name inside anycorn.run's own namespace avoids
-        both: the real module, and every other test, are never touched.
-        """
-
-        SIGHUP = signal.SIGHUP
-        SIGINT = signal.SIGINT
-        SIGTERM = signal.SIGTERM
-        SIG_IGN = signal.SIG_IGN
-
-        def __init__(self) -> None:
-            self.calls: list[tuple[int, Callable]] = []
-
-        def signal(self, signalnum: int, handler: Callable) -> None:
-            self.calls.append((signalnum, handler))
-
     fake_signal = _FakeSignalModule()
 
     monkeypatch.setattr(anycorn.run, "_populate", _populate)
@@ -230,9 +233,13 @@ def test_run_terminates_workers_when_it_raises(
         processes.append(_Process())
         raise PicklingError
 
+    fake_signal = _FakeSignalModule()
+
     monkeypatch.setattr(anycorn.run, "_populate", _spawn_then_fail)
+    monkeypatch.setattr(anycorn.run, "signal", fake_signal)
 
     with pytest.raises(PicklingError):
         run(config)
 
+    assert signal.signal is not fake_signal.signal  # the real module was never touched
     assert len(terminated) == 1
