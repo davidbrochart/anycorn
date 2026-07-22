@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import socket
 from functools import partial
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 import anyio
@@ -19,7 +18,8 @@ from anycorn.udp_server import UDPServer
 from anycorn.utils import wrap_app
 from anycorn.worker_context import WorkerContext
 
-ASSETS = Path(__file__).parent / "assets"
+if TYPE_CHECKING:
+    from tests.conftest import TLSCerts
 
 
 async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
@@ -29,13 +29,13 @@ async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
 
 
 @pytest.mark.anyio
-async def test_worker_serve_closes_quic_sockets() -> None:
+async def test_worker_serve_closes_quic_sockets(tls_certs: TLSCerts) -> None:
     """QUIC sockets are opened by create_sockets(), so the worker must close them."""
     config = Config()
     config.bind = ["127.0.0.1:0"]
     config.quic_bind = ["127.0.0.1:0"]
-    config.certfile = str(ASSETS / "cert.pem")
-    config.keyfile = str(ASSETS / "key.pem")
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
 
     sockets = config.create_sockets()
     quic_sockets = list(sockets.quic_sockets)

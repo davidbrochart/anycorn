@@ -1,29 +1,39 @@
-"""End-to-end HTTP/3 tests, driven by aioquic's client."""
+"""End-to-end HTTP/3 tests, driven by httpx2 over aioquic."""
 
 from __future__ import annotations
 
-import ssl
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+import socket
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, Any
 
 import anyio
+import httpx2
 import pytest
-from aioquic.asyncio.client import connect
-from aioquic.asyncio.protocol import QuicConnectionProtocol
 from aioquic.h3.connection import H3_ALPN, H3Connection
 from aioquic.h3.events import DataReceived, HeadersReceived
 from aioquic.quic.configuration import QuicConfiguration
+from aioquic.quic.connection import QuicConnection
+from aioquic.quic.events import ConnectionTerminated, HandshakeCompleted
 
 import anycorn
 from anycorn.config import Config
+from anycorn.datagram import wrap_datagram_socket
 
 if TYPE_CHECKING:
-    import asyncio
+    from collections.abc import AsyncIterator
 
-    from aioquic.quic.events import QuicEvent
+    from aioquic.h3.events import H3Event
 
-ASSETS = Path(__file__).parent.parent / "assets"
-BIND = "127.0.0.1:4433"
+    from anycorn.datagram import DatagramSocket
+    from tests.conftest import TLSCerts
+
+HOST = "127.0.0.1"
+PORT = 4433
+BIND = f"{HOST}:{PORT}"
+# QUIC drives loss recovery off timers, so one has to be serviced even when no
+# datagram arrives. Polling is coarser than the server's restartable timer task but
+# far harder to get wrong, and on loopback the difference does not show.
+TIMER_INTERVAL = 0.005
 
 
 async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
@@ -38,74 +48,240 @@ async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
     await send({"type": "http.response.body", "body": b"Hello, h3!"})
 
 
-class _H3Client(QuicConnectionProtocol):
-    """The smallest HTTP/3 client that can make one request."""
+class _H3ResponseStream(httpx2.AsyncByteStream):
+    def __init__(self, aiterator: AsyncIterator[bytes]) -> None:
+        self._aiterator = aiterator
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:  # noqa: ANN401
-        super().__init__(*args, **kwargs)
-        self._http = H3Connection(self._quic)
-        self._body = bytearray()
-        self._headers: list[tuple[bytes, bytes]] = []
-        self._done: asyncio.Future[None] = self._loop.create_future()
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        async for part in self._aiterator:
+            yield part
 
-    def quic_event_received(self, event: QuicEvent) -> None:
-        for h3_event in self._http.handle_event(event):
-            if isinstance(h3_event, HeadersReceived):
-                self._headers = h3_event.headers
-            elif isinstance(h3_event, DataReceived):
-                self._body.extend(h3_event.data)
 
-            if getattr(h3_event, "stream_ended", False) and not self._done.done():
-                self._done.set_result(None)
+class _H3Transport(httpx2.AsyncBaseTransport):
+    """An httpx2 transport speaking HTTP/3, so a real client drives the server.
 
-    async def get(self, path: str) -> tuple[list[tuple[bytes, bytes]], bytes]:
+    aioquic ships one of these in its examples, but it subclasses
+    `QuicConnectionProtocol` and so is asyncio only:
+    https://github.com/aiortc/aioquic/blob/main/examples/httpx_client.py
+
+    The request handling here follows that example. What differs is underneath it:
+    aioquic's `QuicConnection` is sans-io, so this drives it over an anyio datagram
+    socket exactly as `QuicProtocol` does server-side, which is what lets these tests
+    run on trio as well as asyncio. The socket comes from `wrap_datagram_socket()`
+    rather than anyio directly, so the client gets the same win32 asyncio treatment
+    the server does - anyio's UDP `aclose()` otherwise hangs on the proactor loop.
+    """
+
+    def __init__(
+        self, quic: QuicConnection, sock: DatagramSocket, address: tuple[str, int]
+    ) -> None:
+        self._quic = quic
+        self._socket = sock
+        self._address = address
+        self._http: H3Connection | None = None
+        self._read_queue: dict[int, list[H3Event]] = {}
+        self._read_ready: dict[int, anyio.Event] = {}
+        self._connected = anyio.Event()
+        self._terminated = anyio.Event()
+        self._send_lock = anyio.Lock()
+
+    @classmethod
+    @asynccontextmanager
+    async def connect(cls, host: str, port: int, certs: TLSCerts) -> AsyncIterator[_H3Transport]:
+        """Open a QUIC connection, yielding a transport once the handshake lands."""
+        configuration = QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN)
+        # Verify the chain rather than turning verification off: the handshake is
+        # part of what these tests are covering
+        configuration.load_verify_locations(cafile=str(certs.cafile))
+        configuration.server_name = certs.hostname
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind((HOST, 0))
+        sock.setblocking(False)  # noqa: FBT003
+        datagram_socket = await wrap_datagram_socket(sock)
+
+        quic = QuicConnection(configuration=configuration)
+        self = cls(quic, datagram_socket, (host, port))
+        try:
+            async with anyio.create_task_group() as task_group:
+                quic.connect(self._address, now=anyio.current_time())
+                task_group.start_soon(self._receive_loop)
+                task_group.start_soon(self._timer_loop)
+                await self._transmit()
+
+                with anyio.fail_after(10):
+                    await self._connected.wait()
+                self._http = H3Connection(quic)
+                await self._transmit()
+
+                try:
+                    yield self
+                finally:
+                    quic.close()
+                    with anyio.CancelScope(shield=True):
+                        await self._transmit()
+                    task_group.cancel_scope.cancel()
+        finally:
+            await datagram_socket.aclose()
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        assert self._http is not None
         stream_id = self._quic.get_next_available_stream_id()
+        self._read_queue[stream_id] = []
+        self._read_ready[stream_id] = anyio.Event()
+
         self._http.send_headers(
-            stream_id,
-            [
-                (b":method", b"GET"),
-                (b":scheme", b"https"),
-                (b":authority", BIND.encode()),
-                (b":path", path.encode()),
+            stream_id=stream_id,
+            headers=[
+                (b":method", request.method.encode()),
+                (b":scheme", request.url.raw_scheme),
+                (b":authority", request.url.netloc),
+                (b":path", request.url.raw_path),
+                *[
+                    (name.lower(), value)
+                    for (name, value) in request.headers.raw
+                    if name.lower() not in {b"connection", b"host"}
+                ],
             ],
-            end_stream=True,
         )
-        self.transmit()
-        await self._done
-        return self._headers, bytes(self._body)
+        async for data in request.stream:  # type: ignore[union-attr]
+            self._http.send_data(stream_id=stream_id, data=data, end_stream=False)
+        self._http.send_data(stream_id=stream_id, data=b"", end_stream=True)
+        await self._transmit()
+
+        status_code, headers, stream_ended = await self._receive_response(stream_id)
+        return httpx2.Response(
+            status_code,
+            headers=headers,
+            stream=_H3ResponseStream(self._receive_response_data(stream_id, stream_ended)),
+            extensions={"http_version": b"HTTP/3"},
+        )
+
+    async def _receive_loop(self) -> None:
+        while True:
+            try:
+                data, address = await self._socket.receive()
+            except (anyio.ClosedResourceError, anyio.EndOfStream):
+                return
+            self._quic.receive_datagram(data, address, now=anyio.current_time())
+            await self._process()
+
+    async def _timer_loop(self) -> None:
+        while True:
+            await anyio.sleep(TIMER_INTERVAL)
+            timer = self._quic.get_timer()
+            if timer is not None and anyio.current_time() >= timer:
+                self._quic.handle_timer(now=anyio.current_time())
+                await self._process()
+
+    async def _process(self) -> None:
+        """Drain QUIC events into the HTTP layer, then flush whatever they produced."""
+        event = self._quic.next_event()
+        while event is not None:
+            if isinstance(event, HandshakeCompleted):
+                self._connected.set()
+            elif isinstance(event, ConnectionTerminated):
+                self._terminated.set()
+                for ready in self._read_ready.values():
+                    ready.set()
+
+            if self._http is not None:
+                for h3_event in self._http.handle_event(event):
+                    self._queue_http_event(h3_event)
+
+            event = self._quic.next_event()
+
+        await self._transmit()
+
+    def _queue_http_event(self, event: H3Event) -> None:
+        if isinstance(event, (HeadersReceived, DataReceived)):
+            queue = self._read_queue.get(event.stream_id)
+            if queue is not None:
+                queue.append(event)
+                self._read_ready[event.stream_id].set()
+
+    async def _transmit(self) -> None:
+        # Sends come from the read loop and the timer as well as from requests, and
+        # anyio permits one writer to a socket at a time
+        async with self._send_lock:
+            for data, address in self._quic.datagrams_to_send(now=anyio.current_time()):
+                await self._socket.sendto(data, address[0], address[1])
+
+    async def _receive_response(self, stream_id: int) -> tuple[int, list, bool]:
+        while True:
+            event = await self._wait_for_http_event(stream_id)
+            if isinstance(event, HeadersReceived):
+                break
+
+        headers = []
+        status_code = 0
+        for header, value in event.headers:
+            if header == b":status":
+                status_code = int(value.decode())
+            else:
+                headers.append((header, value))
+        return status_code, headers, event.stream_ended
+
+    async def _receive_response_data(
+        self,
+        stream_id: int,
+        stream_ended: bool,  # noqa: FBT001
+    ) -> AsyncIterator[bytes]:
+        while not stream_ended:
+            event = await self._wait_for_http_event(stream_id)
+            if isinstance(event, (DataReceived, HeadersReceived)):
+                stream_ended = event.stream_ended
+            if isinstance(event, DataReceived):
+                yield event.data
+
+    async def _wait_for_http_event(self, stream_id: int) -> H3Event:
+        while not self._read_queue[stream_id]:
+            if self._terminated.is_set():
+                msg = "connection terminated before the response completed"
+                raise AssertionError(msg)
+            await self._read_ready[stream_id].wait()
+        event = self._read_queue[stream_id].pop(0)
+        if not self._read_queue[stream_id]:
+            self._read_ready[stream_id] = anyio.Event()
+        return event
 
 
-@pytest.mark.anyio
-@pytest.mark.parametrize("anyio_backend", ["asyncio"])  # aioquic's client is asyncio only
-async def test_h3_request() -> None:
+@asynccontextmanager
+async def _serving(certs: TLSCerts) -> AsyncIterator[None]:
+    """Run the worker on the QUIC bind, shutting it down on the way out."""
     config = Config()
     config.bind = [BIND]
     config.quic_bind = [BIND]
-    config.certfile = str(ASSETS / "cert.pem")
-    config.keyfile = str(ASSETS / "key.pem")
+    config.certfile = str(certs.certfile)
+    config.keyfile = str(certs.keyfile)
     config.accesslog = "-"
     config.errorlog = "-"
 
-    client_config = QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN)
-    client_config.verify_mode = ssl.CERT_NONE
-
     shutdown = anyio.Event()
-    async with anyio.create_task_group() as tg:
-        binds = await tg.start(
+    async with anyio.create_task_group() as task_group:
+        binds = await task_group.start(
             lambda *, task_status: anycorn.serve(
                 app, config, shutdown_trigger=shutdown.wait, task_status=task_status
             )
         )
-        assert any("4433" in bind for bind in binds)
+        assert any(str(PORT) in bind for bind in binds)
+        try:
+            yield
+        finally:
+            shutdown.set()
 
-        async with connect(
-            "127.0.0.1", 4433, configuration=client_config, create_protocol=_H3Client
-        ) as connection:
-            client = cast("_H3Client", connection)
-            with anyio.fail_after(10):
-                headers, body = await client.get("/")
 
-        shutdown.set()
+@pytest.mark.anyio
+async def test_h3_request(tls_certs: TLSCerts) -> None:
+    async with (
+        _serving(tls_certs),
+        _H3Transport.connect(HOST, PORT, tls_certs) as transport,
+        httpx2.AsyncClient(transport=transport) as client,
+    ):
+        with anyio.fail_after(10):
+            response = await client.get(f"https://{BIND}/")
 
-    assert dict(headers)[b":status"] == b"200"
-    assert body == b"Hello, h3!"
+    assert response.status_code == 200  # noqa: PLR2004
+    assert response.text == "Hello, h3!"
+    assert response.headers["content-type"] == "text/plain"
+    assert response.extensions["http_version"] == b"HTTP/3"

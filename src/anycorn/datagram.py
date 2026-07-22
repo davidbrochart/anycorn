@@ -137,7 +137,8 @@ class _AnyioDatagramSocket:
 
     async def send(self, data: bytes) -> None:
         assert self._remote is not None
-        await self._socket.sendto(data, *self._remote)
+        host, port = self._remote
+        await self._socket.sendto(data, host, port)
 
     async def sendto(self, data: bytes, host: str, port: int) -> None:
         await self._socket.sendto(data, host, port)
