@@ -1,5 +1,9 @@
 # Version history
 
+## 0.19.0
+
+- Port behavioral fixes and CLI features from hypercorn v0.18.0 that anycorn was missing.
+
 ## 0.18.7
 
 - Close leaked sockets, streams and logger resources.
