@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from functools import partial
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -18,6 +18,13 @@ if TYPE_CHECKING:
         Scope,
         WSGIFramework,
     )
+
+
+@runtime_checkable
+class _SupportsClose(Protocol):
+    """A WSGI iterable that carries the optional close() hook from PEP 3333."""
+
+    def close(self) -> None: ...
 
 
 class InvalidPathError(Exception):
@@ -146,9 +153,8 @@ class WSGIWrapper:
                     first_chunk = False
                 send({"type": "http.response.body", "body": output, "more_body": True})
         finally:
-            close = getattr(response_body, "close", None)
-            if close is not None:
-                close()
+            if isinstance(response_body, _SupportsClose):
+                response_body.close()
 
 
 def _build_environ(scope: HTTPScope, body: bytes) -> dict:
