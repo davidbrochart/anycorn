@@ -174,11 +174,13 @@ async def test_http2_websocket() -> None:
         h2_client.send_data(stream_id, client.send(wsproto.events.BytesMessage(data=SANITY_BODY)))
         await client_stream.send_all(h2_client.data_to_send())
         events = h2_client.receive_data(await client_stream.receive_some(1024))
+        assert isinstance(events[0], h2.events.DataReceived)
         client.receive_data(events[0].data)
         assert list(client.events()) == [wsproto.events.TextMessage(data="Hello & Goodbye")]
 
         h2_client.send_data(stream_id, client.send(wsproto.events.CloseConnection(code=1000)))
         await client_stream.send_all(h2_client.data_to_send())
         events = h2_client.receive_data(await client_stream.receive_some(1024))
+        assert isinstance(events[0], h2.events.DataReceived)
         client.receive_data(events[0].data)
         assert list(client.events()) == [wsproto.events.CloseConnection(code=1000, reason="")]
