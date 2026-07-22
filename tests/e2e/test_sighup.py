@@ -10,15 +10,18 @@ a real child process is the only way to see the reload actually happen.
 from __future__ import annotations
 
 import signal
-import subprocess
-import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import anyio
 import httpx2
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from contextlib import AbstractAsyncContextManager
+
+    from anyio.abc import Process
+
 APP_PATH = "tests/assets/pid_app.py:app"
 
 
@@ -49,7 +52,11 @@ async def _wait_for_pid(base_url: str, *, differs_from: str | None) -> str:
 
 
 @pytest.mark.anyio
-async def test_sighup_reloads_the_worker(anyio_backend_name: str, free_tcp_port: int) -> None:
+async def test_sighup_reloads_the_worker(
+    anyio_backend_name: str,
+    free_tcp_port: int,
+    anycorn_subprocess: Callable[[Sequence[str]], AbstractAsyncContextManager[Process]],
+) -> None:
     """A real SIGHUP to the anycorn parent process must gracefully restart its worker.
 
     The spawned worker's own event loop backend is pinned to match this test's
@@ -57,24 +64,16 @@ async def test_sighup_reloads_the_worker(anyio_backend_name: str, free_tcp_port:
     end-to-end instead of always falling back to anycorn's asyncio default
     regardless of which backend the test itself is using.
     """
-    process = await anyio.open_process(
-        [
-            sys.executable,
-            "-m",
-            "anycorn",
-            APP_PATH,
-            "--bind",
-            f"127.0.0.1:{free_tcp_port}",
-            "--workers",
-            "1",
-            "--worker-class",
-            anyio_backend_name,
-        ],
-        cwd=str(REPO_ROOT),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
+    args = [
+        APP_PATH,
+        "--bind",
+        f"127.0.0.1:{free_tcp_port}",
+        "--workers",
+        "1",
+        "--worker-class",
+        anyio_backend_name,
+    ]
+    async with anycorn_subprocess(args) as process:
         base_url = f"http://127.0.0.1:{free_tcp_port}"
         pid_before = await _wait_for_pid(base_url, differs_from=None)
         assert pid_before.isdigit()
@@ -84,11 +83,3 @@ async def test_sighup_reloads_the_worker(anyio_backend_name: str, free_tcp_port:
         pid_after = await _wait_for_pid(base_url, differs_from=pid_before)
         assert pid_after.isdigit()
         assert pid_after != pid_before
-    finally:
-        process.terminate()
-        with anyio.move_on_after(5):
-            await process.wait()
-        if process.returncode is None:
-            process.kill()
-            with anyio.move_on_after(5):
-                await process.wait()
