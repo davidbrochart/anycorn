@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import socket
 from functools import partial
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock
 
 import anyio
 import pytest
 
 from anycorn.config import Config
+from anycorn.datagram import wrap_datagram_socket
+from anycorn.events import RawData
 from anycorn.run import worker_serve
+from anycorn.udp_server import UDPServer
 from anycorn.utils import wrap_app
+from anycorn.worker_context import WorkerContext
 
 ASSETS = Path(__file__).parent / "assets"
 
@@ -52,3 +58,28 @@ async def test_worker_serve_closes_quic_sockets() -> None:
         shutdown.set()
 
     assert [sock.fileno() for sock in quic_sockets] == [-1] * len(quic_sockets)
+
+
+@pytest.mark.anyio
+async def test_udp_server_serialises_concurrent_sends() -> None:
+    """QUIC sends from several tasks at once must not collide on the socket.
+
+    anyio guards a socket against concurrent writers rather than interleaving them,
+    so the timer and stream tasks sending alongside the read loop would otherwise
+    raise `BusyResourceError` at whichever one lost the race.
+    """
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.bind(("127.0.0.1", 0))
+    sock.setblocking(False)  # noqa: FBT003
+    datagram_socket = await wrap_datagram_socket(sock)
+    server = UDPServer(AsyncMock(), Config(), WorkerContext(None), {}, datagram_socket)
+
+    try:
+        async with anyio.create_task_group() as task_group:
+            for _ in range(20):
+                task_group.start_soon(
+                    server.protocol_send,
+                    RawData(data=b"x" * 1024, address=("127.0.0.1", 9999)),
+                )
+    finally:
+        await datagram_socket.aclose()

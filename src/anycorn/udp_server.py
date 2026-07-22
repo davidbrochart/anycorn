@@ -34,6 +34,10 @@ class UDPServer:
         self.context = context
         self.socket = socket
         self.state = state
+        # QUIC drives sends from the timer and stream tasks as well as from the read
+        # loop, and anyio permits one writer to a socket at a time - concurrent sends
+        # raise BusyResourceError rather than interleaving. Mirrors TCPServer.
+        self.send_lock = anyio.Lock()
 
     async def run(
         self, *, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED
@@ -64,4 +68,5 @@ class UDPServer:
         """Forward a protocol event back to the UDP socket."""
         if isinstance(event, RawData):
             assert event.address is not None
-            await self.socket.sendto(event.data, event.address[0], event.address[1])
+            async with self.send_lock:
+                await self.socket.sendto(event.data, event.address[0], event.address[1])
