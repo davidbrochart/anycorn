@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 @asynccontextmanager
 async def anycorn_subprocess(
-    args: Sequence[str], *, anyio_backend_name: str, creationflags: int = 0
+    args: Sequence[str], *, anyio_backend_name: str
 ) -> AsyncIterator[Process]:
     """Run ``python -m anycorn <args>`` as a real subprocess, cleaned up on exit.
 
@@ -34,17 +34,12 @@ async def anycorn_subprocess(
     silently skipping half the coverage a trio-parametrised run is meant to give.
     anyio_backend_name is a required keyword rather than pulled from a fixture, so
     a caller that forgets it fails immediately instead of silently getting asyncio.
-
-    ``creationflags`` is only meaningful on Windows (e.g. ``CREATE_NEW_PROCESS_GROUP``,
-    needed so a later ``send_signal(CTRL_BREAK_EVENT)`` targets just this process
-    rather than every process sharing the test runner's console).
     """
     process = await anyio.open_process(
         [sys.executable, "-m", "anycorn", *args, "--worker-class", anyio_backend_name],
         cwd=str(REPO_ROOT),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        creationflags=creationflags,
     )
     try:
         yield process

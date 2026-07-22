@@ -25,7 +25,7 @@ Popen.send_signal(SIGTERM) maps straight to TerminateProcess there, bypassing
 any handler. test_workers_0_ctrl_break_shutdown is the Windows-only analogue,
 using CTRL_BREAK_EVENT/SIGBREAK - the one console signal Windows lets you
 target at just the child process (see its docstring for why SIGINT itself
-can't be tested this way).
+can't be tested this way, and why it spawns the child differently).
 """
 
 from __future__ import annotations
@@ -33,12 +33,18 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 import anyio
+import anyio.to_thread
 import httpx2
 import pytest
 
-from tests.e2e._subprocess import anycorn_subprocess
+from tests.e2e._subprocess import REPO_ROOT, anycorn_subprocess
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Sequence
 
 APP_PATH = "tests/assets/pid_app.py:app"
 
@@ -86,6 +92,52 @@ async def test_workers_0_sigterm_shutdown(anyio_backend_name: str, free_tcp_port
             assert returncode != 0
 
 
+def _wait_bounded(process: subprocess.Popen[bytes], timeout: float) -> int:
+    try:
+        return process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        return process.wait()
+
+
+@asynccontextmanager
+async def _new_process_group_subprocess(
+    args: Sequence[str], *, anyio_backend_name: str
+) -> AsyncIterator[subprocess.Popen[bytes]]:
+    """Spawn ``python -m anycorn <args>`` in its own console process group.
+
+    Unlike anycorn_subprocess, this deliberately avoids anyio.open_process: on
+    Windows its asyncio backend drives subprocess creation through
+    ProactorEventLoop's IOCP-based subprocess_exec(), which conflicts with
+    creationflags=CREATE_NEW_PROCESS_GROUP - the child fails or hangs on
+    startup instead of running normally. A plain, blocking subprocess.Popen()
+    run in a worker thread sidesteps ProactorEventLoop entirely, avoiding that
+    conflict; the process itself doesn't care which mechanism spawned it.
+    """
+    process = await anyio.to_thread.run_sync(
+        lambda: subprocess.Popen(  # noqa: S603
+            [
+                sys.executable,
+                "-m",
+                "anycorn",
+                *args,
+                "--worker-class",
+                anyio_backend_name,
+            ],
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        )
+    )
+    try:
+        yield process
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        await anyio.to_thread.run_sync(_wait_bounded, process, 5)
+
+
 @pytest.mark.anyio
 @pytest.mark.skipif(
     sys.platform != "win32",
@@ -102,17 +154,14 @@ async def test_workers_0_ctrl_break_shutdown(anyio_backend_name: str, free_tcp_p
     which is in anycorn's asyncio fallback list alongside SIGINT and SIGTERM.
     """
     args = [APP_PATH, "--bind", f"127.0.0.1:{free_tcp_port}", "--workers", "0"]
-    async with anycorn_subprocess(
-        args,
-        anyio_backend_name=anyio_backend_name,
-        creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+    async with _new_process_group_subprocess(
+        args, anyio_backend_name=anyio_backend_name
     ) as process:
         await _wait_until_ready(f"http://127.0.0.1:{free_tcp_port}")
 
         process.send_signal(signal.CTRL_BREAK_EVENT)  # ty:ignore[unresolved-attribute]
 
-        with anyio.fail_after(10):
-            returncode = await process.wait()
+        returncode = await anyio.to_thread.run_sync(_wait_bounded, process, 10)
 
         if anyio_backend_name == "asyncio":
             assert returncode == 0
