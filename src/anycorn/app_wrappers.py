@@ -63,10 +63,28 @@ class WSGIWrapper:
         elif scope["type"] == "websocket":
             await send({"type": "websocket.close"})  # type: ignore[arg-type, misc]
         elif scope["type"] == "lifespan":
-            return
+            await self._handle_lifespan(receive, send)
         else:
             msg = f"Unknown scope type, {scope['type']}"
             raise RuntimeError(msg)
+
+    async def _handle_lifespan(
+        self, receive: ASGIReceiveCallable, send: ASGISendCallable
+    ) -> None:
+        """Acknowledge the ASGI lifespan protocol; a WSGI app has no lifespan of its own.
+
+        Returning immediately without ever awaiting receive() here (as this used to)
+        leaves Lifespan.supported still True, since that only flips to False when the
+        app *raises* - so wait_for_startup() goes on to send into a channel this
+        wrapper never reads from, which Lifespan's cleanup has by then already closed.
+        """
+        while True:
+            message = await receive()
+            if message["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            elif message["type"] == "lifespan.shutdown":
+                await send({"type": "lifespan.shutdown.complete"})
+                return
 
     async def handle_http(
         self,
