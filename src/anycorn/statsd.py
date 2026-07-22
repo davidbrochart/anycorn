@@ -185,20 +185,27 @@ class _AsyncioSender:
 
 
 class _AnyioSender:
-    """Sends datagrams via anyio, for backends other than asyncio."""
+    """Sends datagrams via anyio, for backends other than asyncio.
 
-    def __init__(self, sock: anyio.abc.ConnectedUDPSocket) -> None:
+    The socket is deliberately left unconnected. A connected UDP socket is told about
+    ICMP port unreachable, surfacing a statsd daemon that is down as ECONNREFUSED on a
+    later send - which anyio raises as `BrokenResourceError`, from whichever request
+    happened to be logging at the time. Metrics are best effort and must not take the
+    request being measured down with them, so address each datagram instead.
+    """
+
+    def __init__(self, sock: anyio.abc.UDPSocket, host: str, port: int) -> None:
         self._socket = sock
+        self._host = host
+        self._port = port
         self.socket: socket.socket = sock.extra(SocketAttribute.raw_socket)  # noqa: S610
 
     @classmethod
     async def create(cls, host: str, port: int) -> _AnyioSender:
-        return cls(
-            await anyio.create_connected_udp_socket(host, port, family=socket.AddressFamily.AF_INET)
-        )
+        return cls(await anyio.create_udp_socket(family=socket.AddressFamily.AF_INET), host, port)
 
     async def send(self, message: bytes) -> None:
-        await self._socket.send(message)
+        await self._socket.sendto(message, self._host, self._port)
 
     async def aclose(self) -> None:
         await self._socket.aclose()

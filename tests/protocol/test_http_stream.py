@@ -455,7 +455,6 @@ async def test_closure(stream: HTTPStream) -> None:
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("anyio_backend", ["asyncio"])  # FIXME
 async def test_abnormal_close_logging() -> None:
     config = Config()
     config.accesslog = "-"
