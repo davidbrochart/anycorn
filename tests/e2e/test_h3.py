@@ -93,7 +93,9 @@ class _H3Transport(httpx2.AsyncBaseTransport):
 
     @classmethod
     @asynccontextmanager
-    async def connect(cls, host: str, port: int, certs: TLSCerts) -> AsyncIterator[_H3Transport]:
+    async def connect(
+        cls, host: str, port: int, certs: TLSCerts, local_port: int = 0
+    ) -> AsyncIterator[_H3Transport]:
         """Open a QUIC connection, yielding a transport once the handshake lands."""
         configuration = QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN)
         # Verify the chain rather than turning verification off: the handshake is
@@ -102,7 +104,7 @@ class _H3Transport(httpx2.AsyncBaseTransport):
         configuration.server_name = certs.hostname
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind((HOST, 0))
+        sock.bind((HOST, local_port))
         sock.setblocking(False)  # noqa: FBT003
         datagram_socket = await wrap_datagram_socket(sock)
 
@@ -364,3 +366,61 @@ async def test_concurrent_requests_share_one_connection(
     assert clients == [transport.local_address] * CONCURRENT_REQUESTS
     # And a single handshake, so that flow carried one connection rather than three
     assert transport.handshakes == 1
+
+
+def _state_app(seen: list[tuple[str, dict, int, tuple[str, int] | None]]) -> Callable:
+    """Return an app that records the state it was handed, then writes to it."""
+
+    async def _app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
+        state = scope["state"]
+        seen.append((scope["path"], dict(state), id(state), scope["client"]))
+        state["secret"] = scope["path"]
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/plain")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    return _app
+
+
+@pytest.mark.anyio
+async def test_state_is_not_shared_between_connections(
+    tls_certs: TLSCerts,
+    free_tcp_port: int,
+    free_udp_port: int,
+    free_udp_port_factory: Callable[[], int],
+) -> None:
+    """ASGI state is per connection, so one client cannot read the last one's.
+
+    Both connections are made from the same client port, so the server sees one
+    address throughout. Anything keyed on where the datagrams came from - a copy per
+    UDP socket, or per peer - would hand the second connection the first's namespace;
+    only keying on the connection itself keeps them apart.
+    """
+    seen: list[tuple[str, dict, int, tuple[str, int] | None]] = []
+    client_port = free_udp_port_factory()
+
+    async with _serving(tls_certs, free_tcp_port, free_udp_port, _state_app(seen)):
+        for path in ("/first", "/second"):
+            async with (
+                _H3Transport.connect(
+                    HOST, free_udp_port, tls_certs, local_port=client_port
+                ) as transport,
+                httpx2.AsyncClient(transport=transport) as client,
+            ):
+                assert transport.local_address == (HOST, client_port)
+                with anyio.fail_after(10):
+                    response = await client.get(f"https://{HOST}:{free_udp_port}{path}")
+                assert response.status_code == 200  # noqa: PLR2004
+
+    assert [path for path, _, _, _ in seen] == ["/first", "/second"]
+    # The same peer both times, so the server had no address to tell them apart by
+    assert [client for _, _, _, client in seen] == [(HOST, client_port)] * 2
+    # And still neither the first's contents nor its namespace
+    assert [state for _, state, _, _ in seen] == [{}, {}]
+    first_id, second_id = (ident for _, _, ident, _ in seen)
+    assert first_id != second_id
