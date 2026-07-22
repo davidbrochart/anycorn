@@ -344,12 +344,10 @@ async def test_stream_closed_forgets_the_stream(tls_certs: TLSCerts, free_udp_po
                 connection = next(iter(udp_server.protocol.connections.values()))
                 assert connection.h3 is not None
                 # StreamClosed is sent after the response body, so the client seeing
-                # the full response does not guarantee the server has processed it yet
+                # the full response does not guarantee the server has processed it yet -
+                # wait for the server's own task to go idle rather than for a fixed delay
                 with anyio.fail_after(10):
-                    while True:
-                        if not connection.h3.streams:
-                            break
-                        await anyio.sleep(0.01)
+                    await anyio.wait_all_tasks_blocked()
 
                 assert connection.h3.streams == {}
             finally:
