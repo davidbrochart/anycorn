@@ -340,8 +340,11 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     if len(server_names) > 0:
         cfg.server_names = server_names
 
-    return run(cfg)
+    # Exit with run()'s code rather than returning it: click runs this in standalone
+    # mode and discards the return value, so `return run(cfg)` would always exit 0 -
+    # a --reload onto a SyntaxError would report success to a supervisor (#269).
+    sys.exit(run(cfg))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

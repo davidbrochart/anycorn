@@ -134,7 +134,11 @@ def run(config: Config) -> int:  # noqa: C901, PLR0912, PLR0915
                     shutdown_event.set()
                     active = False
 
-            exitcode = _join_exited(processes) if exitcode != 0 else exitcode
+            # Only reap again when nothing has failed yet: a non-zero exitcode has
+            # already been captured from a worker the loop reaped and removed, so
+            # re-joining the now-empty list would return 0 and mask the failure - a
+            # reload onto a SyntaxError then exited 0 instead of erroring (#269).
+            exitcode = _join_exited(processes) if exitcode == 0 else exitcode
         return exitcode
 
 
