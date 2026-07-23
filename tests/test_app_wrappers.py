@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from typing import TYPE_CHECKING, Any, cast
 
 import anyio
@@ -74,7 +75,8 @@ async def test_wsgi() -> None:
             "status": 200,
             "type": "http.response.start",
         },
-        {"body": b"", "type": "http.response.body", "more_body": True},
+        # No body message for the app's empty b"" chunk; the final empty body below
+        # is the caller (handle_http) closing the response.
         {"body": b"", "type": "http.response.body", "more_body": False},
     ]
 
@@ -127,7 +129,8 @@ async def test_wsgi2() -> None:
             "status": 200,
             "type": "http.response.start",
         },
-        {"body": b"", "type": "http.response.body", "more_body": True},
+        # No body message for the app's empty b"" chunk; the final empty body below
+        # is the caller (handle_http) closing the response.
         {"body": b"", "type": "http.response.body", "more_body": False},
     ]
 
@@ -267,6 +270,110 @@ async def test_wsgi_generator_app_defers_start_response() -> None:
     ]
 
 
+def _http_scope() -> HTTPScope:
+    return {
+        "http_version": "1.1",
+        "asgi": {},
+        "method": "GET",
+        "headers": [],
+        "path": "/",
+        "root_path": "/",
+        "query_string": b"",
+        "raw_path": b"/",
+        "scheme": "http",
+        "type": "http",
+        "client": ("localhost", 80),
+        "server": None,
+        "extensions": {},
+        "state": ConnectionState({}),
+    }
+
+
+def empty_body_app(_environ: dict, start_response: Callable) -> list[bytes]:
+    # A HEAD handler, a 204/304, or any app that returns an empty iterable.
+    start_response("204 No Content", [("Content-Length", "0")])
+    return []
+
+
+@pytest.mark.anyio
+async def test_wsgi_empty_iterable_still_starts_the_response() -> None:
+    """An app that yields no body must still emit http.response.start.
+
+    Gating the start on the first chunk means an empty iterable never starts the
+    response; the caller's following body message then crashes the stream with
+    UnexpectedMessageError. Flush the headers once the iterable is exhausted instead.
+
+    https://github.com/pgjones/hypercorn/issues/331
+    """
+    app = WSGIWrapper(empty_body_app, 2**16)
+    messages = await _run_app(app, _http_scope())
+    assert messages == [
+        {"type": "http.response.start", "status": 204, "headers": [(b"content-length", b"0")]},
+        {"type": "http.response.body", "body": b"", "more_body": False},
+    ]
+
+
+def empty_then_data_app(_environ: dict, start_response: Callable) -> Iterator[bytes]:
+    start_response("200 OK", [("Content-Length", "5")])
+    yield b""  # not data: must not start the response or produce a body message
+    yield b"hello"
+
+
+@pytest.mark.anyio
+async def test_wsgi_empty_chunk_does_not_start_the_response() -> None:
+    """An empty bytestring is not body data, so it must not flush headers.
+
+    https://github.com/pgjones/hypercorn/issues/331
+    """
+    app = WSGIWrapper(empty_then_data_app, 2**16)
+    messages = await _run_app(app, _http_scope())
+    assert messages == [
+        {"type": "http.response.start", "status": 200, "headers": [(b"content-length", b"5")]},
+        {"type": "http.response.body", "body": b"hello", "more_body": True},
+        {"type": "http.response.body", "body": b"", "more_body": False},
+    ]
+
+
+def double_start_response_app(_environ: dict, start_response: Callable) -> list[bytes]:
+    start_response("200 OK", [])
+    start_response("500 Internal Server Error", [])  # second call, no exc_info
+    return [b"x"]
+
+
+@pytest.mark.anyio
+async def test_wsgi_double_start_response_without_exc_info_raises() -> None:
+    """PEP 3333: a second start_response without exc_info is an application error.
+
+    https://github.com/pgjones/hypercorn/issues/331
+    """
+    app = WSGIWrapper(double_start_response_app, 2**16)
+    with pytest.raises(AssertionError, match="more than once"):
+        await _run_app(app, _http_scope())
+
+
+def replace_after_send_app(_environ: dict, start_response: Callable) -> Iterator[bytes]:
+    start_response("200 OK", [("Content-Length", "5")])
+    yield b"hello"  # headers are flushed here
+    try:
+        raise ValueError("boom")  # noqa: TRY301
+    except ValueError:
+        # Reporting an error once headers are already sent must re-raise it, not
+        # silently replace the response (PEP 3333).
+        start_response("500 Internal Server Error", [], sys.exc_info())
+    yield b"unreached"
+
+
+@pytest.mark.anyio
+async def test_wsgi_start_response_with_exc_info_after_headers_reraises() -> None:
+    """start_response(exc_info=...) after headers are sent re-raises the error.
+
+    https://github.com/pgjones/hypercorn/issues/331
+    """
+    app = WSGIWrapper(replace_after_send_app, 2**16)
+    with pytest.raises(ValueError, match="boom"):
+        await _run_app(app, _http_scope())
+
+
 def test_build_environ_encoding() -> None:
     scope: HTTPScope = {
         "http_version": "1.0",
@@ -287,6 +394,29 @@ def test_build_environ_encoding() -> None:
     environ = _build_environ(scope, b"")
     assert environ["SCRIPT_NAME"] == "/中".encode().decode("latin-1")
     assert environ["PATH_INFO"] == "/文".encode().decode("latin-1")
+
+
+def test_build_environ_server_port_is_a_string() -> None:
+    """PEP 3333: environ values are native strings, so SERVER_PORT is not a raw int."""
+    scope: HTTPScope = {
+        "http_version": "1.1",
+        "asgi": {},
+        "method": "GET",
+        "headers": [],
+        "path": "/",
+        "root_path": "",
+        "query_string": b"",
+        "raw_path": b"/",
+        "scheme": "http",
+        "type": "http",
+        "client": ("127.0.0.1", 51234),
+        "server": ("127.0.0.1", 8000),
+        "extensions": {},
+        "state": ConnectionState({}),
+    }
+    environ = _build_environ(scope, b"")
+    assert environ["SERVER_PORT"] == "8000"
+    assert isinstance(environ["SERVER_PORT"], str)
 
 
 def test_build_environ_root_path() -> None:

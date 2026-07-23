@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+import anyio
 import pytest
 
 from anycorn.middleware.dispatcher import DispatcherMiddleware
@@ -79,6 +80,14 @@ class ScopeFramework:
         await send({"type": "lifespan.startup.complete"})
 
 
+class NoLifespanFramework:
+    """A framework that declines lifespan the ASGI-sanctioned way: by raising."""
+
+    async def __call__(self, scope: Scope, _receive: Callable, _send: Callable) -> None:
+        msg = f"{scope['type']} protocol is not supported"
+        raise ValueError(msg)
+
+
 @pytest.mark.anyio
 async def test_dispatcher_lifespan() -> None:
     app = DispatcherMiddleware({"/apix": ScopeFramework("apix"), "/api": ScopeFramework("api")})
@@ -93,4 +102,42 @@ async def test_dispatcher_lifespan() -> None:
         return {"type": "lifespan.shutdown"}
 
     await app({"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}, receive, send)
-    assert sent_events == [{"type": "lifespan.startup.complete"}]
+    # Each mount acked startup but returned without handling shutdown; the dispatcher
+    # completes shutdown on their behalf so the caller's lifespan is not left waiting.
+    assert sent_events == [
+        {"type": "lifespan.startup.complete"},
+        {"type": "lifespan.shutdown.complete"},
+    ]
+
+
+@pytest.mark.anyio
+async def test_dispatcher_lifespan_with_a_mount_that_declines() -> None:
+    """A mounted app that doesn't support lifespan must not block or crash the others.
+
+    Declining lifespan by raising used to propagate out of the task group and take
+    the whole dispatcher down; an app that instead just returned without acking left
+    the dispatcher waiting on a startup.complete that never came. Either way, the
+    dispatcher now completes that mount on its behalf.
+
+    https://github.com/pgjones/hypercorn/issues/55
+    https://github.com/pgjones/hypercorn/issues/315
+    """
+    app = DispatcherMiddleware({"/api": ScopeFramework("api"), "/legacy": NoLifespanFramework()})
+
+    sent_events = []
+
+    async def send(message: dict) -> None:
+        sent_events.append(message)
+
+    messages = iter([{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}])
+
+    async def receive() -> dict:
+        return next(messages)
+
+    with anyio.fail_after(2):
+        await app({"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}, receive, send)
+
+    assert sent_events == [
+        {"type": "lifespan.startup.complete"},
+        {"type": "lifespan.shutdown.complete"},
+    ]

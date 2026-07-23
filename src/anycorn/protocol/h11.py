@@ -196,6 +196,16 @@ class H11Protocol:
                 event = self.connection.next_event()
             except h11.RemoteProtocolError as error:
                 if self.connection.our_state in {h11.IDLE, h11.SEND_RESPONSE}:
+                    # Log it: the status (e.g. 431 for oversized headers) otherwise
+                    # goes out with no record of why the request was rejected, which
+                    # is a client-side problem but an opaque one to debug.
+                    # https://github.com/pgjones/hypercorn/issues/157
+                    await self.config.log.info(
+                        "Rejecting request from %s: %s (%d)",
+                        self.client,
+                        error,
+                        error.error_status_hint,
+                    )
                     await self._send_error_response(error.error_status_hint)
                 await self.send(Closed())
                 break

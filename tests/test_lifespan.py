@@ -34,6 +34,34 @@ async def test_startup_timeout_error() -> None:
         assert str(exc_info.value).startswith("Timeout whilst awaiting startup")
 
 
+async def _slow_shutdown_framework(
+    _scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
+) -> None:
+    """Complete startup promptly, then never acknowledge shutdown."""
+    while True:
+        message = await receive()
+        if message["type"] == "lifespan.startup":
+            await send({"type": "lifespan.startup.complete"})
+        elif message["type"] == "lifespan.shutdown":
+            await anyio.sleep_forever()
+
+
+@pytest.mark.anyio
+async def test_shutdown_timeout_error() -> None:
+    config = Config()
+    config.shutdown_timeout = 0.01
+    lifespan = Lifespan(ASGIWrapper(_slow_shutdown_framework), config, {})
+    async with anyio.create_task_group() as tg:
+        await tg.start(lifespan.handle_lifespan)
+        await lifespan.wait_for_startup()
+        with pytest.raises(LifespanTimeoutError) as exc_info:
+            await lifespan.wait_for_shutdown()
+        # The message must name the shutdown stage, not startup (it used to say
+        # "startup" here from a copied timeout branch).
+        assert str(exc_info.value).startswith("Timeout whilst awaiting shutdown")
+        tg.cancel_scope.cancel()
+
+
 async def _lifespan_failure(
     _scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
 ) -> None:

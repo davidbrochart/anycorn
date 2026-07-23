@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from math import inf
-from ssl import SSLError, SSLZeroReturnError
+from ssl import SSLZeroReturnError
 from typing import TYPE_CHECKING
 
 import anyio
@@ -134,8 +134,14 @@ class TCPServer:
             # They're already gone, nothing to do, or it is a SSL stream
             await self.stream.send_eof()
         with contextlib.suppress(
-            SSLError, anyio.ClosedResourceError, anyio.BrokenResourceError, anyio.BusyResourceError
+            OSError, anyio.ClosedResourceError, anyio.BrokenResourceError, anyio.BusyResourceError
         ):
+            # OSError (which SSLError subclasses) for the same reason send_eof above
+            # suppresses it: an abrupt disconnect can surface a network-unreachable
+            # errno - EHOSTUNREACH/ENETUNREACH/ETIMEDOUT - that asyncio never maps to
+            # ConnectionError, so it would otherwise escape _close() and, since this
+            # runs from run()'s finally and from protocol_send, crash the connection
+            # task or propagate back into the app (https://github.com/pgjones/hypercorn/issues/361).
             await self.stream.aclose()
 
     async def _idle_timeout(self) -> None:
@@ -147,7 +153,9 @@ class TCPServer:
 
     async def _initiate_server_close(self) -> None:
         await self.protocol.handle(Closed())
-        with contextlib.suppress(SSLError, anyio.BrokenResourceError, anyio.BusyResourceError):
+        # OSError (SSLError included) as in _close: aclose on an unreachable peer can
+        # raise a plain OSError that would otherwise escape the idle-timeout task.
+        with contextlib.suppress(OSError, anyio.BrokenResourceError, anyio.BusyResourceError):
             await self.stream.aclose()
 
 

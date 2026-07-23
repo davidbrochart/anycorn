@@ -269,12 +269,19 @@ class HTTPStream:
             raise UnexpectedMessageError(self.state, message["type"])
 
     async def _send_closed(self) -> None:
-        await self.send(EndBody(stream_id=self.stream_id))
+        # Mark CLOSED before the first await: a StreamClosed event handled while
+        # EndBody is still in flight (the client closing just as the response
+        # finalises) would otherwise see a non-CLOSED state and log the request a
+        # second time - the reader task with response=None, then this one with the
+        # full response (https://github.com/pgjones/hypercorn/issues/357).
         self.state = ASGIHTTPState.CLOSED
+        await self.send(EndBody(stream_id=self.stream_id))
         await self.config.log.access(self.scope, self.response, time() - self.start_time)
         await self.send(StreamClosed(stream_id=self.stream_id))
 
     async def _send_error_response(self, status_code: int) -> None:
+        # Mark CLOSED before the first await, for the same reason as _send_closed.
+        self.state = ASGIHTTPState.CLOSED
         await self.send(
             Response(
                 stream_id=self.stream_id,
@@ -283,7 +290,6 @@ class HTTPStream:
             )
         )
         await self.send(EndBody(stream_id=self.stream_id))
-        self.state = ASGIHTTPState.CLOSED
         await self.config.log.access(
             self.scope, ResponseSummary(status=status_code, headers=[]), time() - self.start_time
         )

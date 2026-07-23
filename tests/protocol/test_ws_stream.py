@@ -309,6 +309,37 @@ async def test_handle_closed(stream: WSStream) -> None:
 
 
 @pytest.mark.anyio
+async def test_handle_client_close_reports_its_code(stream: WSStream) -> None:
+    """A clean client close must reach the app as its own code, not 1006.
+
+    Before, the CloseConnection from the peer was not recorded, so when the stream then
+    closed the disconnect defaulted to ABNORMAL_CLOSURE - the app could not tell a
+    graceful client close from a dropped connection.
+
+    https://github.com/pgjones/hypercorn/issues/127
+    """
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[(b"sec-websocket-version", b"13")],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(cast("WebsocketAcceptEvent", {"type": "websocket.accept"}))
+    stream.app_put = AsyncMock()
+
+    # A masked client close frame carrying code 1000 (a zero mask key leaves the
+    # 2-byte payload - 0x03e8 - unchanged).
+    await stream.handle(Data(stream_id=1, data=b"\x88\x82\x00\x00\x00\x00\x03\xe8"))
+    await stream.handle(StreamClosed(stream_id=1))
+
+    assert stream.app_put.call_args_list == [call({"type": "websocket.disconnect", "code": 1000})]
+
+
+@pytest.mark.anyio
 async def test_send_accept(stream: WSStream) -> None:
     await stream.handle(
         Request(

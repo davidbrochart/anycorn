@@ -12,6 +12,7 @@ import pytest
 import anycorn.protocol.h11
 from anycorn.config import Config
 from anycorn.events import Closed, RawData, Updated
+from anycorn.logging import Logger
 from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
 from anycorn.protocol.h11 import H2CProtocolRequiredError, H2ProtocolAssumedError, H11Protocol
 from anycorn.protocol.http_stream import HTTPStream
@@ -460,3 +461,51 @@ async def test_protocol_handle_data_post_close(protocol: H11Protocol) -> None:
     assert protocol.stream is None
     # Key is that this doesn't error
     await protocol.handle(RawData(data=b"abcdefghij"))
+
+
+@pytest.mark.anyio
+async def test_protocol_handle_data_after_websocket_upgrade(protocol: H11Protocol) -> None:
+    """Trailing data on a websocket upgrade must not crash the worker.
+
+    The bytes after the handshake arrive as a Data event before the app has accepted
+    the connection - while WSStream still has no wsproto connection object. It must
+    answer 400 rather than raise AttributeError on self.connection and take the whole
+    worker down with it.
+
+    https://github.com/pgjones/hypercorn/issues/225
+    """
+    request = (
+        b"GET / HTTP/1.1\r\n"
+        b"Host: anycorn\r\n"
+        b"Connection: Upgrade\r\n"
+        b"Upgrade: websocket\r\n"
+        b"Sec-WebSocket-Version: 13\r\n"
+        b"Sec-WebSocket-Key: bKdPyn3u98cTfZJSh4TNeQ==\r\n"
+        b"\r\n"
+        b"x"
+    )
+
+    await protocol.handle(RawData(data=request))  # must not raise
+
+    sent = b"".join(
+        event.data
+        for (event, *_), _ in protocol.send.call_args_list  # type: ignore[attr-defined]
+        if isinstance(event, RawData)
+    )
+    assert b"HTTP/1.1 400 " in sent
+
+
+@pytest.mark.anyio
+async def test_protocol_logs_a_rejected_request(protocol: H11Protocol) -> None:
+    """A request h11 rejects (e.g. 431 for oversized headers) is logged.
+
+    The status was already surfaced correctly via error_status_hint; what was missing
+    is any record of why the request was turned away, which made the rejection opaque.
+
+    https://github.com/pgjones/hypercorn/issues/157
+    """
+    protocol.config._log = AsyncMock(spec=Logger)
+
+    await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
+
+    protocol.config._log.info.assert_called()

@@ -79,8 +79,13 @@ class QuicProtocol:
         self.quic_config = QuicConfiguration(alpn_protocols=H3_ALPN, is_client=False)
         assert config.certfile is not None
         assert config.keyfile is not None
+        # Pass the key password through, as create_ssl_context does for TLS: without
+        # it an encrypted HTTP/3 private key fails to load with "Password was not given
+        # but private key is encrypted" (https://github.com/pgjones/hypercorn/issues/84).
         self.quic_config.load_cert_chain(
-            certfile=pathlib.Path(config.certfile), keyfile=pathlib.Path(config.keyfile)
+            certfile=pathlib.Path(config.certfile),
+            keyfile=pathlib.Path(config.keyfile),
+            password=config.keyfile_password,
         )
 
     @property

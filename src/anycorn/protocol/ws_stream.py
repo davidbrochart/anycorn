@@ -219,6 +219,9 @@ class WSStream:
         self.buffer = WebsocketBuffer(config.websocket_max_message_size)
         self.client = client
         self.closed = False
+        # The code the peer closed with, once it has sent a close frame, so the ASGI
+        # disconnect reports it rather than defaulting to 1006 (abnormal closure).
+        self.close_code: int | None = None
         self.config = config
         self.context = context
         self.task_group = task_group
@@ -240,7 +243,7 @@ class WSStream:
         """Return True when the WebSocket stream is in a terminal state."""
         return self.state in {ASGIWebsocketState.CLOSED, ASGIWebsocketState.HTTPCLOSED}
 
-    async def handle(self, event: Event) -> None:  # noqa: C901
+    async def handle(self, event: Event) -> None:  # noqa: C901, PLR0912
         """Handle an incoming stream event."""
         if self.closed:
             return
@@ -293,7 +296,9 @@ class WSStream:
         elif isinstance(event, StreamClosed):
             self.closed = True
             if self.app_put is not None:
-                if self.state in {ASGIWebsocketState.HTTPCLOSED, ASGIWebsocketState.CLOSED}:
+                if self.close_code is not None:
+                    code = self.close_code
+                elif self.state in {ASGIWebsocketState.HTTPCLOSED, ASGIWebsocketState.CLOSED}:
                     code = CloseReason.NORMAL_CLOSURE.value
                 else:
                     code = CloseReason.ABNORMAL_CLOSURE.value
@@ -371,6 +376,10 @@ class WSStream:
             elif isinstance(event, Ping):
                 await self._send_wsproto_event(event.response())
             elif isinstance(event, CloseConnection):
+                # Remember what the peer closed with, so the disconnect the app sees
+                # carries that code rather than 1006.
+                # https://github.com/pgjones/hypercorn/issues/127
+                self.close_code = event.code
                 if self.connection.state == ConnectionState.REMOTE_CLOSING:
                     await self._send_wsproto_event(event.response())
                 await self.send(StreamClosed(stream_id=self.stream_id))

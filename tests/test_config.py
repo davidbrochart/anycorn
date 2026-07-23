@@ -13,13 +13,23 @@ from unittest.mock import Mock, NonCallableMock
 import pytest
 
 import anycorn.config
-from anycorn.config import Config
+from anycorn.config import Config, _set_reuse_socket_option
 
 if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch
 
 access_log_format = "bob"
 h11_max_incomplete_size = 4
+
+# The reuse option _create_sockets sets is platform-specific: SO_EXCLUSIVEADDRUSE on
+# Windows (so a second server on a busy port fails), SO_REUSEADDR elsewhere. getattr
+# keeps the win32-only constant off the import path on other OSes.
+# https://github.com/pgjones/hypercorn/issues/171
+_EXPECTED_REUSE_OPTION = (
+    getattr(socket, "SO_EXCLUSIVEADDRUSE")  # noqa: B009
+    if sys.platform == "win32"
+    else socket.SO_REUSEADDR
+)
 
 
 def _check_standard_config(config: Config) -> None:
@@ -101,7 +111,7 @@ def test_create_sockets_ip(
     sockets = config.create_sockets()
     sock = sockets.insecure_sockets[0]
     mock_socket.assert_called_with(expected_family, socket.SOCK_STREAM)
-    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
+    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, _EXPECTED_REUSE_OPTION, 1)  # type: ignore[attr-defined]
     sock.bind.assert_called_with(expected_binding)  # type: ignore[attr-defined]
     sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]  # noqa: FBT003
     sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]  # noqa: FBT003
@@ -117,7 +127,7 @@ def test_create_sockets_unix(monkeypatch: MonkeyPatch) -> None:
     sockets = config.create_sockets()
     sock = sockets.insecure_sockets[0]
     mock_socket.assert_called_with(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
+    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, _EXPECTED_REUSE_OPTION, 1)  # type: ignore[attr-defined]
     sock.bind.assert_called_with("/tmp/anycorn.sock")  # type: ignore[attr-defined] # noqa: S108
     sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]  # noqa: FBT003
     sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]  # noqa: FBT003
@@ -134,7 +144,7 @@ def test_create_sockets_fd(monkeypatch: MonkeyPatch) -> None:
     sock = sockets.insecure_sockets[0]
     mock_sock_class.assert_called_with(fileno=2)
     sock.getsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_TYPE)  # type: ignore[attr-defined]
-    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # type: ignore[attr-defined]
+    sock.setsockopt.assert_called_with(socket.SOL_SOCKET, _EXPECTED_REUSE_OPTION, 1)  # type: ignore[attr-defined]
     sock.setblocking.assert_called_with(False)  # type: ignore[attr-defined]  # noqa: FBT003
     sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]  # noqa: FBT003
 
@@ -148,6 +158,69 @@ def test_create_sockets_multiple(monkeypatch: MonkeyPatch) -> None:
     config.bind = ["127.0.0.1", "unix:/tmp/anycorn.sock"]
     sockets = config.create_sockets()
     assert len(sockets.insecure_sockets) == 2  # noqa: PLR2004
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SO_REUSEADDR is the Unix path.")
+def test_set_reuse_socket_option_posix_sets_reuseaddr() -> None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        _set_reuse_socket_option(sock)
+        # getsockopt only guarantees a nonzero value for an enabled boolean option;
+        # macOS/BSD returns something other than 1, so assert truthiness, not == 1.
+        assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) != 0
+    finally:
+        sock.close()
+
+
+def test_set_reuse_socket_option_windows_uses_exclusive_addr_use(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """On Windows the port is claimed exclusively, never with SO_REUSEADDR.
+
+    SO_EXCLUSIVEADDRUSE only exists on Windows, so it is patched in here to exercise
+    the branch on any platform; the point is that SO_REUSEADDR - which lets a second
+    server hijack the port on Windows - is not the option that gets set.
+
+    https://github.com/pgjones/hypercorn/issues/171
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(socket, "SO_EXCLUSIVEADDRUSE", -5, raising=False)
+    sock = Mock()
+
+    _set_reuse_socket_option(sock)
+
+    exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE")  # noqa: B009  # win32-only constant
+    sock.setsockopt.assert_called_once_with(socket.SOL_SOCKET, exclusive, 1)
+
+
+def test_second_server_on_the_same_port_is_refused(free_tcp_port: int) -> None:
+    """A second server must not be able to hijack a port already being served.
+
+    Binds a real server socket and starts it listening, then a second socket claims the
+    same address exactly as _create_sockets does (via _set_reuse_socket_option) and must
+    fail to bind. On Unix SO_REUSEADDR already refuses this, so it passes regardless; the
+    fix is what makes Windows behave the same way with SO_EXCLUSIVEADDRUSE rather than
+    letting the second bind steal the port - so without the fix this fails on Windows.
+
+    https://github.com/pgjones/hypercorn/issues/171
+    """
+    first = Config()
+    first.bind = [f"127.0.0.1:{free_tcp_port}"]
+    sockets = first.create_sockets()
+    try:
+        for listening in sockets.insecure_sockets:
+            listening.listen(first.backlog)
+
+        second = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            _set_reuse_socket_option(second)
+            with pytest.raises(OSError):  # noqa: PT011  # EADDRINUSE / WSAEADDRINUSE
+                second.bind(("127.0.0.1", free_tcp_port))
+        finally:
+            second.close()
+    finally:
+        for sock in sockets.insecure_sockets:
+            sock.close()
 
 
 def test_daemon_defaults_true() -> None:
