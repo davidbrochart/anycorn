@@ -93,7 +93,7 @@ class _ScriptedAnyioSocket:
 
 def _anyio_socket_reading(script: list) -> _AnyioDatagramSocket:
     """Wrap a scripted receive() in an _AnyioDatagramSocket, standing in for the real one."""
-    return _AnyioDatagramSocket(cast("anyio.abc.UDPSocket", _ScriptedAnyioSocket(script)))
+    return _AnyioDatagramSocket(cast(anyio.abc.UDPSocket, _ScriptedAnyioSocket(script)))
 
 
 def _connection_reset() -> anyio.BrokenResourceError:
