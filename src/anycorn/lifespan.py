@@ -106,7 +106,7 @@ class Lifespan:
             with anyio.fail_after(self.config.shutdown_timeout):
                 await self.shutdown.wait()
         except TimeoutError as error:
-            msg = "startup"
+            msg = "shutdown"
             raise LifespanTimeoutError(msg) from error
 
     async def asgi_receive(self) -> ASGIReceiveEvent:
