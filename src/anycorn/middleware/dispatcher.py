@@ -17,11 +17,6 @@ if TYPE_CHECKING:
 MAX_QUEUE_SIZE = 10
 
 
-async def _call_app(app: ASGIFramework, scope: Scope, receive: Callable, send: Callable) -> None:
-    # An ASGI app returns an Awaitable, whilst start_soon requires a coroutine function
-    await app(scope, receive, send)
-
-
 class _DispatcherMiddleware:
     def __init__(self, mounts: dict[str, ASGIFramework]) -> None:
         self.mounts = mounts
@@ -72,14 +67,8 @@ class DispatcherMiddleware(_DispatcherMiddleware):
                 await stack.enter_async_context(receive_stream)
 
             tg = await stack.enter_async_context(anyio.create_task_group())
-            for path, app in self.mounts.items():
-                tg.start_soon(
-                    _call_app,
-                    app,
-                    scope,
-                    self.app_queues[path][1].receive,
-                    partial(self.send, path, send),
-                )
+            for path in self.mounts:
+                tg.start_soon(self._run_mount, path, scope, send)
 
             while True:
                 message = await receive()
@@ -87,6 +76,25 @@ class DispatcherMiddleware(_DispatcherMiddleware):
                     await channels[0].send(message)
                 if message["type"] == "lifespan.shutdown":
                     break
+
+    async def _run_mount(self, path: str, scope: Scope, send: Callable) -> None:
+        forward = partial(self.send, path, send)
+        try:
+            await self.mounts[path](scope, self.app_queues[path][1].receive, forward)
+        except Exception:
+            # The ASGI-sanctioned way to decline lifespan is to raise. If that happens
+            # before the app has acknowledged startup, treat this mount as having no
+            # lifespan of its own rather than failing the whole dispatcher; a raise
+            # once it is past startup is a genuine error, so let that propagate.
+            if self.startup_complete[path]:
+                raise
+        # However it opted out - by raising, or by returning without acknowledging -
+        # make sure this mount does not leave the dispatcher's own startup or shutdown
+        # waiting on a completion that will never come.
+        if not self.startup_complete[path]:
+            await forward({"type": "lifespan.startup.complete"})
+        if not self.shutdown_complete[path]:
+            await forward({"type": "lifespan.shutdown.complete"})
 
     async def send(self, path: str, send: Callable, message: dict) -> None:
         """Forward lifespan messages and track startup/shutdown completion across mounted apps."""
