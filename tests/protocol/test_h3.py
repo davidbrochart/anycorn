@@ -66,7 +66,9 @@ async def test_peer_reset_closes_the_stream(quic_event: QuicEvent) -> None:
     """A peer STOP_SENDING/RESET_STREAM must tear the stream down, so the app stops.
 
     aioquic resets our sender on these, so nothing more can be sent; the stream is
-    dropped and handed a StreamClosed so the app sees http.disconnect (hypercorn #352).
+    dropped and handed a StreamClosed so the app sees http.disconnect.
+
+    https://github.com/pgjones/hypercorn/issues/352
     """
     protocol = _make_protocol()
     stream = MagicMock()
@@ -104,7 +106,9 @@ async def test_stream_send_survives_a_racing_reset_assertion() -> None:
     """A reset landing mid-send makes aioquic assert; that must not crash the send.
 
     If the reset is recorded only after the app's send has begun, the aioquic call
-    asserts. stream_send swallows it and forgets the stream instead (hypercorn #352).
+    asserts. stream_send swallows it and forgets the stream instead.
+
+    https://github.com/pgjones/hypercorn/issues/352
     """
     protocol = _make_protocol()
     stream = MagicMock()

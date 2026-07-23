@@ -1,10 +1,12 @@
 """Integration test: a second anycorn server on a busy port must fail to start.
 
-hypercorn #171: on Windows the listening socket used SO_REUSEADDR, which lets an
-unrelated socket rebind an address already in use - so a second `anycorn` started
-on a port already being served bound silently and stole it instead of failing. This
-runs two real `python -m anycorn` processes: the first serves a port, the second is
-launched on the same port and must exit non-zero rather than come up alongside it.
+On Windows the listening socket used SO_REUSEADDR, which lets an unrelated socket
+rebind an address already in use - so a second `anycorn` started on a port already
+being served bound silently and stole it instead of failing. This runs two real
+`python -m anycorn` processes: the first serves a port, the second is launched on
+the same port and must exit non-zero rather than come up alongside it.
+
+https://github.com/pgjones/hypercorn/issues/171
 """
 
 from __future__ import annotations
@@ -40,7 +42,10 @@ async def _wait_until_serving(base_url: str) -> None:
 async def test_second_server_on_a_used_port_exits_nonzero(
     anyio_backend_name: str, free_tcp_port: int
 ) -> None:
-    """A second server on a port already served must refuse to start (hypercorn #171)."""
+    """A second server on a port already served must refuse to start.
+
+    https://github.com/pgjones/hypercorn/issues/171
+    """
     args = [APP, "--bind", f"127.0.0.1:{free_tcp_port}", "--workers", "1"]
     base_url = f"http://127.0.0.1:{free_tcp_port}"
 

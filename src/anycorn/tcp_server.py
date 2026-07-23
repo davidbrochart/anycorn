@@ -141,7 +141,7 @@ class TCPServer:
             # errno - EHOSTUNREACH/ENETUNREACH/ETIMEDOUT - that asyncio never maps to
             # ConnectionError, so it would otherwise escape _close() and, since this
             # runs from run()'s finally and from protocol_send, crash the connection
-            # task or propagate back into the app (hypercorn #361).
+            # task or propagate back into the app (https://github.com/pgjones/hypercorn/issues/361).
             await self.stream.aclose()
 
     async def _idle_timeout(self) -> None:

@@ -377,7 +377,8 @@ class WSStream:
                 await self._send_wsproto_event(event.response())
             elif isinstance(event, CloseConnection):
                 # Remember what the peer closed with, so the disconnect the app sees
-                # carries that code rather than 1006 (hypercorn #127).
+                # carries that code rather than 1006.
+                # https://github.com/pgjones/hypercorn/issues/127
                 self.close_code = event.code
                 if self.connection.state == ConnectionState.REMOTE_CLOSING:
                     await self._send_wsproto_event(event.response())

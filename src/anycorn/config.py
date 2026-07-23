@@ -51,10 +51,12 @@ def _set_reuse_socket_option(sock: socket.socket) -> None:
 
     On Windows SO_REUSEADDR does not mean what it does on Unix: it lets an unrelated
     socket rebind an address already in active use and hijack it, so a second server
-    started on a busy port binds silently rather than raising (hypercorn #171). asyncio
-    omits SO_REUSEADDR on Windows for exactly this reason. Use SO_EXCLUSIVEADDRUSE there
-    - the Microsoft-recommended way to reserve the port - and SO_REUSEADDR everywhere
+    started on a busy port binds silently rather than raising. asyncio omits
+    SO_REUSEADDR on Windows for exactly this reason. Use SO_EXCLUSIVEADDRUSE there -
+    the Microsoft-recommended way to reserve the port - and SO_REUSEADDR everywhere
     else, where it only relaxes the TIME_WAIT rebind and does not permit hijacking.
+
+    https://github.com/pgjones/hypercorn/issues/171
     """
     if sys.platform == "win32":
         # SO_EXCLUSIVEADDRUSE exists only on Windows, so resolve it dynamically to keep

@@ -198,7 +198,8 @@ class H11Protocol:
                 if self.connection.our_state in {h11.IDLE, h11.SEND_RESPONSE}:
                     # Log it: the status (e.g. 431 for oversized headers) otherwise
                     # goes out with no record of why the request was rejected, which
-                    # is a client-side problem but an opaque one to debug (#157).
+                    # is a client-side problem but an opaque one to debug.
+                    # https://github.com/pgjones/hypercorn/issues/157
                     await self.config.log.info(
                         "Rejecting request from %s: %s (%d)",
                         self.client,

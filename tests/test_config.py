@@ -22,8 +22,9 @@ access_log_format = "bob"
 h11_max_incomplete_size = 4
 
 # The reuse option _create_sockets sets is platform-specific: SO_EXCLUSIVEADDRUSE on
-# Windows (so a second server on a busy port fails, hypercorn #171), SO_REUSEADDR
-# elsewhere. getattr keeps the win32-only constant off the import path on other OSes.
+# Windows (so a second server on a busy port fails), SO_REUSEADDR elsewhere. getattr
+# keeps the win32-only constant off the import path on other OSes.
+# https://github.com/pgjones/hypercorn/issues/171
 _EXPECTED_REUSE_OPTION = (
     getattr(socket, "SO_EXCLUSIVEADDRUSE")  # noqa: B009
     if sys.platform == "win32"
@@ -174,11 +175,13 @@ def test_set_reuse_socket_option_posix_sets_reuseaddr() -> None:
 def test_set_reuse_socket_option_windows_uses_exclusive_addr_use(
     monkeypatch: MonkeyPatch,
 ) -> None:
-    """On Windows the port is claimed exclusively, never with SO_REUSEADDR (#171).
+    """On Windows the port is claimed exclusively, never with SO_REUSEADDR.
 
     SO_EXCLUSIVEADDRUSE only exists on Windows, so it is patched in here to exercise
     the branch on any platform; the point is that SO_REUSEADDR - which lets a second
     server hijack the port on Windows - is not the option that gets set.
+
+    https://github.com/pgjones/hypercorn/issues/171
     """
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(socket, "SO_EXCLUSIVEADDRUSE", -5, raising=False)
@@ -191,13 +194,15 @@ def test_set_reuse_socket_option_windows_uses_exclusive_addr_use(
 
 
 def test_second_server_on_the_same_port_is_refused(free_tcp_port: int) -> None:
-    """A second server must not be able to hijack a port already being served (#171).
+    """A second server must not be able to hijack a port already being served.
 
     Binds a real server socket and starts it listening, then a second socket claims the
     same address exactly as _create_sockets does (via _set_reuse_socket_option) and must
     fail to bind. On Unix SO_REUSEADDR already refuses this, so it passes regardless; the
     fix is what makes Windows behave the same way with SO_EXCLUSIVEADDRUSE rather than
     letting the second bind steal the port - so without the fix this fails on Windows.
+
+    https://github.com/pgjones/hypercorn/issues/171
     """
     first = Config()
     first.bind = [f"127.0.0.1:{free_tcp_port}"]

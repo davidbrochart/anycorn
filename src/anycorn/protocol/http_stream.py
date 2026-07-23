@@ -273,7 +273,7 @@ class HTTPStream:
         # EndBody is still in flight (the client closing just as the response
         # finalises) would otherwise see a non-CLOSED state and log the request a
         # second time - the reader task with response=None, then this one with the
-        # full response (hypercorn #357).
+        # full response (https://github.com/pgjones/hypercorn/issues/357).
         self.state = ASGIHTTPState.CLOSED
         await self.send(EndBody(stream_id=self.stream_id))
         await self.config.log.access(self.scope, self.response, time() - self.start_time)

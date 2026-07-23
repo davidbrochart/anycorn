@@ -310,11 +310,13 @@ async def test_handle_closed(stream: WSStream) -> None:
 
 @pytest.mark.anyio
 async def test_handle_client_close_reports_its_code(stream: WSStream) -> None:
-    """A clean client close must reach the app as its own code, not 1006 (hypercorn #127).
+    """A clean client close must reach the app as its own code, not 1006.
 
     Before, the CloseConnection from the peer was not recorded, so when the stream then
     closed the disconnect defaulted to ABNORMAL_CLOSURE - the app could not tell a
     graceful client close from a dropped connection.
+
+    https://github.com/pgjones/hypercorn/issues/127
     """
     await stream.handle(
         Request(

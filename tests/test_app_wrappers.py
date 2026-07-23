@@ -297,11 +297,13 @@ def empty_body_app(_environ: dict, start_response: Callable) -> list[bytes]:
 
 @pytest.mark.anyio
 async def test_wsgi_empty_iterable_still_starts_the_response() -> None:
-    """An app that yields no body must still emit http.response.start (hypercorn #331).
+    """An app that yields no body must still emit http.response.start.
 
     Gating the start on the first chunk means an empty iterable never starts the
     response; the caller's following body message then crashes the stream with
     UnexpectedMessageError. Flush the headers once the iterable is exhausted instead.
+
+    https://github.com/pgjones/hypercorn/issues/331
     """
     app = WSGIWrapper(empty_body_app, 2**16)
     messages = await _run_app(app, _http_scope())
@@ -319,7 +321,10 @@ def empty_then_data_app(_environ: dict, start_response: Callable) -> Iterator[by
 
 @pytest.mark.anyio
 async def test_wsgi_empty_chunk_does_not_start_the_response() -> None:
-    """An empty bytestring is not body data, so it must not flush headers (#331)."""
+    """An empty bytestring is not body data, so it must not flush headers.
+
+    https://github.com/pgjones/hypercorn/issues/331
+    """
     app = WSGIWrapper(empty_then_data_app, 2**16)
     messages = await _run_app(app, _http_scope())
     assert messages == [
@@ -337,7 +342,10 @@ def double_start_response_app(_environ: dict, start_response: Callable) -> list[
 
 @pytest.mark.anyio
 async def test_wsgi_double_start_response_without_exc_info_raises() -> None:
-    """PEP 3333: a second start_response without exc_info is an application error (#331)."""
+    """PEP 3333: a second start_response without exc_info is an application error.
+
+    https://github.com/pgjones/hypercorn/issues/331
+    """
     app = WSGIWrapper(double_start_response_app, 2**16)
     with pytest.raises(AssertionError, match="more than once"):
         await _run_app(app, _http_scope())
@@ -357,7 +365,10 @@ def replace_after_send_app(_environ: dict, start_response: Callable) -> Iterator
 
 @pytest.mark.anyio
 async def test_wsgi_start_response_with_exc_info_after_headers_reraises() -> None:
-    """start_response(exc_info=...) after headers are sent re-raises the error (#331)."""
+    """start_response(exc_info=...) after headers are sent re-raises the error.
+
+    https://github.com/pgjones/hypercorn/issues/331
+    """
     app = WSGIWrapper(replace_after_send_app, 2**16)
     with pytest.raises(ValueError, match="boom"):
         await _run_app(app, _http_scope())

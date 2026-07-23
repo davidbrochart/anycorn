@@ -1,10 +1,12 @@
 """Integration test for the reloader's exit status on a failed reload.
 
-hypercorn #269: `--reload` onto a Python SyntaxError exited 0, so a supervisor or
-CI could not tell the reload had failed. Two things had to line up - run() must
-carry the crashed worker's non-zero code out of its supervise loop instead of
-re-joining an already-emptied process list, and the click entrypoint must exit
-with that code rather than discard it (click runs the command in standalone mode).
+`--reload` onto a Python SyntaxError exited 0, so a supervisor or CI could not tell
+the reload had failed. Two things had to line up - run() must carry the crashed
+worker's non-zero code out of its supervise loop instead of re-joining an
+already-emptied process list, and the click entrypoint must exit with that code
+rather than discard it (click runs the command in standalone mode).
+
+https://github.com/pgjones/hypercorn/issues/269
 """
 
 from __future__ import annotations

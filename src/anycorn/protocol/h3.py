@@ -102,7 +102,8 @@ class H3Protocol:
         if event.stream_id in self._reset_streams:
             # The peer reset this stream; sending on it would assert in aioquic
             # ("cannot call write() after reset()") - the app just hasn't noticed
-            # the disconnect yet (hypercorn #352).
+            # the disconnect yet.
+            # https://github.com/pgjones/hypercorn/issues/352
             return
         try:
             if isinstance(event, (InformationalResponse, Response)):
@@ -123,7 +124,8 @@ class H3Protocol:
         except AssertionError:
             # A reset that landed in the window before we recorded it: aioquic had
             # already reset the sender, so the send asserts. Treat the stream as
-            # gone rather than letting it crash the connection (hypercorn #352).
+            # gone rather than letting it crash the connection.
+            # https://github.com/pgjones/hypercorn/issues/352
             await self._reset_stream(event.stream_id)
             return
         await self.send()

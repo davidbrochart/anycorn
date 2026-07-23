@@ -465,12 +465,14 @@ async def test_protocol_handle_data_post_close(protocol: H11Protocol) -> None:
 
 @pytest.mark.anyio
 async def test_protocol_handle_data_after_websocket_upgrade(protocol: H11Protocol) -> None:
-    """Trailing data on a websocket upgrade must not crash the worker (hypercorn #225).
+    """Trailing data on a websocket upgrade must not crash the worker.
 
     The bytes after the handshake arrive as a Data event before the app has accepted
     the connection - while WSStream still has no wsproto connection object. It must
     answer 400 rather than raise AttributeError on self.connection and take the whole
     worker down with it.
+
+    https://github.com/pgjones/hypercorn/issues/225
     """
     request = (
         b"GET / HTTP/1.1\r\n"
@@ -495,10 +497,12 @@ async def test_protocol_handle_data_after_websocket_upgrade(protocol: H11Protoco
 
 @pytest.mark.anyio
 async def test_protocol_logs_a_rejected_request(protocol: H11Protocol) -> None:
-    """A request h11 rejects (e.g. 431 for oversized headers) is logged (hypercorn #157).
+    """A request h11 rejects (e.g. 431 for oversized headers) is logged.
 
     The status was already surfaced correctly via error_status_hint; what was missing
     is any record of why the request was turned away, which made the rejection opaque.
+
+    https://github.com/pgjones/hypercorn/issues/157
     """
     protocol.config._log = AsyncMock(spec=Logger)
 

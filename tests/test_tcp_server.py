@@ -40,7 +40,7 @@ async def test_close_suppresses_host_unreachable_oserror() -> None:
     EHOSTUNREACH and its kin (ENETUNREACH, ETIMEDOUT) stay plain OSError. _close()
     runs from run()'s finally - outside its own `except OSError` - and from
     protocol_send, so an escaping OSError crashes the connection task or propagates
-    back into the ASGI app (hypercorn #361).
+    back into the ASGI app (https://github.com/pgjones/hypercorn/issues/361).
     """
     stream = _UnreachableStream()
     server = TCPServer(

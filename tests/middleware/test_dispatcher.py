@@ -115,9 +115,12 @@ async def test_dispatcher_lifespan_with_a_mount_that_declines() -> None:
     """A mounted app that doesn't support lifespan must not block or crash the others.
 
     Declining lifespan by raising used to propagate out of the task group and take
-    the whole dispatcher down (hypercorn #55); an app that instead just returned
-    without acking left the dispatcher waiting on a startup.complete that never came
-    (#315). Either way, the dispatcher now completes that mount on its behalf.
+    the whole dispatcher down; an app that instead just returned without acking left
+    the dispatcher waiting on a startup.complete that never came. Either way, the
+    dispatcher now completes that mount on its behalf.
+
+    https://github.com/pgjones/hypercorn/issues/55
+    https://github.com/pgjones/hypercorn/issues/315
     """
     app = DispatcherMiddleware({"/api": ScopeFramework("api"), "/legacy": NoLifespanFramework()})
 

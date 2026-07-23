@@ -342,7 +342,8 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
 
     # Exit with run()'s code rather than returning it: click runs this in standalone
     # mode and discards the return value, so `return run(cfg)` would always exit 0 -
-    # a --reload onto a SyntaxError would report success to a supervisor (#269).
+    # a --reload onto a SyntaxError would report success to a supervisor.
+    # https://github.com/pgjones/hypercorn/issues/269
     sys.exit(run(cfg))
 
 

@@ -62,10 +62,12 @@ def _make_protocol(config: Config) -> QuicProtocol:
 
 
 def test_loads_a_password_protected_http3_key(tmp_path: Path) -> None:
-    """An encrypted HTTP/3 private key loads when keyfile_password is set (hypercorn #84).
+    """An encrypted HTTP/3 private key loads when keyfile_password is set.
 
     Without forwarding the password to aioquic's load_cert_chain, construction raises
     "Password was not given but private key is encrypted".
+
+    https://github.com/pgjones/hypercorn/issues/84
     """
     certfile, keyfile = _write_encrypted_cert(tmp_path)
     config = Config()
