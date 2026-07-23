@@ -13,7 +13,7 @@ from unittest.mock import Mock, NonCallableMock
 import pytest
 
 import anycorn.config
-from anycorn.config import Config
+from anycorn.config import Config, _set_reuse_socket_option
 
 if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch
@@ -148,6 +148,35 @@ def test_create_sockets_multiple(monkeypatch: MonkeyPatch) -> None:
     config.bind = ["127.0.0.1", "unix:/tmp/anycorn.sock"]
     sockets = config.create_sockets()
     assert len(sockets.insecure_sockets) == 2  # noqa: PLR2004
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SO_REUSEADDR is the Unix path.")
+def test_set_reuse_socket_option_posix_sets_reuseaddr() -> None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        _set_reuse_socket_option(sock)
+        assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) == 1
+    finally:
+        sock.close()
+
+
+def test_set_reuse_socket_option_windows_uses_exclusive_addr_use(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """On Windows the port is claimed exclusively, never with SO_REUSEADDR (#171).
+
+    SO_EXCLUSIVEADDRUSE only exists on Windows, so it is patched in here to exercise
+    the branch on any platform; the point is that SO_REUSEADDR - which lets a second
+    server hijack the port on Windows - is not the option that gets set.
+    """
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(socket, "SO_EXCLUSIVEADDRUSE", -5, raising=False)
+    sock = Mock()
+
+    _set_reuse_socket_option(sock)
+
+    exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE")  # noqa: B009  # win32-only constant
+    sock.setsockopt.assert_called_once_with(socket.SOL_SOCKET, exclusive, 1)
 
 
 def test_daemon_defaults_true() -> None:
