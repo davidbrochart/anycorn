@@ -190,6 +190,34 @@ def test_set_reuse_socket_option_windows_uses_exclusive_addr_use(
     sock.setsockopt.assert_called_once_with(socket.SOL_SOCKET, exclusive, 1)
 
 
+def test_second_server_on_the_same_port_is_refused(free_tcp_port: int) -> None:
+    """A second server must not be able to hijack a port already being served (#171).
+
+    Binds a real server socket and starts it listening, then a second socket claims the
+    same address exactly as _create_sockets does (via _set_reuse_socket_option) and must
+    fail to bind. On Unix SO_REUSEADDR already refuses this, so it passes regardless; the
+    fix is what makes Windows behave the same way with SO_EXCLUSIVEADDRUSE rather than
+    letting the second bind steal the port - so without the fix this fails on Windows.
+    """
+    first = Config()
+    first.bind = [f"127.0.0.1:{free_tcp_port}"]
+    sockets = first.create_sockets()
+    try:
+        for listening in sockets.insecure_sockets:
+            listening.listen(first.backlog)
+
+        second = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            _set_reuse_socket_option(second)
+            with pytest.raises(OSError):  # noqa: PT011  # EADDRINUSE / WSAEADDRINUSE
+                second.bind(("127.0.0.1", free_tcp_port))
+        finally:
+            second.close()
+    finally:
+        for sock in sockets.insecure_sockets:
+            sock.close()
+
+
 def test_daemon_defaults_true() -> None:
     assert Config().daemon is True
 
