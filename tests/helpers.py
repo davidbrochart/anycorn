@@ -196,22 +196,6 @@ async def empty_framework(scope: Scope, receive: Callable, send: Callable) -> No
     pass
 
 
-class SlowLifespanFramework:
-    """ASGI framework that sleeps during startup to simulate slow lifespan."""
-
-    def __init__(self, delay: float, sleep: Callable) -> None:
-        self.delay = delay
-        self.sleep = sleep
-
-    async def __call__(
-        self,
-        _scope: Scope,
-        _receive: ASGIReceiveCallable,
-        _send: ASGISendCallable,
-    ) -> None:
-        await self.sleep(self.delay)
-
-
 async def echo_framework(
     input_scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable
 ) -> None:

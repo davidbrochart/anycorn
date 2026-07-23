@@ -13,8 +13,6 @@ from anycorn.config import Config
 from anycorn.lifespan import Lifespan
 from anycorn.utils import LifespanFailureError, LifespanTimeoutError
 
-from .helpers import SlowLifespanFramework
-
 if TYPE_CHECKING:
     from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, Scope
 
@@ -22,16 +20,27 @@ if sys.version_info < (3, 11):
     from exceptiongroup import ExceptionGroup
 
 
+async def _never_startup_framework(
+    _scope: Scope, receive: ASGIReceiveCallable, _send: ASGISendCallable
+) -> None:
+    """Receive the startup message but never acknowledge it, so startup times out."""
+    await receive()
+    await anyio.sleep_forever()
+
+
 @pytest.mark.anyio
 async def test_startup_timeout_error() -> None:
     config = Config()
     config.startup_timeout = 0.01
-    lifespan = Lifespan(ASGIWrapper(SlowLifespanFramework(0.02, anyio.sleep)), config, {})
+    lifespan = Lifespan(ASGIWrapper(_never_startup_framework), config, {})
     async with anyio.create_task_group() as tg:
-        tg.start_soon(lifespan.handle_lifespan)
+        await tg.start(lifespan.handle_lifespan)
         with pytest.raises(LifespanTimeoutError) as exc_info:
             await lifespan.wait_for_startup()
         assert str(exc_info.value).startswith("Timeout whilst awaiting startup")
+        # The app never completes startup, so cancel to release the lifespan task
+        # instead of waiting on a sleep whose length raced the timeout on Windows.
+        tg.cancel_scope.cancel()
 
 
 async def _slow_shutdown_framework(

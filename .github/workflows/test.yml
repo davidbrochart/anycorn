@@ -88,6 +88,28 @@ jobs:
       - name: Run h2spec
         run: ./h2spec -tk -h 127.0.0.1 -p 8000 -o 10
 
+  h3spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+      - name: setup venv
+        run: uv venv
+      - name: Install trio
+        run: uv pip install trio
+      - name: Install h3 extra
+        run: uv pip install '.[h3]'
+      - name: Run server
+        working-directory: compliance/h3spec
+        run: nohup uv run anycorn --keyfile key.pem --certfile cert.pem --bind 127.0.0.1:8000 --quic-bind 127.0.0.1:8000 http_server:app &
+      - name: Download h3spec
+        run: |
+          wget https://github.com/kazu-yamamoto/h3spec/releases/download/v0.1.13/h3spec-linux-x86_64 -O h3spec
+          chmod +x h3spec
+      - name: Run h3spec
+        run: ./h3spec -n 127.0.0.1 8000
+
   autobahn:
     runs-on: ubuntu-latest
     steps:

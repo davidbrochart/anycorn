@@ -1,5 +1,11 @@
 # Version history
 
+## Unreleased
+
+- Keep the QUIC/HTTP-3 server alive when a Windows peer's ICMP port unreachable surfaces
+  as a `ConnectionResetError` on receive.
+- Add h3spec HTTP/3 compliance testing to CI.
+
 ## 0.19.1
 
 - Fix issues reported on hypercorn that apply to anycorn.
