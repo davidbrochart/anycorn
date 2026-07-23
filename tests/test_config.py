@@ -164,7 +164,9 @@ def test_set_reuse_socket_option_posix_sets_reuseaddr() -> None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         _set_reuse_socket_option(sock)
-        assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) == 1
+        # getsockopt only guarantees a nonzero value for an enabled boolean option;
+        # macOS/BSD returns something other than 1, so assert truthiness, not == 1.
+        assert sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR) != 0
     finally:
         sock.close()
 
