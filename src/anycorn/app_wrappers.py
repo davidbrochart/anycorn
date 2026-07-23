@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from types import TracebackType
 
     from .typing import (
         ASGIFramework,
@@ -119,18 +120,30 @@ class WSGIWrapper:
             await sync_spawn(self.run_app, environ, partial(call_soon, send))
         await send({"type": "http.response.body", "body": b"", "more_body": False})
 
-    def run_app(self, environ: dict, send: Callable) -> None:
+    def run_app(self, environ: dict, send: Callable) -> None:  # noqa: C901
         """Run the WSGI app and forward the response via *send*."""
-        headers: list[tuple[bytes, bytes]] = []
-        response_started = False
         status_code: int | None = None
+        headers: list[tuple[bytes, bytes]] = []
+        headers_sent = False
 
         def start_response(
             status: str,
             response_headers: list[tuple[str, str]],
-            _exc_info: Exception | None = None,
+            exc_info: tuple[type[BaseException], BaseException, TracebackType] | None = None,
         ) -> None:
-            nonlocal headers, response_started, status_code
+            nonlocal status_code, headers
+
+            if exc_info is not None:
+                try:
+                    if headers_sent:
+                        # Too late to change the response, so surface the error the
+                        # app is reporting rather than swallow it (PEP 3333).
+                        raise exc_info[1].with_traceback(exc_info[2])
+                finally:
+                    exc_info = None  # break the traceback reference cycle
+            elif status_code is not None:
+                msg = "start_response() called more than once without exc_info"
+                raise AssertionError(msg)
 
             raw, _ = status.split(" ", 1)
             status_code = int(raw)
@@ -138,20 +151,31 @@ class WSGIWrapper:
                 (name.lower().encode("latin-1"), value.encode("latin-1"))
                 for name, value in response_headers
             ]
-            response_started = True
 
         response_body = self.app(environ, start_response)
 
+        def send_start() -> None:
+            nonlocal headers_sent
+            if headers_sent:
+                return
+            if status_code is None:
+                msg = "WSGI app did not call start_response"
+                raise RuntimeError(msg)
+            send({"type": "http.response.start", "status": status_code, "headers": headers})
+            headers_sent = True
+
         try:
-            first_chunk = True
             for output in response_body:
-                if first_chunk:
-                    if not response_started:
-                        msg = "WSGI app did not call start_response"
-                        raise RuntimeError(msg)
-                    send({"type": "http.response.start", "status": status_code, "headers": headers})
-                    first_chunk = False
-                send({"type": "http.response.body", "body": output, "more_body": True})
+                # PEP 3333: headers are not sent until there is body data to send - an
+                # empty bytestring is not data, and holding off past it leaves the app
+                # free to replace the status/headers via start_response(exc_info=...).
+                if output:
+                    send_start()
+                    send({"type": "http.response.body", "body": output, "more_body": True})
+            # The iterable is exhausted: flush the headers even when no body was
+            # produced (a HEAD handler, a 204/304, or any empty iterable), so the
+            # response still starts rather than crashing the stream.
+            send_start()
         finally:
             if isinstance(response_body, _SupportsClose):
                 response_body.close()
