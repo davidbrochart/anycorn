@@ -12,6 +12,7 @@ import pytest
 import anycorn.protocol.h11
 from anycorn.config import Config
 from anycorn.events import Closed, RawData, Updated
+from anycorn.logging import Logger
 from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
 from anycorn.protocol.h11 import H2CProtocolRequiredError, H2ProtocolAssumedError, H11Protocol
 from anycorn.protocol.http_stream import HTTPStream
@@ -490,3 +491,17 @@ async def test_protocol_handle_data_after_websocket_upgrade(protocol: H11Protoco
         if isinstance(event, RawData)
     )
     assert b"HTTP/1.1 400 " in sent
+
+
+@pytest.mark.anyio
+async def test_protocol_logs_a_rejected_request(protocol: H11Protocol) -> None:
+    """A request h11 rejects (e.g. 431 for oversized headers) is logged (hypercorn #157).
+
+    The status was already surfaced correctly via error_status_hint; what was missing
+    is any record of why the request was turned away, which made the rejection opaque.
+    """
+    protocol.config._log = AsyncMock(spec=Logger)
+
+    await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
+
+    protocol.config._log.info.assert_called()  # type: ignore[attr-defined]
