@@ -504,4 +504,4 @@ async def test_protocol_logs_a_rejected_request(protocol: H11Protocol) -> None:
 
     await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
 
-    protocol.config._log.info.assert_called()  # type: ignore[attr-defined]
+    protocol.config._log.info.assert_called()
