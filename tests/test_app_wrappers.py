@@ -385,6 +385,29 @@ def test_build_environ_encoding() -> None:
     assert environ["PATH_INFO"] == "/文".encode().decode("latin-1")
 
 
+def test_build_environ_server_port_is_a_string() -> None:
+    """PEP 3333: environ values are native strings, so SERVER_PORT is not a raw int."""
+    scope: HTTPScope = {
+        "http_version": "1.1",
+        "asgi": {},
+        "method": "GET",
+        "headers": [],
+        "path": "/",
+        "root_path": "",
+        "query_string": b"",
+        "raw_path": b"/",
+        "scheme": "http",
+        "type": "http",
+        "client": ("127.0.0.1", 51234),
+        "server": ("127.0.0.1", 8000),
+        "extensions": {},
+        "state": ConnectionState({}),
+    }
+    environ = _build_environ(scope, b"")
+    assert environ["SERVER_PORT"] == "8000"
+    assert isinstance(environ["SERVER_PORT"], str)
+
+
 def test_build_environ_root_path() -> None:
     scope: HTTPScope = {
         "http_version": "1.0",

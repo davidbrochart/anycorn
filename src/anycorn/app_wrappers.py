@@ -197,7 +197,9 @@ def _build_environ(scope: HTTPScope, body: bytes) -> dict:
         "PATH_INFO": path.encode("utf8").decode("latin1"),
         "QUERY_STRING": scope["query_string"].decode("ascii"),
         "SERVER_NAME": server[0],
-        "SERVER_PORT": server[1],
+        # PEP 3333 requires every CGI-style environ value to be a native string;
+        # a WSGI app doing environ["SERVER_PORT"] + something breaks on a raw int.
+        "SERVER_PORT": str(server[1]),
         "SERVER_PROTOCOL": f"HTTP/{scope['http_version']}",
         "wsgi.version": (1, 0),
         "wsgi.url_scheme": scope.get("scheme", "http"),
