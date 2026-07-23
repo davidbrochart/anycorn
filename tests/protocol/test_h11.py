@@ -460,3 +460,33 @@ async def test_protocol_handle_data_post_close(protocol: H11Protocol) -> None:
     assert protocol.stream is None
     # Key is that this doesn't error
     await protocol.handle(RawData(data=b"abcdefghij"))
+
+
+@pytest.mark.anyio
+async def test_protocol_handle_data_after_websocket_upgrade(protocol: H11Protocol) -> None:
+    """Trailing data on a websocket upgrade must not crash the worker (hypercorn #225).
+
+    The bytes after the handshake arrive as a Data event before the app has accepted
+    the connection - while WSStream still has no wsproto connection object. It must
+    answer 400 rather than raise AttributeError on self.connection and take the whole
+    worker down with it.
+    """
+    request = (
+        b"GET / HTTP/1.1\r\n"
+        b"Host: anycorn\r\n"
+        b"Connection: Upgrade\r\n"
+        b"Upgrade: websocket\r\n"
+        b"Sec-WebSocket-Version: 13\r\n"
+        b"Sec-WebSocket-Key: bKdPyn3u98cTfZJSh4TNeQ==\r\n"
+        b"\r\n"
+        b"x"
+    )
+
+    await protocol.handle(RawData(data=request))  # must not raise
+
+    sent = b"".join(
+        event.data
+        for (event, *_), _ in protocol.send.call_args_list  # type: ignore[attr-defined]
+        if isinstance(event, RawData)
+    )
+    assert b"HTTP/1.1 400 " in sent
