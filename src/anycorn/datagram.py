@@ -133,7 +133,22 @@ class _AnyioDatagramSocket:
         return cls(await anyio.abc.UDPSocket.from_socket(sock))
 
     async def receive(self) -> tuple[bytes, IPAddress]:
-        return await self._socket.receive()
+        while True:
+            try:
+                return await self._socket.receive()
+            except anyio.BrokenResourceError as error:  # noqa: PERF203
+                # On Windows a datagram sent to a peer that has gone away comes back as
+                # an ICMP port unreachable, and the socket reports it as a
+                # ConnectionResetError (WinError 10054) on the *next* recvfrom, which
+                # anyio raises as BrokenResourceError. A datagram server serves many
+                # peers off one socket and cannot act on one peer's ICMP error, so drop
+                # it and read the next datagram - exactly as the asyncio path's
+                # error_received does. The error is delivered once, so the retry then
+                # blocks for real traffic rather than spinning. Elsewhere the socket is
+                # not told about ICMP errors, so nothing raises this and the loop runs
+                # once.
+                if sys.platform != "win32" or not isinstance(error.__cause__, ConnectionResetError):
+                    raise
 
     async def send(self, data: bytes) -> None:
         assert self._remote is not None
