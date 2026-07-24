@@ -97,7 +97,11 @@ class _H3Transport(httpx2.AsyncBaseTransport):
     @classmethod
     @asynccontextmanager
     async def connect(
-        cls, host: str, port: int, certs: TLSCerts, local_port: int = 0
+        cls,
+        host: str,
+        port: int,
+        certs: TLSCerts,
+        local_port: int = 0,
     ) -> AsyncIterator[_H3Transport]:
         """Open a QUIC connection, yielding a transport once the handshake lands."""
         configuration = QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN)
@@ -247,7 +251,7 @@ class _H3Transport(httpx2.AsyncBaseTransport):
         while not self._read_queue[stream_id]:
             if self._terminated.is_set():
                 msg = "connection terminated before the response completed"
-                raise AssertionError(msg)
+                raise httpx2.TransportError(msg)
             await self._read_ready[stream_id].wait()
         event = self._read_queue[stream_id].pop(0)
         if not self._read_queue[stream_id]:
@@ -295,6 +299,73 @@ async def test_h3_request(tls_certs: TLSCerts, free_tcp_port: int, free_udp_port
     assert response.text == "Hello, h3!"
     assert response.headers["content-type"] == "text/plain"
     assert response.extensions["http_version"] == b"HTTP/3"
+
+
+@pytest.mark.anyio
+async def test_server_cancelled_mid_request(
+    tls_certs: TLSCerts, free_tcp_port: int, free_udp_port: int
+) -> None:
+    config = Config()
+    config.bind = [f"{HOST}:{free_tcp_port}"]
+    config.quic_bind = [f"{HOST}:{free_udp_port}"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+    config.accesslog = "-"
+    config.errorlog = "-"
+
+    started = anyio.Event()
+    request_finished = anyio.Event()
+    request_error: httpx2.TransportError | None = None
+    shutdown = anyio.Event()
+
+    async def hanging_app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
+        assert scope["type"] == "http"
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-type", b"text/plain")],
+            }
+        )
+        started.set()
+        await anyio.sleep_forever()
+
+    async def make_request(client: httpx2.AsyncClient) -> None:
+        nonlocal request_error
+
+        try:
+            response = await client.get(f"https://{HOST}:{free_udp_port}/")
+            await response.aread()
+        except httpx2.TransportError as error:
+            request_error = error
+        finally:
+            request_finished.set()
+
+    async with anyio.create_task_group() as tg:
+        await tg.start(
+            lambda *, task_status: anycorn.serve(
+                hanging_app,
+                config,
+                shutdown_trigger=shutdown.wait,
+                task_status=task_status,
+            )
+        )
+
+        async with (
+            _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
+            httpx2.AsyncClient(transport=transport) as client,
+        ):
+            tg.start_soon(make_request, client)
+            with anyio.fail_after(10):
+                await started.wait()
+
+            shutdown.set()
+
+            with anyio.fail_after(10):
+                await request_finished.wait()
+
+    assert request_error is not None
+    assert "connection terminated before the response completed" in str(request_error)
 
 
 @pytest.mark.anyio

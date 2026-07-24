@@ -61,3 +61,62 @@ async def test_keep_alive_max_requests_regression(free_tcp_port: int) -> None:
                 result.raise_for_status()
 
         shutdown.set()
+
+
+@pytest.mark.anyio
+async def test_server_cancelled_mid_request(free_tcp_port: int) -> None:
+    started = anyio.Event()
+    request_finished = anyio.Event()
+    request_error: httpx2.TransportError | None = None
+    shutdown = anyio.Event()
+
+    async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
+        assert scope["type"] == "http"
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    [b"content-type", b"text/plain"],
+                ],
+            }
+        )
+        started.set()
+        await anyio.sleep_forever()
+
+    async def make_request(client: httpx2.AsyncClient) -> None:
+        nonlocal request_error
+
+        try:
+            await client.get("/")
+        except httpx2.TransportError as error:
+            request_error = error
+        finally:
+            request_finished.set()
+
+    config = Config()
+    config.bind = [f"127.0.0.1:{free_tcp_port}"]
+    config.accesslog = "-"
+    config.errorlog = "-"
+
+    async with anyio.create_task_group() as tg:
+        await tg.start(
+            lambda *, task_status: anycorn.serve(
+                app,
+                config,
+                shutdown_trigger=shutdown.wait,
+                task_status=task_status,
+            )
+        )
+
+        async with httpx2.AsyncClient(base_url=f"http://127.0.0.1:{free_tcp_port}") as client:
+            tg.start_soon(make_request, client)
+            with anyio.fail_after(10):
+                await started.wait()
+
+            shutdown.set()
+
+            with anyio.fail_after(10):
+                await request_finished.wait()
+
+    assert request_error is not None
