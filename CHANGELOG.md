@@ -1,6 +1,6 @@
 # Version history
 
-## Unreleased
+## 0.19.2
 
 - Keep the QUIC/HTTP-3 server alive when a Windows peer's ICMP port unreachable surfaces
   as a `ConnectionResetError` on receive.
@@ -39,7 +39,7 @@
 
 * Support TLS extension.
 
-## 0.16.0 (2024-01-01)https://github.com/pydantic/monty
+## 0.16.0 (2024-01-01)
 
 * Add a max keep alive requests configuration option, this mitigates the HTTP/2 rapid reset attack.
 * Return subprocess exit code if non-zero.
