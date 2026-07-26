@@ -509,3 +509,43 @@ async def test_protocol_logs_a_rejected_request(protocol: H11Protocol) -> None:
     await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
 
     protocol.config._log.info.assert_called()
+
+
+@pytest.mark.anyio
+async def test_protocol_does_not_recycle_once_terminated(protocol: H11Protocol) -> None:
+    """A worker shutting down closes after its response rather than taking another request.
+
+    The mirror of test_protocol_instant_recycle, which drives this very exchange on a
+    running worker and has the waiting second request served the moment the first
+    stream closes. Only terminated differs here, and it must be Closed that follows
+    rather than the connection being handed back for reuse.
+    """
+    protocol.context.terminated.is_set.return_value = True  # type: ignore[attr-defined]
+    data = b"GET / HTTP/1.1\r\nHost: anycorn\r\n\r\n"
+    protocol.can_read = EventWrapper()
+
+    async with anyio.create_task_group() as task_group:
+        handled = anyio.Event()
+        task_group.start_soon(_handle_then_set, protocol, data, handled)
+        await anyio.wait_all_tasks_blocked()
+        assert protocol.stream is not None
+
+        await protocol.stream_send(Response(stream_id=1, status_code=200, headers=[]))
+        await protocol.stream_send(EndBody(stream_id=1))
+
+        # Queued behind the first, exactly as in the recycling test
+        recycled = anyio.Event()
+        task_group.start_soon(_handle_then_set, protocol, data, recycled)
+        await anyio.wait_all_tasks_blocked()
+
+        await protocol.stream_send(StreamClosed(stream_id=1))
+        await anyio.wait_all_tasks_blocked()
+
+        # No new cycle: the queued request is not taken up and no stream replaces the one
+        # that closed
+        assert not recycled.is_set()
+        assert protocol.stream is None
+        task_group.cancel_scope.cancel()  # release the request left waiting
+
+    assert call(Closed()) in protocol.send.call_args_list
+    assert call(Updated(idle=True)) not in protocol.send.call_args_list

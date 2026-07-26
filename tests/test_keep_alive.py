@@ -178,3 +178,34 @@ async def test_http1_keep_alive_pipelining() -> None:
                 chunk = await client_stream.receive_some(1024)
                 assert chunk != b"", "connection closed before both responses arrived"
                 received += chunk
+
+
+@pytest.mark.anyio
+async def test_http1_does_not_recycle_once_terminated() -> None:
+    """A worker shutting down answers the request in hand, then closes the connection.
+
+    This pins the outcome a client sees, which two mechanisms produce between them:
+    h11 declining to recycle, and the server closing a connection that falls idle
+    whilst terminated. Either alone still closes the connection, so this does not
+    isolate one - test_protocol_does_not_recycle_once_terminated covers the recycling
+    decision on its own.
+    """
+    context = WorkerContext(None)
+    release = anyio.Event()
+    async with serve_in_memory(
+        gated_framework(release), _config(), context=context
+    ) as client_stream:
+        client = h11.Connection(h11.CLIENT)
+        await client_stream.send_all(client.send(REQUEST))
+        await client_stream.send_all(client.send(h11.EndOfMessage()))
+        await anyio.wait_all_tasks_blocked()
+
+        # Terminated whilst the app is still working, so the response is owed and must
+        # still arrive - it is the connection afterwards that must not be kept
+        await context.terminated.set()
+        release.set()
+
+        assert (await _read_response(client, client_stream)).status_code == OK
+        # An empty read is how the closed connection reads: no second cycle was started
+        with anyio.fail_after(5):
+            assert await client_stream.receive_some(1024) == b""
