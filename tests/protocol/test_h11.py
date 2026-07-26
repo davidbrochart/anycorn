@@ -12,13 +12,13 @@ import pytest
 import anycorn.protocol.h11
 from anycorn.config import Config
 from anycorn.events import Closed, RawData, Updated
-from anycorn.logging import Logger
 from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
 from anycorn.protocol.h11 import H2CProtocolRequiredError, H2ProtocolAssumedError, H11Protocol
 from anycorn.protocol.http_stream import HTTPStream
 from anycorn.typing import ConnectionState
 from anycorn.typing import Event as IOEvent
 from anycorn.worker_context import EventWrapper
+from tests.helpers import capture_logs
 
 if TYPE_CHECKING:
     from _pytest.monkeypatch import MonkeyPatch
@@ -504,11 +504,15 @@ async def test_protocol_logs_a_rejected_request(protocol: H11Protocol) -> None:
 
     https://github.com/pgjones/hypercorn/issues/157
     """
-    protocol.config._log = AsyncMock(spec=Logger)
+    logs = capture_logs(protocol.config)
 
     await protocol.handle(RawData(data=b"broken nonsense\r\n\r\n"))
 
-    protocol.config._log.info.assert_called()
+    # The real error log ran and recorded why, which is the point of the fix; the
+    # mock this replaces asserted only that something had been called.
+    assert len(logs.error) == 1
+    assert "Rejecting request" in logs.error[0]
+    assert "(400)" in logs.error[0]
 
 
 @pytest.mark.anyio

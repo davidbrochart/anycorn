@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from contextlib import AsyncExitStack, asynccontextmanager
 from copy import deepcopy
 from json import dumps
 from math import inf
 from socket import AF_INET
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import anyio
 import anyio.abc
@@ -190,6 +191,42 @@ async def serve_in_memory(
         task_group.start_soon(server.run)
 
         yield client_stream
+
+
+class LogCapture(NamedTuple):
+    """The lines a real `Logger` emitted, split by the stream they went to."""
+
+    access: list[str]
+    error: list[str]
+
+
+def capture_logs(config: Config) -> LogCapture:
+    """Point *config* at real loggers and return the lines they emit.
+
+    The alternative, and what much of this suite used to do, is to replace
+    `Config.log` with an `AsyncMock` and assert the mock was called. That passes
+    whether or not the access log can actually render the request it was handed -
+    an atom that raises on a scope with no client, say - because no formatting
+    ever runs. Here the real `Logger`, the real `AccessLogAtoms` and the real
+    format string all run, and the test reads what came out.
+    """
+    captured = LogCapture([], [])
+
+    def _logger(name: str, lines: list[str]) -> logging.Logger:
+        class _Handler(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                lines.append(record.getMessage())
+
+        # Named per capture so concurrent tests cannot collect each other's lines
+        logger = logging.getLogger(f"anycorn.test.{name}.{id(captured)}")
+        logger.handlers = [_Handler()]
+        logger.propagate = False
+        logger.setLevel(logging.DEBUG)
+        return logger
+
+    config.accesslog = _logger("access", captured.access)
+    config.errorlog = _logger("error", captured.error)
+    return captured
 
 
 async def empty_framework(scope: Scope, receive: Callable, send: Callable) -> None:

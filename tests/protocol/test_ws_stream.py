@@ -11,7 +11,6 @@ import pytest
 from wsproto.events import BytesMessage, TextMessage
 
 from anycorn.config import Config
-from anycorn.logging import Logger
 from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
 from anycorn.protocol.ws_stream import (
     ASGIWebsocketState,
@@ -31,6 +30,7 @@ from anycorn.typing import (
 )
 from anycorn.utils import UnexpectedMessageError, default_tls_extension
 from anycorn.worker_context import WorkerContext
+from tests.helpers import LogCapture, capture_logs
 
 try:
     from unittest.mock import AsyncMock
@@ -167,11 +167,22 @@ def test_handshake_accept_additional_headers() -> None:
     ]
 
 
+@pytest.fixture(name="config")
+def _config() -> Config:
+    return Config()
+
+
+@pytest.fixture(name="logs")
+def _logs(config: Config) -> LogCapture:
+    """Run the real access log against *config*, and collect what it writes."""
+    return capture_logs(config)
+
+
 @pytest.fixture(name="stream")
-async def _stream() -> WSStream:
+async def _stream(config: Config, logs: LogCapture) -> WSStream:  # noqa: ARG001
     stream = WSStream(
         AsyncMock(),
-        Config(),
+        config,
         WorkerContext(None),
         AsyncMock(),
         None,
@@ -182,7 +193,6 @@ async def _stream() -> WSStream:
     )
     stream.task_group.spawn_app.return_value = AsyncMock()  # type: ignore[attr-defined]
     stream.app_put = AsyncMock()
-    stream.config._log = AsyncMock(spec=Logger)
     return stream
 
 
@@ -233,7 +243,7 @@ async def test_handle_request_tls() -> None:
     )
     stream.task_group.spawn_app.return_value = AsyncMock()  # type: ignore[attr-defined]
     stream.app_put = AsyncMock()
-    stream.config._log = AsyncMock(spec=Logger)
+    capture_logs(stream.config)
     await stream.handle(
         Request(
             stream_id=1,
@@ -384,7 +394,7 @@ async def test_send_accept_with_additional_headers(stream: WSStream) -> None:
 
 
 @pytest.mark.anyio
-async def test_send_reject(stream: WSStream) -> None:
+async def test_send_reject(stream: WSStream, logs: LogCapture) -> None:
     await stream.handle(
         Request(
             stream_id=1,
@@ -417,7 +427,7 @@ async def test_send_reject(stream: WSStream) -> None:
         call(Body(stream_id=1, data=b"Body")),
         call(EndBody(stream_id=1)),
     ]
-    stream.config._log.access.assert_called()  # type: ignore[unresolved-attribute]
+    assert len(logs.access) == 1
 
 
 @pytest.mark.anyio
@@ -449,7 +459,7 @@ async def test_invalid_server_name(stream: WSStream) -> None:
 
 
 @pytest.mark.anyio
-async def test_send_app_error_handshake(stream: WSStream) -> None:
+async def test_send_app_error_handshake(stream: WSStream, logs: LogCapture) -> None:
     await stream.handle(
         Request(
             stream_id=1,
@@ -473,11 +483,11 @@ async def test_send_app_error_handshake(stream: WSStream) -> None:
         call(EndBody(stream_id=1)),
         call(StreamClosed(stream_id=1)),
     ]
-    stream.config._log.access.assert_called()  # type: ignore[attr-defined]
+    assert len(logs.access) == 1
 
 
 @pytest.mark.anyio
-async def test_send_app_error_connected(stream: WSStream) -> None:
+async def test_send_app_error_connected(stream: WSStream, logs: LogCapture) -> None:
     await stream.handle(
         Request(
             stream_id=1,
@@ -496,7 +506,7 @@ async def test_send_app_error_connected(stream: WSStream) -> None:
         call(Data(stream_id=1, data=b"\x88\x02\x03\xf3")),
         call(StreamClosed(stream_id=1)),
     ]
-    stream.config._log.access.assert_called()  # type: ignore[attr-defined]
+    assert len(logs.access) == 1
 
 
 @pytest.mark.anyio

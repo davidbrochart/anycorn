@@ -8,7 +8,6 @@ from unittest.mock import call
 import pytest
 
 from anycorn.config import Config
-from anycorn.logging import Logger
 from anycorn.protocol.events import (
     Body,
     EndBody,
@@ -29,6 +28,7 @@ from anycorn.typing import (
 )
 from anycorn.utils import UnexpectedMessageError, default_tls_extension
 from anycorn.worker_context import WorkerContext
+from tests.helpers import LogCapture, capture_logs
 
 try:
     from unittest.mock import AsyncMock
@@ -37,11 +37,22 @@ except ImportError:
     from unittest.mock import AsyncMock
 
 
+@pytest.fixture(name="config")
+def _config() -> Config:
+    return Config()
+
+
+@pytest.fixture(name="logs")
+def _logs(config: Config) -> LogCapture:
+    """Run the real access log against *config*, and collect what it writes."""
+    return capture_logs(config)
+
+
 @pytest.fixture(name="stream")
-async def _stream() -> HTTPStream:
+async def _stream(config: Config, logs: LogCapture) -> HTTPStream:  # noqa: ARG001
     stream = HTTPStream(
         AsyncMock(),
-        Config(),
+        config,
         WorkerContext(None),
         AsyncMock(),
         None,
@@ -51,7 +62,6 @@ async def _stream() -> HTTPStream:
         None,
     )
     stream.app_put = AsyncMock()
-    stream.config._log = AsyncMock(spec=Logger)
     return stream
 
 
@@ -138,7 +148,7 @@ async def test_handle_request_http_tls() -> None:
         default_tls_extension(),
     )
     stream.app_put = AsyncMock()
-    stream.config._log = AsyncMock(spec=Logger)
+    capture_logs(stream.config)
     await stream.handle(
         Request(
             stream_id=1,
@@ -192,7 +202,7 @@ async def test_handle_closed(stream: HTTPStream) -> None:
 
 
 @pytest.mark.anyio
-async def test_send_response(stream: HTTPStream) -> None:
+async def test_send_response(stream: HTTPStream, logs: LogCapture) -> None:
     await stream.handle(
         Request(
             stream_id=1,
@@ -221,12 +231,14 @@ async def test_send_response(stream: HTTPStream) -> None:
         call(EndBody(stream_id=1)),
         call(StreamClosed(stream_id=1)),
     ]
-    stream.config._log.access.assert_called()  # type: ignore[unresolved-attribute]
+    # The real access log ran, rather than a mock recording that it was called
+    assert len(logs.access) == 1
+    assert '"GET / 2" 200' in logs.access[0]
 
 
 @pytest.mark.anyio
 async def test_send_closed_does_not_double_log_on_concurrent_stream_close(
-    stream: HTTPStream,
+    stream: HTTPStream, logs: LogCapture
 ) -> None:
     """A StreamClosed racing the response's completion must not log the request twice.
 
@@ -267,7 +279,7 @@ async def test_send_closed_does_not_double_log_on_concurrent_stream_close(
         cast("HTTPResponseBodyEvent", {"type": "http.response.body", "body": b"Body"})
     )
 
-    assert stream.config._log.access.call_count == 1  # type: ignore[attr-defined]
+    assert len(logs.access) == 1
 
 
 @pytest.mark.anyio
@@ -397,7 +409,7 @@ async def test_send_trailers_ignored(stream: HTTPStream) -> None:
 
 
 @pytest.mark.anyio
-async def test_send_app_error(stream: HTTPStream) -> None:
+async def test_send_app_error(stream: HTTPStream, logs: LogCapture) -> None:
     await stream.handle(
         Request(
             stream_id=1,
@@ -421,7 +433,8 @@ async def test_send_app_error(stream: HTTPStream) -> None:
         call(EndBody(stream_id=1)),
         call(StreamClosed(stream_id=1)),
     ]
-    stream.config._log.access.assert_called()  # type: ignore[attr-defined]
+    assert len(logs.access) == 1
+    assert '"GET / 2" 500' in logs.access[0]
 
 
 @pytest.mark.parametrize(
