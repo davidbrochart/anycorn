@@ -194,6 +194,33 @@ class _H3Transport(httpx2.AsyncBaseTransport):
         status_code, _, _ = await self._receive_response(stream_id)
         return status_code
 
+    async def open_request(self, path: str) -> int:
+        """Send request headers without ending the stream, and return its id.
+
+        httpx drives a whole request/response; a client that abandons one part way
+        through has to be built by hand.
+        """
+        stream_id = self._quic.get_next_available_stream_id()
+        self._read_queue[stream_id] = []
+        self._read_ready[stream_id] = anyio.Event()
+        self._http.send_headers(
+            stream_id=stream_id,
+            headers=[
+                (b":method", b"GET"),
+                (b":scheme", b"https"),
+                (b":authority", self._address[0].encode()),
+                (b":path", path.encode()),
+            ],
+            end_stream=False,
+        )
+        await self._transmit()
+        return stream_id
+
+    async def reset(self, stream_id: int, error_code: int = 0) -> None:
+        """Abandon a request with RESET_STREAM, as a cancelling client does."""
+        self._quic.reset_stream(stream_id, error_code)
+        await self._transmit()
+
     async def _receive_loop(self) -> None:
         while True:
             try:
@@ -665,3 +692,99 @@ async def test_state_is_not_shared_between_connections(
     assert [snapshot for _, snapshot, _, _ in seen] == [{}, {}]
     first_state, second_state = (state for _, _, state, _ in seen)
     assert first_state is not second_state
+
+
+def _cancelled_request_app(
+    started: anyio.Event, disconnected: anyio.Event, responded: anyio.Event
+) -> Callable:
+    """Return an app that keeps going after the client has abandoned the request.
+
+    Which is what an app doing real work does: it is mid-handler when the reset
+    lands, and only finds out at its next receive(). Sending the response it had
+    already prepared is then entirely reasonable of it, and must not take the
+    connection down.
+    """
+
+    async def _app(scope: Any, receive: Any, send: Any) -> None:  # noqa: ANN401
+        assert scope["type"] == "http"
+        if scope["path"] != "/slow":
+            # Any other path is served normally, so the connection can be shown to
+            # still work once the abandoned request is done with
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"still here"})
+            return
+
+        started.set()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                break
+        disconnected.set()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"too late"})
+        responded.set()
+
+    return _app
+
+
+@pytest.mark.anyio
+async def test_a_reset_stream_disconnects_the_app_and_is_not_written_to(
+    tls_certs: TLSCerts, free_udp_port: int
+) -> None:
+    """A client's RESET_STREAM must reach the app as a disconnect, and not break the rest.
+
+    Driven by a real client abandoning a real request, so what is asserted is only
+    what a peer can observe: the app is told, it may respond anyway, and the
+    connection goes on serving other requests.
+
+    Deliberately not asserted here, because end to end cannot tell: *which* of
+    H3Protocol's two guards kept the connection up. Skipping the send and catching
+    aioquic's assertion have the same effect from outside, so removing either one
+    alone leaves this test passing. test_h3.py pins the skip itself.
+
+    https://github.com/pgjones/hypercorn/issues/352
+    """
+    started = anyio.Event()
+    disconnected = anyio.Event()
+    responded = anyio.Event()
+
+    config = Config()
+    config.bind = []  # only QUIC is needed here, so skip the TCP listener
+    config.quic_bind = [f"{HOST}:{free_udp_port}"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+
+    sockets = config.create_sockets()
+    datagram_socket = await wrap_datagram_socket(sockets.quic_sockets[0])
+    app_wrapper = wrap_app(
+        _cancelled_request_app(started, disconnected, responded),
+        config.wsgi_max_body_size,
+        None,
+    )
+    udp_server = UDPServer(app_wrapper, config, WorkerContext(None), {}, datagram_socket)
+
+    try:
+        async with anyio.create_task_group() as tg:
+            await tg.start(udp_server.run)
+            try:
+                async with _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport:
+                    stream_id = await transport.open_request("/slow")
+                    with anyio.fail_after(10):
+                        await started.wait()
+
+                    await transport.reset(stream_id)
+
+                    # The app is told, and goes on to respond to a stream that is gone
+                    with anyio.fail_after(10):
+                        await disconnected.wait()
+                        await responded.wait()
+
+                    # The connection survived the late write, so it still serves
+                    async with httpx2.AsyncClient(transport=transport) as client:
+                        with anyio.fail_after(10):
+                            response = await client.get(f"https://{HOST}:{free_udp_port}/after")
+                    assert response.status_code == 200  # noqa: PLR2004
+            finally:
+                tg.cancel_scope.cancel()
+    finally:
+        await datagram_socket.aclose()
