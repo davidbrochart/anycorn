@@ -665,3 +665,34 @@ async def test_closed_app_send_noop(stream: WSStream) -> None:
     stream.closed = True
     await stream.app_send(cast("WebsocketAcceptEvent", {"type": "websocket.accept"}))
     stream.send.assert_not_called()  # type: ignore[attr-defined]
+
+
+@pytest.mark.anyio
+async def test_rejection_body_without_a_response_start(stream: WSStream) -> None:
+    """A denial body with no response started is the app's error, not a crash.
+
+    The status to send it with comes from the response start that never arrived,
+    and reading it raised AttributeError - so an app that sent the body first got
+    that instead of the unexpected-message error describing what it did wrong.
+    """
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="1.1",
+            method="GET",
+            raw_path=b"/",
+            state=ConnectionState({}),
+            headers=[
+                (b"host", b"anycorn"),
+                (b"connection", b"Upgrade"),
+                (b"upgrade", b"WebSocket"),
+                (b"sec-websocket-version", b"13"),
+                (b"sec-websocket-key", b"ZGVtbw=="),
+            ],
+        )
+    )
+
+    with pytest.raises(UnexpectedMessageError):
+        await stream.app_send(
+            {"type": "websocket.http.response.body", "body": b"denied", "more_body": False}
+        )

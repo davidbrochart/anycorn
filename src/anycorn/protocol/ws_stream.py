@@ -225,7 +225,9 @@ class WSStream:
         self.config = config
         self.context = context
         self.task_group = task_group
-        self.response: WebsocketResponseStartEvent
+        # Only set once the app starts a denial response; a body may arrive
+        # without one, which is the app's mistake rather than a crash here
+        self.response: WebsocketResponseStartEvent | None = None
         self.scope: WebsocketScope
         self.send = send
         self.server = server
@@ -327,10 +329,18 @@ class WSStream:
             and self.state == ASGIWebsocketState.HANDSHAKE
         ):
             self.response = message
-        elif message["type"] == "websocket.http.response.body" and self.state in {
-            ASGIWebsocketState.HANDSHAKE,
-            ASGIWebsocketState.RESPONSE,
-        }:
+        elif (
+            message["type"] == "websocket.http.response.body"
+            and self.state
+            in {
+                ASGIWebsocketState.HANDSHAKE,
+                ASGIWebsocketState.RESPONSE,
+            }
+            # Without a response having started there is no status to send this
+            # body with, and reading one raised AttributeError. Fall through to
+            # the unexpected-message error the app deserves instead.
+            and self.response is not None
+        ):
             await self._send_rejection(message)
         elif message["type"] == "websocket.send" and self.state == ASGIWebsocketState.CONNECTED:
             event: WSProtoEvent
@@ -420,6 +430,8 @@ class WSStream:
             self.task_group.spawn(self._send_pings)
 
     async def _send_rejection(self, message: WebsocketResponseBodyEvent) -> None:
+        # Guaranteed by app_send, which only routes here once a response has started
+        assert self.response is not None
         body_suppressed = suppress_body("GET", self.response["status"])
         if self.state == ASGIWebsocketState.HANDSHAKE:
             headers = build_and_validate_headers(self.response["headers"])
