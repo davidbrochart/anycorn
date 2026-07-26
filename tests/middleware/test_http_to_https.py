@@ -177,6 +177,30 @@ def test_http_to_https_redirect_new_url_header() -> None:
     assert new_url == "https://localhost/"
 
 
+@pytest.mark.parametrize(
+    ("raw_path", "expected"),
+    [
+        (b"/x\xff", "https://localhost/x%FF"),  # not UTF-8 at all
+        (b"/caf\xc3\xa9", "https://localhost/caf%C3%A9"),  # raw UTF-8
+        (b"/caf%C3%A9", "https://localhost/caf%C3%A9"),  # already escaped: not again
+        (b"/a%20b", "https://localhost/a%20b"),
+        (b"/~u/x,y;z", "https://localhost/~u/x,y;z"),  # legal unescaped, left alone
+    ],
+)
+def test_new_url_percent_escapes_a_target_that_is_not_a_uri(raw_path: bytes, expected: str) -> None:
+    """raw_path is the bytes as received, and a Location header has to be a URI.
+
+    Decoding those bytes as UTF-8 raised on a target that is not UTF-8 - which
+    HTTP/2 and HTTP/3 hand over verbatim - so the request died here instead of
+    being redirected.
+    """
+    app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
+    scope = _scope_with_host(b"localhost")
+    scope["raw_path"] = raw_path
+
+    assert app._new_url("https", scope) == expected
+
+
 def _scope_with_host(host: bytes) -> HTTPScope:
     return HTTPScope(
         http_version="1.1",
