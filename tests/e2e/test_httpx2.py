@@ -22,6 +22,8 @@ TLS_HOST = "localhost"
 
 @dataclass(frozen=True)
 class HTTPX2Mode:
+    """A protocol/TLS combination to run the httpx2 end-to-end tests against."""
+
     free_tcp_port: int
     tls_certs: TLSCerts
     protocol: str
@@ -95,6 +97,8 @@ async def app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
             "body": b"Hello, world!",
         }
     )
+
+
 @pytest.mark.anyio
 async def test_keep_alive_max_requests_regression(free_tcp_port: int) -> None:
     config = Config()
@@ -185,9 +189,8 @@ async def test_server_cancelled_mid_request(
 
     assert request_error is not None
     if httpx2_mode.http2:
-        assert (
-            "Server disconnected" in str(request_error)
-            or "socket connection broken" in str(request_error)
+        assert "Server disconnected" in str(request_error) or "socket connection broken" in str(
+            request_error
         )
     else:
         assert "peer closed connection without sending complete message body" in str(request_error)

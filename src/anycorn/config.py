@@ -105,10 +105,11 @@ class Config:
         self._quic_addresses = []
         self._log = None
         self._root_path = ""
+        self.alpn_protocols = ["h2", "http/1.1"]
 
     access_log_format = '%(h)s %(l)s %(l)s %(t)s "%(r)s" %(s)s %(b)s "%(f)s" "%(a)s"'
     accesslog: logging.Logger | str | None = None
-    alpn_protocols: ClassVar[list[str]] = ["h2", "http/1.1"]
+    alpn_protocols: list[str]
     alt_svc_headers: ClassVar[list[str]] = []
     application_path: str
     backlog = 100
