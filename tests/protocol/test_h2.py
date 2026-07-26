@@ -161,3 +161,46 @@ async def test_stream_send_trailers_ends_stream() -> None:
         await protocol.stream_send(Trailers(stream_id=1, headers=[(b"x", b"y")]))
 
     protocol.connection.send_headers.assert_called_once_with(1, [(b"x", b"y")], end_stream=True)
+
+
+@pytest.mark.anyio
+async def test_reset_stream_does_not_leak_send_state() -> None:
+    """A reset stream must not leave its send buffer and priority entry behind.
+
+    Only _send_data tidies those up, and only once a response has finished. A
+    stream the peer resets never gets there, so on a long-lived connection - a
+    browser cancelling requests, say - both grew without bound.
+    """
+    protocol = H2Protocol(
+        Mock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        ConnectionState({}),
+        None,
+        None,
+        AsyncMock(),
+        None,
+    )
+    client = H2Connection()
+    client.initiate_connection()
+    client.send_headers(
+        1,
+        [
+            (b":method", b"POST"),
+            (b":path", b"/"),
+            (b":authority", b"anycorn"),
+            (b":scheme", b"https"),
+        ],
+        end_stream=False,
+    )
+    await protocol.handle(RawData(data=client.data_to_send()))
+    assert 1 in protocol.stream_buffers
+    assert 1 in protocol.priority._streams
+
+    client.reset_stream(1)
+    await protocol.handle(RawData(data=client.data_to_send()))
+
+    assert protocol.streams == {}
+    assert protocol.stream_buffers == {}
+    assert 1 not in protocol.priority._streams
