@@ -17,6 +17,10 @@ if TYPE_CHECKING:
     from .datagram import DatagramSocket
     from .worker_context import WorkerContext
 
+# Long enough for the closes to reach a peer that is still there, short enough that
+# an unreachable one cannot delay the worker's exit.
+CLOSE_TIMEOUT = 1.0
+
 
 class UDPServer:
     """Handles UDP datagrams for QUIC protocol connections."""
@@ -60,9 +64,17 @@ class UDPServer:
                 self.protocol_send,
             )
 
-            while not self.context.terminated.is_set() or not self.protocol.idle:
-                data, address = await self.socket.receive()
-                await self.protocol.handle(RawData(data=data, address=address))
+            try:
+                while not self.context.terminated.is_set() or not self.protocol.idle:
+                    data, address = await self.socket.receive()
+                    await self.protocol.handle(RawData(data=data, address=address))
+            finally:
+                # Shutdown cancels this task, and a closed UDP socket tells the peer
+                # nothing, so the close has to be sent before unwinding gets any
+                # further - shielded, or the sends are cancelled too. Bounded so a
+                # peer that cannot be written to cannot hold the worker open.
+                with anyio.move_on_after(CLOSE_TIMEOUT, shield=True):
+                    await self.protocol.close_all()
 
     async def protocol_send(self, event: Event) -> None:
         """Forward a protocol event back to the UDP socket."""

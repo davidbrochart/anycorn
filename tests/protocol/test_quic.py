@@ -7,13 +7,14 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aioquic.h3.connection import ErrorCode
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from anycorn.config import Config
-from anycorn.protocol.quic import QuicProtocol
+from anycorn.protocol.quic import QuicProtocol, _Connection
 from anycorn.typing import ConnectionState
 
 if TYPE_CHECKING:
@@ -49,7 +50,7 @@ def _write_encrypted_cert(directory: Path) -> tuple[str, str]:
     return str(certfile), str(keyfile)
 
 
-def _make_protocol(config: Config) -> QuicProtocol:
+def _make_protocol(config: Config, send: AsyncMock | None = None) -> QuicProtocol:
     return QuicProtocol(
         MagicMock(),  # app
         config,
@@ -57,7 +58,7 @@ def _make_protocol(config: Config) -> QuicProtocol:
         MagicMock(),  # task_group
         ConnectionState({}),
         ("127.0.0.1", 4433),  # server
-        AsyncMock(),  # send
+        AsyncMock() if send is None else send,
     )
 
 
@@ -89,3 +90,32 @@ def test_encrypted_http3_key_without_password_is_an_error(tmp_path: Path) -> Non
 
     with pytest.raises(TypeError, match="Password was not given"):
         _make_protocol(config)
+
+
+@pytest.mark.anyio
+async def test_close_all_closes_each_connection_once(tmp_path: Path) -> None:
+    """Shutdown tells every peer once, with the close nginx sends on a graceful stop.
+
+    The code matters: an application close carrying H3_NO_ERROR is what nginx
+    finalizes an HTTP/3 connection with, and a peer reads a transport-level close or
+    any other code as the connection having failed rather than been shut down.
+    """
+    certfile, keyfile = _write_encrypted_cert(tmp_path)
+    config = Config()
+    config.certfile = certfile
+    config.keyfile = keyfile
+    config.keyfile_password = _KEY_PASSWORD
+    send = AsyncMock()
+    protocol = _make_protocol(config, send)
+
+    quic = MagicMock()
+    quic.datagrams_to_send.return_value = [(b"close", ("127.0.0.1", 4433))]
+    connection = _Connection(cids={b"one", b"two"}, quic=quic, task=MagicMock())
+    # Registered under each of its connection ids, as handle() leaves it
+    protocol.connections = {b"one": connection, b"two": connection}
+
+    await protocol.close_all()
+
+    quic.close.assert_called_once_with(error_code=ErrorCode.H3_NO_ERROR)
+    # Once, not once per connection id
+    send.assert_awaited_once()
