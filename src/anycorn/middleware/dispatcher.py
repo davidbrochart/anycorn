@@ -83,6 +83,8 @@ class DispatcherMiddleware(_DispatcherMiddleware):
         }
         self.startup_complete = dict.fromkeys(self.mounts, False)
         self.shutdown_complete = dict.fromkeys(self.mounts, False)
+        # Mounts that reported a failure, so nothing is later completed on their behalf
+        self.failed = dict.fromkeys(self.mounts, False)
 
         async with AsyncExitStack() as stack:
             for send_stream, receive_stream in self.app_queues.values():
@@ -109,8 +111,15 @@ class DispatcherMiddleware(_DispatcherMiddleware):
             # before the app has acknowledged startup, treat this mount as having no
             # lifespan of its own rather than failing the whole dispatcher; a raise
             # once it is past startup is a genuine error, so let that propagate.
-            if self.startup_complete[path]:
+            # So is one from a mount that reported a failure: passing that on is what
+            # raises here, and swallowing it leaves the server waiting out its startup
+            # timeout for an acknowledgement that is never coming.
+            if self.startup_complete[path] or self.failed[path]:
                 raise
+        # A mount that said it failed has had that passed on already; completing for
+        # it here would take it back, and report a worker that cannot serve as ready.
+        if self.failed[path]:
+            return
         # However it opted out - by raising, or by returning without acknowledging -
         # make sure this mount does not leave the dispatcher's own startup or shutdown
         # waiting on a completion that will never come.
@@ -129,3 +138,9 @@ class DispatcherMiddleware(_DispatcherMiddleware):
             self.shutdown_complete[path] = True
             if all(self.shutdown_complete.values()):
                 await send({"type": "lifespan.shutdown.complete"})
+        elif message["type"] in {"lifespan.startup.failed", "lifespan.shutdown.failed"}:
+            # One mount that cannot start is the dispatcher failing to start. This
+            # used to be dropped, and the mount then completed on its way out, so a
+            # worker whose app had said it could not run reported itself ready.
+            self.failed[path] = True
+            await send(message)
