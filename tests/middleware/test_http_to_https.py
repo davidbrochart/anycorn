@@ -153,54 +153,6 @@ async def test_http_to_https_redirect_middleware_websocket_no_rejection() -> Non
     assert sent_events == [{"type": "websocket.close"}]
 
 
-def test_http_to_https_redirect_new_url_header() -> None:
-    app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
-    new_url = app._new_url(
-        "https",
-        HTTPScope(
-            http_version="1.1",
-            asgi={},
-            method="GET",
-            headers=[(b"host", b"localhost")],
-            path="/",
-            root_path="",
-            query_string=b"",
-            raw_path=b"/",
-            scheme="http",
-            type="http",
-            client=None,
-            server=None,
-            extensions={},
-            state=ConnectionState({}),
-        ),
-    )
-    assert new_url == "https://localhost/"
-
-
-@pytest.mark.parametrize(
-    ("raw_path", "expected"),
-    [
-        (b"/x\xff", "https://localhost/x%FF"),  # not UTF-8 at all
-        (b"/caf\xc3\xa9", "https://localhost/caf%C3%A9"),  # raw UTF-8
-        (b"/caf%C3%A9", "https://localhost/caf%C3%A9"),  # already escaped: not again
-        (b"/a%20b", "https://localhost/a%20b"),
-        (b"/~u/x,y;z", "https://localhost/~u/x,y;z"),  # legal unescaped, left alone
-    ],
-)
-def test_new_url_percent_escapes_a_target_that_is_not_a_uri(raw_path: bytes, expected: str) -> None:
-    """raw_path is the bytes as received, and a Location header has to be a URI.
-
-    Decoding those bytes as UTF-8 raised on a target that is not UTF-8 - which
-    HTTP/2 and HTTP/3 hand over verbatim - so the request died here instead of
-    being redirected.
-    """
-    app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
-    scope = _scope_with_host(b"localhost")
-    scope["raw_path"] = raw_path
-
-    assert app._new_url("https", scope) == expected
-
-
 def _scope_with_host(host: bytes) -> HTTPScope:
     return HTTPScope(
         http_version="1.1",
@@ -220,6 +172,53 @@ def _scope_with_host(host: bytes) -> HTTPScope:
     )
 
 
+async def _location(app: HTTPToHTTPSRedirectMiddleware, scope: HTTPScope) -> bytes | None:
+    """Return the Location a client is sent, or None where it is not redirected."""
+    sent_events: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent_events.append(message)
+
+    await app(scope, None, send)  # type: ignore[arg-type]
+
+    return next((value for name, value in sent_events[0]["headers"] if name == b"location"), None)
+
+
+@pytest.mark.anyio
+async def test_http_to_https_redirect_new_url_header() -> None:
+    app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
+
+    assert await _location(app, _scope_with_host(b"localhost")) == b"https://localhost/"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("raw_path", "expected"),
+    [
+        (b"/x\xff", b"https://localhost/x%FF"),  # not UTF-8 at all
+        (b"/caf\xc3\xa9", b"https://localhost/caf%C3%A9"),  # raw UTF-8
+        (b"/caf%C3%A9", b"https://localhost/caf%C3%A9"),  # already escaped: not again
+        (b"/a%20b", b"https://localhost/a%20b"),
+        (b"/~u/x,y;z", b"https://localhost/~u/x,y;z"),  # legal unescaped, left alone
+    ],
+)
+async def test_redirect_percent_escapes_a_target_that_is_not_a_uri(
+    raw_path: bytes, expected: bytes
+) -> None:
+    """raw_path is the bytes as received, and a Location header has to be a URI.
+
+    Decoding those bytes as UTF-8 raised on a target that is not UTF-8 - which
+    HTTP/2 and HTTP/3 hand over verbatim - so the request died here instead of
+    being redirected.
+    """
+    app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
+    scope = _scope_with_host(b"localhost")
+    scope["raw_path"] = raw_path
+
+    assert await _location(app, scope) == expected
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "host",
     [
@@ -232,33 +231,36 @@ def _scope_with_host(host: bytes) -> HTTPScope:
         b"",
     ],
 )
-def test_new_url_refuses_a_host_header_that_is_not_a_bare_host(host: bytes) -> None:
+async def test_redirect_refuses_a_host_header_that_is_not_a_bare_host(host: bytes) -> None:
     """The Host header is the client's to write, and it lands in the redirect target.
 
     Anything but a bare host[:port] there lets a client choose where this server
     sends it - a Host of "example.com/elsewhere" redirected to
-    https://example.com/elsewhere rather than back to this site.
+    https://example.com/elsewhere rather than back to this site. Such a request
+    gets no Location at all now; the status it does get is asserted below.
     """
     app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
 
-    assert app._new_url("https", _scope_with_host(host)) is None
+    assert await _location(app, _scope_with_host(host)) is None
 
 
+@pytest.mark.anyio
 @pytest.mark.parametrize(
     "host", [b"example.com", b"example.com:8443", b"127.0.0.1:80", b"[::1]:80"]
 )
-def test_new_url_accepts_a_bare_host(host: bytes) -> None:
+async def test_redirect_accepts_a_bare_host(host: bytes) -> None:
     """A plain host, with or without a port, is still used as before."""
     app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
 
-    assert app._new_url("https", _scope_with_host(host)) == f"https://{host.decode()}/"
+    assert await _location(app, _scope_with_host(host)) == b"https://%s/" % host
 
 
-def test_new_url_prefers_the_configured_host() -> None:
+@pytest.mark.anyio
+async def test_redirect_prefers_the_configured_host() -> None:
     """A pinned host is what makes this immune, and it is not second-guessed."""
     app = HTTPToHTTPSRedirectMiddleware(empty_framework, "pinned.example")
 
-    assert app._new_url("https", _scope_with_host(b"attacker.example")) == "https://pinned.example/"
+    assert await _location(app, _scope_with_host(b"attacker.example")) == b"https://pinned.example/"
 
 
 @pytest.mark.anyio
