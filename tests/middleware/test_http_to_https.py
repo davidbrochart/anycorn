@@ -185,7 +185,7 @@ async def _location(app: HTTPToHTTPSRedirectMiddleware, scope: HTTPScope) -> byt
 
 
 @pytest.mark.anyio
-async def test_http_to_https_redirect_new_url_header() -> None:
+async def test_redirect_sends_the_host_header_back_as_the_target() -> None:
     app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
 
     assert await _location(app, _scope_with_host(b"localhost")) == b"https://localhost/"
