@@ -565,18 +565,15 @@ async def test_trailers_without_te_do_not_crash(stream: HTTPStream) -> None:
     ("raw_path", "expected"),
     [
         (b"/caf%C3%A9", "/café"),  # percent-encoded UTF-8, decoded per the ASGI spec
-        (b"/bad%ff", "/bad�"),  # what it encodes is not UTF-8: replaced, never raised
+        (b"/a%20b", "/a b"),
+        (b"/x%2Fy", "/x/y"),
     ],
 )
 @pytest.mark.anyio
 async def test_handle_request_percent_encoded_path(
     stream: HTTPStream, raw_path: bytes, expected: str
 ) -> None:
-    """A target is ascii on the wire, but what it percent-encodes need not be.
-
-    Decoding those bytes strictly would raise UnicodeDecodeError and the client
-    would get no reply at all, so they are replaced instead.
-    """
+    """A valid escape sequence is decoded into the character it stands for."""
     await stream.handle(
         Request(
             stream_id=1,
@@ -600,6 +597,9 @@ async def test_handle_request_percent_encoded_path(
         b"/bad\xff",  # not UTF-8 at all
         b"/a b",  # a space, which ends the target on the wire
         b"/x\x7f",  # DEL, and every control character below it
+        b"/bad%ff",  # a valid escape for a byte that is not UTF-8
+        b"/x%zz",  # not a hex escape at all
+        b"/x%",  # an escape running off the end of the target
     ],
 )
 @pytest.mark.anyio
@@ -608,10 +608,12 @@ async def test_handle_request_rejects_a_target_h11_would_reject(
 ) -> None:
     """400, which is what h11 already answers the same target over HTTP/1.1.
 
-    HTTP/2 and HTTP/3 carry :path as opaque octets and check nothing, so anycorn
-    used to serve over those what it refuses over HTTP/1.1 - and decoding the
-    bytes to reach an app is lossy, every byte from 0x80 up replaced by the same
-    U+FFFD, so two targets that differ on the wire arrived as one path.
+    Two rules, both answered the same way. A raw byte outside printable ascii is
+    what h11 already refuses over HTTP/1.1, and HTTP/2 and HTTP/3 carry :path as
+    opaque octets so without this they would serve what HTTP/1.1 does not. And an
+    escape that does not decode to UTF-8 has no ASGI path to put in the scope:
+    replacing it with U+FFFD would alias every such byte onto one path, so two
+    targets that differ on the wire would reach the app as one.
     """
     await stream.handle(
         Request(

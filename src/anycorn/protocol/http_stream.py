@@ -5,7 +5,6 @@ from __future__ import annotations
 from enum import Enum, auto
 from time import time
 from typing import TYPE_CHECKING
-from urllib.parse import unquote_to_bytes
 
 from anycorn.typing import (
     AppWrapper,
@@ -21,8 +20,10 @@ from anycorn.typing import (
     WorkerContext,
 )
 from anycorn.utils import (
+    InvalidRequestPathError,
     UnexpectedMessageError,
     build_and_validate_headers,
+    decode_asgi_path,
     suppress_body,
     valid_request_target,
     valid_server_name,
@@ -111,6 +112,13 @@ class HTTPStream:
             self.start_time = time()
             path, _, query_string = event.raw_path.partition(b"?")
 
+            try:
+                decoded_path = decode_asgi_path(path)
+            except InvalidRequestPathError:
+                await self._send_error_response(400)
+                self.closed = True
+                return
+
             extensions = Extensions()
             if self.tls is not None:
                 extensions["tls"] = self.tls
@@ -130,11 +138,7 @@ class HTTPStream:
                 asgi={"spec_version": "2.1", "version": "3.0"},
                 method=event.method,
                 scheme=self.scheme,
-                # Percent-decode as bytes, then take the result as the UTF-8 the ASGI
-                # spec calls for. The target itself is printable ascii by the check
-                # below, but what it percent-encodes is arbitrary bytes, so this still
-                # has to tolerate a sequence that is not UTF-8 rather than raise.
-                path=unquote_to_bytes(path).decode("utf-8", errors="replace"),
+                path=decoded_path,
                 raw_path=path,
                 query_string=query_string,
                 root_path=self.config.root_path,
@@ -312,6 +316,10 @@ class HTTPStream:
             )
         )
         await self.send(EndBody(stream_id=self.stream_id))
-        await self.config.log.access(
-            self.scope, ResponseSummary(status=status_code, headers=[]), time() - self.start_time
-        )
+        # A target rejected before the scope was built has nothing to log against
+        if hasattr(self, "scope"):
+            await self.config.log.access(
+                self.scope,
+                ResponseSummary(status=status_code, headers=[]),
+                time() - self.start_time,
+            )

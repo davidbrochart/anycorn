@@ -6,7 +6,6 @@ from enum import Enum, auto
 from io import BytesIO, StringIO
 from time import time
 from typing import TYPE_CHECKING
-from urllib.parse import unquote_to_bytes
 
 from wsproto.connection import Connection, ConnectionState, ConnectionType
 from wsproto.events import (
@@ -40,8 +39,10 @@ from anycorn.typing import (
     ConnectionState as ASGIConnectionState,  # wsproto has one of its own
 )
 from anycorn.utils import (
+    InvalidRequestPathError,
     UnexpectedMessageError,
     build_and_validate_headers,
+    decode_asgi_path,
     suppress_body,
     valid_request_target,
     valid_server_name,
@@ -256,6 +257,14 @@ class WSStream:
                 event.headers, event.http_version, self.config.websocket_permessage_deflate
             )
             path, _, query_string = event.raw_path.partition(b"?")
+
+            try:
+                decoded_path = decode_asgi_path(path)
+            except InvalidRequestPathError:
+                await self._send_error_response(400)
+                self.closed = True
+                return
+
             extensions = Extensions()
             if self.tls is not None:
                 extensions["tls"] = self.tls
@@ -265,10 +274,7 @@ class WSStream:
                 "asgi": {"spec_version": "2.3", "version": "3.0"},
                 "scheme": self.scheme,
                 "http_version": event.http_version,
-                # As in HTTPStream: the target is printable ascii by the check below,
-                # but what it percent-encodes is arbitrary bytes, so decoding it has
-                # to tolerate a sequence that is not UTF-8 rather than raise.
-                "path": unquote_to_bytes(path).decode("utf-8", errors="replace"),
+                "path": decoded_path,
                 "raw_path": path,
                 "query_string": query_string,
                 "root_path": self.config.root_path,
@@ -412,9 +418,11 @@ class WSStream:
             )
         )
         await self.send(EndBody(stream_id=self.stream_id))
-        await self.config.log.access(
-            self.scope, {"status": status_code, "headers": []}, time() - self.start_time
-        )
+        # A target rejected before the scope was built has nothing to log against
+        if hasattr(self, "scope"):
+            await self.config.log.access(
+                self.scope, {"status": status_code, "headers": []}, time() - self.start_time
+            )
 
     async def _send_wsproto_event(self, event: WSProtoEvent) -> None:
         try:

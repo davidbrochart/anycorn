@@ -18,6 +18,7 @@ from typing import (
     Literal,
     cast,
 )
+from urllib.parse import unquote_to_bytes
 
 from anyio import TypedAttributeLookupError
 from anyio.streams.tls import TLSAttribute
@@ -61,6 +62,10 @@ class LifespanFailureError(Exception):
         super().__init__(f"Lifespan failure in {stage}. '{message}'")
 
 
+class InvalidRequestPathError(ValueError):
+    """Raised when a request path cannot be represented by an ASGI scope."""
+
+
 class UnexpectedMessageError(Exception):
     """Raised when an unexpected ASGI message type is received for the current state."""
 
@@ -70,6 +75,39 @@ class UnexpectedMessageError(Exception):
 
 class FrameTooLargeError(Exception):
     """Raised when a WebSocket frame exceeds the maximum allowed size."""
+
+
+_HEX_DIGITS = b"0123456789abcdefABCDEF"
+
+
+def decode_asgi_path(raw_path: bytes) -> str:
+    """Percent-decode *raw_path* and strictly decode it as UTF-8.
+
+    ASGI requires ``scope["path"]`` to be a Unicode string. Reject malformed
+    percent escapes and byte sequences that cannot be represented as UTF-8,
+    rather than replacing them with U+FFFD and aliasing distinct request paths.
+    """
+    index = 0
+    while True:
+        index = raw_path.find(b"%", index)
+        if index == -1:
+            break
+
+        if (
+            index + 2 >= len(raw_path)
+            or raw_path[index + 1] not in _HEX_DIGITS
+            or raw_path[index + 2] not in _HEX_DIGITS
+        ):
+            msg = f"Malformed percent escape at offset {index}"
+            raise InvalidRequestPathError(msg)
+
+        index += 3
+
+    try:
+        return unquote_to_bytes(raw_path).decode("utf-8")
+    except UnicodeDecodeError as error:
+        msg = "Request path is not valid UTF-8"
+        raise InvalidRequestPathError(msg) from error
 
 
 _CERT_PATTERN = re.compile(r"-----BEGIN CERTIFICATE-----\s.*?-----END CERTIFICATE-----", re.DOTALL)
