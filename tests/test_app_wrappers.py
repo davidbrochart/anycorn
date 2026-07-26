@@ -438,3 +438,39 @@ def test_build_environ_root_path() -> None:
     }
     with pytest.raises(InvalidPathError):
         _build_environ(scope, b"")
+
+
+@pytest.mark.parametrize(
+    ("scheme", "server", "expected"),
+    [
+        ("http", ("example.com", 8000), "8000"),
+        # ASGI allows a server with no port - a unix socket. str() rendered that as
+        # the word "None", which an app rebuilding the request URL cannot use.
+        ("http", ("/run/anycorn.sock", None), "80"),
+        ("https", ("/run/anycorn.sock", None), "443"),
+        # No server at all already fell back, and still does
+        ("http", None, "80"),
+    ],
+)
+def test_build_environ_server_port_is_always_a_usable_string(
+    scheme: str, server: tuple | None, expected: str
+) -> None:
+    environ = _build_environ(
+        cast(
+            "HTTPScope",
+            {
+                "method": "GET",
+                "path": "/",
+                "root_path": "",
+                "query_string": b"",
+                "headers": [],
+                "http_version": "1.1",
+                "scheme": scheme,
+                "server": server,
+            },
+        ),
+        b"",
+    )
+    assert environ["SERVER_PORT"] == expected
+    # A native string PEP 3333 calls for, and one an app can act on
+    assert int(environ["SERVER_PORT"]) > 0

@@ -28,6 +28,10 @@ class _SupportsClose(Protocol):
     def close(self) -> None: ...
 
 
+HTTP_PORT = 80
+HTTPS_PORT = 443
+
+
 class InvalidPathError(Exception):
     """Raised when the request path is invalid."""
 
@@ -199,7 +203,10 @@ def _build_environ(scope: HTTPScope, body: bytes) -> dict:
         "SERVER_NAME": server[0],
         # PEP 3333 requires every CGI-style environ value to be a native string;
         # a WSGI app doing environ["SERVER_PORT"] + something breaks on a raw int.
-        "SERVER_PORT": str(server[1]),
+        # A server with no port - which ASGI allows, and which str() would render
+        # as the word "None" - takes the default for its scheme, so that an app
+        # rebuilding the request URL gets one that parses.
+        "SERVER_PORT": str(server[1] if server[1] is not None else _default_port(scope)),
         "SERVER_PROTOCOL": f"HTTP/{scope['http_version']}",
         "wsgi.version": (1, 0),
         "wsgi.url_scheme": scope.get("scheme", "http"),
@@ -228,3 +235,8 @@ def _build_environ(scope: HTTPScope, body: bytes) -> dict:
             value = environ[corrected_name] + "," + value  # type: ignore[operator,assignment]
         environ[corrected_name] = value
     return environ
+
+
+def _default_port(scope: HTTPScope) -> int:
+    """Return the port a URL of this scheme implies when the server has none."""
+    return HTTPS_PORT if scope.get("scheme") == "https" else HTTP_PORT
