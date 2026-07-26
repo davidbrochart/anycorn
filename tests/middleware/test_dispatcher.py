@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock
 
 import anyio
 import pytest
@@ -141,3 +142,50 @@ async def test_dispatcher_lifespan_with_a_mount_that_declines() -> None:
         {"type": "lifespan.startup.complete"},
         {"type": "lifespan.shutdown.complete"},
     ]
+
+
+@pytest.mark.anyio
+async def test_dispatcher_denies_an_unmatched_websocket_with_404() -> None:
+    """Where the server offers the denial response extension, say why - a 404.
+
+    An http.response.start is not something a websocket peer can be sent, which is
+    what an unmatched websocket used to get.
+    """
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    app = DispatcherMiddleware({"/mounted": AsyncMock()})
+    scope = {
+        "type": "websocket",
+        "path": "/elsewhere",
+        "headers": [],
+        "root_path": "",
+        # As WSStream always advertises it
+        "extensions": {"websocket.http.response": {}},
+    }
+
+    await app(scope, AsyncMock(), send)  # type: ignore[arg-type]
+
+    assert [message["type"] for message in sent] == [
+        "websocket.http.response.start",
+        "websocket.http.response.body",
+    ]
+    assert sent[0]["status"] == 404  # noqa: PLR2004
+
+
+@pytest.mark.anyio
+async def test_dispatcher_closes_an_unmatched_websocket_without_the_extension() -> None:
+    """Without it, closing is all a websocket peer can be told."""
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    app = DispatcherMiddleware({"/mounted": AsyncMock()})
+    scope = {"type": "websocket", "path": "/elsewhere", "headers": [], "root_path": ""}
+
+    await app(scope, AsyncMock(), send)  # type: ignore[arg-type]
+
+    assert [message["type"] for message in sent] == ["websocket.close"]

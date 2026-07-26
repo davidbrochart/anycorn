@@ -30,15 +30,38 @@ class _DispatcherMiddleware:
                     local_scope = scope.copy()
                     local_scope["root_path"] = local_scope.get("root_path", "") + path
                     return await app(local_scope, receive, send)
+            if scope["type"] == "websocket":
+                await self._reject_websocket(scope, send)
+            else:
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 404,
+                        "headers": [(b"content-length", b"0")],
+                    }
+                )
+                await send({"type": "http.response.body"})
+        return None
+
+    async def _reject_websocket(self, scope: Scope, send: Callable) -> None:
+        """Say there is nothing mounted here, as fully as the server allows.
+
+        An HTTP response is not something a websocket peer can be sent, so a 404
+        needs the denial response extension. Where the server offers it the client
+        learns why it was turned away; where it does not, closing is all there is.
+        Mirrors HTTPToHTTPSRedirectMiddleware, which chooses the same way.
+        """
+        if "websocket.http.response" in scope.get("extensions", {}):
             await send(
                 {
-                    "type": "http.response.start",
+                    "type": "websocket.http.response.start",
                     "status": 404,
                     "headers": [(b"content-length", b"0")],
                 }
             )
-            await send({"type": "http.response.body"})
-        return None
+            await send({"type": "websocket.http.response.body"})
+        else:
+            await send({"type": "websocket.close"})
 
     async def _handle_lifespan(self, scope: Scope, receive: Callable, send: Callable) -> None:
         pass
