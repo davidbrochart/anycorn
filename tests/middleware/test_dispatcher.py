@@ -144,6 +144,49 @@ async def test_dispatcher_lifespan_with_a_mount_that_declines() -> None:
     ]
 
 
+class FailingLifespanFramework:
+    """A framework whose startup genuinely fails, the ASGI way: by saying so."""
+
+    async def __call__(self, _scope: Scope, receive: Callable, send: Callable) -> None:
+        message = await receive()
+        if message["type"] == "lifespan.startup":
+            await send({"type": "lifespan.startup.failed", "message": "no database"})
+
+
+@pytest.mark.anyio
+async def test_dispatcher_lifespan_with_a_mount_that_fails_startup() -> None:
+    """A mount that cannot start must fail the dispatcher, not be completed for.
+
+    The failure used to be dropped - nothing forwarded it - and the mount was then
+    completed on its way out, so a worker whose app had said it could not run
+    reported itself started. Declining lifespan (raising, or returning without an
+    ack) is still treated as having none, which the test above covers.
+    """
+    app = DispatcherMiddleware(
+        {"/api": ScopeFramework("api"), "/broken": FailingLifespanFramework()}
+    )
+
+    sent_events = []
+
+    async def send(message: dict) -> None:
+        sent_events.append(message)
+
+    messages = iter([{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}])
+
+    async def receive() -> dict:
+        return next(messages)
+
+    with anyio.fail_after(2):
+        await app({"type": "lifespan", "asgi": {"version": "3.0"}, "state": {}}, receive, send)
+
+    types = [event["type"] for event in sent_events]
+    assert "lifespan.startup.failed" in types
+    # Never reported ready: the failing mount is not completed for on its way out
+    assert "lifespan.startup.complete" not in types
+    failure = next(e for e in sent_events if e["type"] == "lifespan.startup.failed")
+    assert failure["message"] == "no database"
+
+
 @pytest.mark.anyio
 async def test_dispatcher_denies_an_unmatched_websocket_with_404() -> None:
     """Where the server offers the denial response extension, say why - a 404.
