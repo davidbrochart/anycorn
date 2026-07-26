@@ -18,15 +18,16 @@ MAX_QUEUE_SIZE = 10
 
 
 class _DispatcherMiddleware:
-    def __init__(self, mounts: dict[str, ASGIFramework]) -> None:
+    def __init__(self, mounts: dict[str, ASGIFramework], *, strict_paths: bool = False) -> None:
         self.mounts = mounts
+        self.strict_paths = strict_paths
 
     async def __call__(self, scope: Scope, receive: Callable, send: Callable) -> None:
         if scope["type"] == "lifespan":
             await self._handle_lifespan(scope, receive, send)
         else:
             for path, app in self.mounts.items():
-                if scope["path"].startswith(path):
+                if self._mounted_at(scope["path"], path):
                     local_scope = scope.copy()
                     local_scope["root_path"] = local_scope.get("root_path", "") + path
                     return await app(local_scope, receive, send)
@@ -62,6 +63,20 @@ class _DispatcherMiddleware:
             await send({"type": "websocket.http.response.body"})
         else:
             await send({"type": "websocket.close"})
+
+    def _mounted_at(self, path: str, mount: str) -> bool:
+        """Return True when *path* belongs to the app mounted at *mount*.
+
+        Matching on any shared prefix, which is what this does by default, lets a
+        /foo mount swallow /foobar - leaving a /foobar mount unreachable, and
+        handing /foo a root_path it never served. strict_paths matches on a path
+        segment boundary instead, so each mount gets only what is under it. It is
+        opt-in because the prefix behaviour is what callers have been routed by so
+        far, and a mount relying on it would stop being reached.
+        """
+        if not self.strict_paths:
+            return path.startswith(mount)
+        return path == mount or path.startswith(mount.rstrip("/") + "/")
 
     async def _handle_lifespan(self, scope: Scope, receive: Callable, send: Callable) -> None:
         pass

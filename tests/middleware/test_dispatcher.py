@@ -189,3 +189,67 @@ async def test_dispatcher_closes_an_unmatched_websocket_without_the_extension() 
     await app(scope, AsyncMock(), send)  # type: ignore[arg-type]
 
     assert [message["type"] for message in sent] == ["websocket.close"]
+
+
+def _recording_mounts(served: list[tuple[str, str]]) -> Callable:
+    def _mount(name: str) -> Callable:
+        async def _app(scope: HTTPScope, _receive: Callable, send: Callable) -> None:
+            served.append((name, scope["root_path"]))
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        return _app
+
+    return _mount
+
+
+@pytest.mark.anyio
+async def test_strict_paths_matches_on_a_path_boundary(http_scope: HTTPScope) -> None:
+    """With strict_paths a /foo mount must not swallow /foobar, which has its own."""
+    served: list[tuple[str, str]] = []
+    _mount = _recording_mounts(served)
+    app = DispatcherMiddleware(
+        {"/foo": _mount("foo"), "/foobar": _mount("foobar")}, strict_paths=True
+    )
+
+    for path, expected in (("/foobar", "foobar"), ("/foo", "foo"), ("/foo/deeper", "foo")):
+        scope = dict(http_scope)
+        scope["path"] = path
+        scope["root_path"] = ""
+        await app(scope, AsyncMock(), AsyncMock())  # type: ignore[arg-type]
+        assert served[-1][0] == expected, f"{path} went to {served[-1][0]}"
+
+
+@pytest.mark.anyio
+async def test_prefix_matching_is_still_the_default(http_scope: HTTPScope) -> None:
+    """Left alone, mounts still match on any shared prefix.
+
+    Which is what routes callers today, so a mount relying on it keeps being
+    reached; strict_paths is how the boundary behaviour is asked for.
+    """
+    served: list[tuple[str, str]] = []
+    _mount = _recording_mounts(served)
+    app = DispatcherMiddleware({"/foo": _mount("foo"), "/foobar": _mount("foobar")})
+
+    scope = dict(http_scope)
+    scope["path"] = "/foobar"
+    scope["root_path"] = ""
+    await app(scope, AsyncMock(), AsyncMock())  # type: ignore[arg-type]
+
+    assert served == [("foo", "/foo")]
+
+
+@pytest.mark.anyio
+async def test_strict_paths_still_lets_a_root_mount_match_everything(
+    http_scope: HTTPScope,
+) -> None:
+    """A "/" mount is a prefix of every path, and stays one under strict_paths."""
+    served: list[tuple[str, str]] = []
+    app = DispatcherMiddleware({"/": _recording_mounts(served)("root")}, strict_paths=True)
+
+    scope = dict(http_scope)
+    scope["path"] = "/anything/at/all"
+    scope["root_path"] = ""
+    await app(scope, AsyncMock(), AsyncMock())  # type: ignore[arg-type]
+
+    assert served == [("root", "/")]
