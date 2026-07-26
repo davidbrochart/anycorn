@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from http import HTTPStatus
 from typing import Any, cast
 from unittest.mock import call
 
@@ -558,3 +559,71 @@ async def test_trailers_without_te_do_not_crash(stream: HTTPStream) -> None:
 
     # Still awaiting a response rather than closed, so the app can go on to send one
     assert stream.state == ASGIHTTPState.REQUEST
+
+
+@pytest.mark.parametrize(
+    ("raw_path", "expected"),
+    [
+        (b"/caf%C3%A9", "/café"),  # percent-encoded UTF-8, decoded per the ASGI spec
+        (b"/bad%ff", "/bad�"),  # what it encodes is not UTF-8: replaced, never raised
+    ],
+)
+@pytest.mark.anyio
+async def test_handle_request_percent_encoded_path(
+    stream: HTTPStream, raw_path: bytes, expected: str
+) -> None:
+    """A target is ascii on the wire, but what it percent-encodes need not be.
+
+    Decoding those bytes strictly would raise UnicodeDecodeError and the client
+    would get no reply at all, so they are replaced instead.
+    """
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[],
+            raw_path=raw_path,
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
+    assert scope["path"] == expected
+    # The undecoded bytes stay available for apps that need them
+    assert scope["raw_path"] == raw_path
+
+
+@pytest.mark.parametrize(
+    "raw_path",
+    [
+        b"/caf\xc3\xa9",  # raw UTF-8, as HTTP/2 and HTTP/3 hand it over
+        b"/bad\xff",  # not UTF-8 at all
+        b"/a b",  # a space, which ends the target on the wire
+        b"/x\x7f",  # DEL, and every control character below it
+    ],
+)
+@pytest.mark.anyio
+async def test_handle_request_rejects_a_target_h11_would_reject(
+    stream: HTTPStream, raw_path: bytes
+) -> None:
+    """400, which is what h11 already answers the same target over HTTP/1.1.
+
+    HTTP/2 and HTTP/3 carry :path as opaque octets and check nothing, so anycorn
+    used to serve over those what it refuses over HTTP/1.1 - and decoding the
+    bytes to reach an app is lossy, every byte from 0x80 up replaced by the same
+    U+FFFD, so two targets that differ on the wire arrived as one path.
+    """
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[],
+            raw_path=raw_path,
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+
+    stream.task_group.spawn_app.assert_not_called()  # type: ignore[attr-defined]
+    stream.send.assert_called()  # type: ignore[attr-defined]
+    assert stream.send.call_args_list[0][0][0].status_code == HTTPStatus.BAD_REQUEST  # type: ignore[attr-defined]

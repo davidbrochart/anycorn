@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum, auto
 from time import time
 from typing import TYPE_CHECKING
-from urllib.parse import unquote
+from urllib.parse import unquote_to_bytes
 
 from anycorn.typing import (
     AppWrapper,
@@ -24,6 +24,7 @@ from anycorn.utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
     suppress_body,
+    valid_request_target,
     valid_server_name,
 )
 
@@ -129,7 +130,11 @@ class HTTPStream:
                 asgi={"spec_version": "2.1", "version": "3.0"},
                 method=event.method,
                 scheme=self.scheme,
-                path=unquote(path.decode("ascii")),
+                # Percent-decode as bytes, then take the result as the UTF-8 the ASGI
+                # spec calls for. The target itself is printable ascii by the check
+                # below, but what it percent-encodes is arbitrary bytes, so this still
+                # has to tolerate a sequence that is not UTF-8 rather than raise.
+                path=unquote_to_bytes(path).decode("utf-8", errors="replace"),
                 raw_path=path,
                 query_string=query_string,
                 root_path=self.config.root_path,
@@ -143,7 +148,13 @@ class HTTPStream:
                 extensions=extensions,
             )
 
-            if valid_server_name(self.config, event):
+            if not valid_request_target(path):
+                # What h11 answers an HTTP/1.1 request carrying such a target, before
+                # this code ever runs. HTTP/2 and HTTP/3 hand :path over as opaque
+                # octets, so without this they would serve what HTTP/1.1 refuses.
+                await self._send_error_response(400)
+                self.closed = True
+            elif valid_server_name(self.config, event):
                 self.app_put = await self.task_group.spawn_app(
                     self.app, self.config, self.scope, self.app_send
                 )

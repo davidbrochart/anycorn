@@ -6,7 +6,7 @@ from enum import Enum, auto
 from io import BytesIO, StringIO
 from time import time
 from typing import TYPE_CHECKING
-from urllib.parse import unquote
+from urllib.parse import unquote_to_bytes
 
 from wsproto.connection import Connection, ConnectionState, ConnectionType
 from wsproto.events import (
@@ -43,6 +43,7 @@ from anycorn.utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
     suppress_body,
+    valid_request_target,
     valid_server_name,
 )
 
@@ -264,7 +265,10 @@ class WSStream:
                 "asgi": {"spec_version": "2.3", "version": "3.0"},
                 "scheme": self.scheme,
                 "http_version": event.http_version,
-                "path": unquote(path.decode("ascii")),
+                # As in HTTPStream: the target is printable ascii by the check below,
+                # but what it percent-encodes is arbitrary bytes, so decoding it has
+                # to tolerate a sequence that is not UTF-8 rather than raise.
+                "path": unquote_to_bytes(path).decode("utf-8", errors="replace"),
                 "raw_path": path,
                 "query_string": query_string,
                 "root_path": self.config.root_path,
@@ -278,7 +282,12 @@ class WSStream:
                 "extensions": extensions,
             }
 
-            if not valid_server_name(self.config, event):
+            if not valid_request_target(path):
+                # As in HTTPStream: what h11 answers an HTTP/1.1 request carrying
+                # such a target, duplicated for the versions that check nothing.
+                await self._send_error_response(400)
+                self.closed = True
+            elif not valid_server_name(self.config, event):
                 await self._send_error_response(404)
                 self.closed = True
             elif not self.handshake.is_valid():

@@ -491,6 +491,24 @@ def valid_server_name(config: Config, request: Request) -> bool:
     return host in config.server_names
 
 
+# h11's grammar for a request target (_abnf.py: `request_target = vchar+`, with
+# `vchar = [\x21-\x7e]`), which it enforces on every HTTP/1.1 request and rejects
+# with a 400. HTTP/2 and HTTP/3 carry :path as opaque octets and check nothing, so
+# duplicating the rule here is what makes all three versions agree.
+_REQUEST_TARGET = re.compile(rb"[\x21-\x7e]+")
+
+
+def valid_request_target(raw_path: bytes) -> bool:
+    """Return True if *raw_path* is a request target h11 would also have accepted.
+
+    Percent-encoded sequences are ascii on the wire and so pass; it is raw bytes
+    outside printable ascii that do not. Letting those through means decoding them
+    lossily - every byte from 0x80 up is the same U+FFFD once replaced - so two
+    targets that differ on the wire would reach the app as one path.
+    """
+    return _REQUEST_TARGET.fullmatch(raw_path) is not None
+
+
 def is_asgi(app: Any) -> bool:  # noqa: ANN401
     """Return True if *app* appears to be an ASGI application."""
     if inspect.iscoroutinefunction(app):
