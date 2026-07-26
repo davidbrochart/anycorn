@@ -533,3 +533,28 @@ async def test_abnormal_close_logging() -> None:
             )
         )
         await stream.handle(StreamClosed(stream_id=1))
+
+
+@pytest.mark.anyio
+async def test_trailers_without_te_do_not_crash(stream: HTTPStream) -> None:
+    """Trailers as the first message, from a client that never asked for them.
+
+    Nothing is sent - the client did not offer `te: trailers` - but closing the
+    stream here used to read self.response, which no response had yet assigned,
+    so the app got an AttributeError rather than a reply.
+    """
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[],  # no te: trailers
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+
+    await stream.app_send({"type": "http.response.trailers", "headers": [(b"x", b"y")]})
+
+    # Still awaiting a response rather than closed, so the app can go on to send one
+    assert stream.state == ASGIHTTPState.REQUEST

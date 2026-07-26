@@ -250,7 +250,11 @@ class HTTPStream:
                     self.state = ASGIHTTPState.TRAILERS
                     break
 
-            if not message.get("more_trailers", False):
+            # Only once a response has actually been started. Without `te: trailers`
+            # the loop above sends nothing, and closing here read self.response, which
+            # is never assigned until a response starts - an app whose first message
+            # was trailers took an AttributeError instead of a reply.
+            if self.state == ASGIHTTPState.TRAILERS and not message.get("more_trailers", False):
                 await self._send_closed()
         elif (
             message["type"] == "http.response.trailers"
