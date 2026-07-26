@@ -175,3 +175,86 @@ def test_http_to_https_redirect_new_url_header() -> None:
         ),
     )
     assert new_url == "https://localhost/"
+
+
+def _scope_with_host(host: bytes) -> HTTPScope:
+    return HTTPScope(
+        http_version="1.1",
+        asgi={},
+        method="GET",
+        headers=[(b"host", host)],
+        path="/",
+        root_path="",
+        query_string=b"",
+        raw_path=b"/",
+        scheme="http",
+        type="http",
+        client=None,
+        server=None,
+        extensions={},
+        state=ConnectionState({}),
+    )
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        b"example.com/elsewhere",  # grafts a path onto the target
+        b"example.com\\elsewhere",  # the same, as some clients normalise backslashes
+        b"user@example.com",  # userinfo, so the real host is what follows the @
+        b"example.com?x=y",
+        b"example.com#fragment",
+        b"example.com ",
+        b"",
+    ],
+)
+def test_new_url_refuses_a_host_header_that_is_not_a_bare_host(host: bytes) -> None:
+    """The Host header is the client's to write, and it lands in the redirect target.
+
+    Anything but a bare host[:port] there lets a client choose where this server
+    sends it - a Host of "example.com/elsewhere" redirected to
+    https://example.com/elsewhere rather than back to this site.
+    """
+    app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
+
+    assert app._new_url("https", _scope_with_host(host)) is None
+
+
+@pytest.mark.parametrize(
+    "host", [b"example.com", b"example.com:8443", b"127.0.0.1:80", b"[::1]:80"]
+)
+def test_new_url_accepts_a_bare_host(host: bytes) -> None:
+    """A plain host, with or without a port, is still used as before."""
+    app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
+
+    assert app._new_url("https", _scope_with_host(host)) == f"https://{host.decode()}/"
+
+
+def test_new_url_prefers_the_configured_host() -> None:
+    """A pinned host is what makes this immune, and it is not second-guessed."""
+    app = HTTPToHTTPSRedirectMiddleware(empty_framework, "pinned.example")
+
+    assert app._new_url("https", _scope_with_host(b"attacker.example")) == "https://pinned.example/"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("host", "status"),
+    [(b"example.com", b"307"), (b"[::1]:8080", b"307"), (b"example.com/evil", b"400")],
+)
+async def test_redirect_answers_an_unusable_host_with_400(host: bytes, status: bytes) -> None:
+    """A Host that cannot be redirected to is the client's mistake, so 400 not 500.
+
+    Refusing by raising surfaced as a 500, which reads as the server having broken
+    and puts a client-supplied header into the error log of every deployment behind
+    a scanner.
+    """
+    sent_events = []
+
+    async def send(message: dict) -> None:
+        sent_events.append(message)
+
+    app = HTTPToHTTPSRedirectMiddleware(empty_framework, None)
+    await app(_scope_with_host(host), None, send)  # type: ignore[arg-type]
+
+    assert b"%d" % sent_events[0]["status"] == status
