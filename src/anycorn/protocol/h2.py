@@ -201,9 +201,7 @@ class H2Protocol:
         except (h2.exceptions.StreamClosedError, KeyError, h2.exceptions.ProtocolError):
             # Stream or connection has closed whilst waiting to send
             # data, not a problem - just force close it.
-            await self.stream_buffers[stream_id].close()
-            del self.stream_buffers[stream_id]
-            self.priority.remove_stream(stream_id)
+            await self._discard_send_state(stream_id)
 
     async def handle(self, event: Event) -> None:
         """Handle an incoming connection event."""
@@ -297,6 +295,11 @@ class H2Protocol:
                     await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
             elif isinstance(event, h2.events.StreamReset):
                 await self._close_stream(event.stream_id)
+                # The send side is tracked apart from self.streams and is only tidied
+                # up by _send_data once a response finishes. A reset stream never gets
+                # there, so its buffer and its place in the priority tree would
+                # outlive it, for the life of the connection.
+                await self._discard_send_state(event.stream_id)
                 await self._window_updated(event.stream_id)
             elif isinstance(event, h2.events.WindowUpdated):
                 await self._window_updated(event.stream_id)
@@ -429,3 +432,11 @@ class H2Protocol:
             stream = self.streams.pop(stream_id)
             await stream.handle(StreamClosed(stream_id=stream_id))
             await self.has_data.set()
+
+    async def _discard_send_state(self, stream_id: int) -> None:
+        """Drop a stream's send buffer and priority entry, however often it is called."""
+        buffer = self.stream_buffers.pop(stream_id, None)
+        if buffer is not None:
+            await buffer.close()
+        with contextlib.suppress(priority.MissingStreamError):
+            self.priority.remove_stream(stream_id)
