@@ -347,3 +347,46 @@ async def test_http2_websocket_rejects_a_target_with_no_asgi_path(target: bytes)
 
     assert status == b"400"
     assert seen == []
+
+
+@pytest.mark.anyio
+async def test_http2_rejected_request_may_still_send_a_body() -> None:
+    """A peer that sends a body before hearing the rejection must not break the rest.
+
+    The response goes out as soon as the headers are read, but the peer is already
+    sending and cannot know that yet. The stream is gone by the time its DATA
+    arrives, and indexing self.streams for it raised KeyError out of the connection's
+    event loop - killing the connection over a request that had already been answered.
+    """
+    seen: list[str] = []
+    async with serve_in_memory(_recording_app(seen), alpn_protocol="h2") as client_stream:
+        client = h2.connection.H2Connection()
+        client.initiate_connection()
+        await client_stream.send_all(client.data_to_send())
+        stream_id = client.get_next_available_stream_id()
+        client.send_headers(
+            stream_id,
+            [
+                (b":method", b"POST"),
+                (b":path", b"/bad\xff"),
+                (b":authority", b"anycorn"),
+                (b":scheme", b"https"),
+            ],
+        )
+        await client_stream.send_all(client.data_to_send())
+        await anyio.sleep(0.1)  # let the server answer before the body is sent
+        client.send_data(stream_id, b"body-after-rejection", end_stream=True)
+        await client_stream.send_all(client.data_to_send())
+
+        status = None
+        with anyio.fail_after(5):
+            while status is None:
+                data = await client_stream.receive_some(4096)
+                if data == b"":
+                    break
+                for event in client.receive_data(data):
+                    if isinstance(event, h2.events.ResponseReceived):
+                        status = dict(event.headers)[b":status"]
+
+    assert status == b"400"
+    assert seen == []

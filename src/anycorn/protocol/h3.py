@@ -80,15 +80,30 @@ class H3Protocol:
                 if not self.context.terminated.is_set():
                     await self._create_stream(event)
                     if event.stream_ended:
-                        await self.streams[event.stream_id].handle(
-                            EndBody(stream_id=event.stream_id)
+                        await self._handle_stream_event(
+                            event.stream_id, EndBody(stream_id=event.stream_id)
                         )
             elif isinstance(event, DataReceived):
-                await self.streams[event.stream_id].handle(
-                    Body(stream_id=event.stream_id, data=event.data)
+                await self._handle_stream_event(
+                    event.stream_id, Body(stream_id=event.stream_id, data=event.data)
                 )
                 if event.stream_ended:
-                    await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
+                    await self._handle_stream_event(
+                        event.stream_id, EndBody(stream_id=event.stream_id)
+                    )
+
+    async def _handle_stream_event(self, stream_id: int, event: StreamEvent) -> None:
+        """Hand *event* to its stream, unless that stream has already finished.
+
+        A request refused as it arrives - a target with no ASGI path, a server name
+        this server does not answer to - responds and closes the stream from inside
+        _create_stream, so the rest of the events that came in the same datagram
+        have nothing left to go to. Indexing self.streams for them raised KeyError
+        out of handle(), which is the whole QUIC connection.
+        """
+        stream = self.streams.get(stream_id)
+        if stream is not None:
+            await stream.handle(event)
 
     async def stream_send(self, event: StreamEvent) -> None:
         """Send a stream event to the remote client."""
