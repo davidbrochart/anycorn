@@ -62,7 +62,7 @@ def _make_protocol(
         MagicMock() if context is None else context,
         MagicMock(),  # task_group
         ConnectionState({}),
-        ("127.0.0.1", 4433),  # server
+        ("192.0.2.1", 4433),  # server
         AsyncMock() if send is None else send,
     )
 
@@ -114,7 +114,7 @@ async def test_close_all_closes_each_connection_once(tmp_path: Path) -> None:
     protocol = _make_protocol(config, send)
 
     quic = MagicMock()
-    quic.datagrams_to_send.return_value = [(b"close", ("127.0.0.1", 4433))]
+    quic.datagrams_to_send.return_value = [(b"close", ("192.0.2.1", 4433))]
     connection = _Connection(cids={b"one", b"two"}, quic=quic, task=MagicMock())
     # Registered under each of its connection ids, as handle() leaves it
     protocol.connections = {b"one": connection, b"two": connection}
@@ -128,14 +128,15 @@ async def test_close_all_closes_each_connection_once(tmp_path: Path) -> None:
 
 # Only ever recorded as the peer a datagram came from: nothing is bound or sent to it,
 # so the port neither has to be free nor to exist. Same goes for the addresses handed
-# to _client_initial and _make_protocol below.
-CLIENT_ADDRESS = ("127.0.0.1", 44444)
+# to _client_initial and _make_protocol. TEST-NET-1 (RFC 5737) is reserved for
+# documentation and is not routable, so none of them can be mistaken for a real host.
+CLIENT_ADDRESS = ("192.0.2.1", 44444)
 
 
 def _client_initial() -> bytes:
     """Return a genuine QUIC Initial datagram, as a client opening a connection sends."""
     client = QuicConnection(configuration=QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN))
-    client.connect(("127.0.0.1", 4433), now=0.0)
+    client.connect(("192.0.2.1", 4433), now=0.0)
     datagrams = client.datagrams_to_send(now=0.0)
     return datagrams[0][0]
 
