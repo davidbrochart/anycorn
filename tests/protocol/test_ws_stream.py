@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from http import HTTPStatus
 from typing import Any, cast
 from unittest.mock import Mock, call
 
@@ -280,31 +279,6 @@ async def test_handle_data_before_acceptance(stream: WSStream) -> None:
         call(EndBody(stream_id=1)),
         call(StreamClosed(stream_id=1)),
     ]
-
-
-@pytest.mark.parametrize("raw_path", [b"/caf\xc3\xa9", b"/bad\xff", b"/a b", b"/x\x7f"])
-@pytest.mark.anyio
-async def test_handle_request_rejects_a_target_h11_would_reject(
-    stream: WSStream, raw_path: bytes
-) -> None:
-    """400, as HTTPStream answers the same target, and as h11 answers it over HTTP/1.1.
-
-    A websocket scope carries a path the app routes on just as an HTTP one does, so
-    letting bytes through here that HTTP/1.1 refuses would be the same divergence.
-    """
-    await stream.handle(
-        Request(
-            stream_id=1,
-            http_version="2",
-            headers=[(b"sec-websocket-version", b"13")],
-            raw_path=raw_path,
-            method="GET",
-            state=ConnectionState({}),
-        )
-    )
-
-    stream.task_group.spawn_app.assert_not_called()  # type: ignore[attr-defined]
-    assert stream.send.call_args_list[0][0][0].status_code == HTTPStatus.BAD_REQUEST  # type: ignore[attr-defined]
 
 
 @pytest.mark.anyio

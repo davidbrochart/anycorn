@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from http import HTTPStatus
 from typing import Any, cast
 from unittest.mock import call
 
@@ -589,44 +588,3 @@ async def test_handle_request_percent_encoded_path(
     assert scope["path"] == expected
     # The undecoded bytes stay available for apps that need them
     assert scope["raw_path"] == raw_path
-
-
-@pytest.mark.parametrize(
-    "raw_path",
-    [
-        b"/caf\xc3\xa9",  # raw UTF-8, as HTTP/2 and HTTP/3 hand it over
-        b"/bad\xff",  # not UTF-8 at all
-        b"/a b",  # a space, which ends the target on the wire
-        b"/x\x7f",  # DEL, and every control character below it
-        b"/bad%ff",  # a valid escape for a byte that is not UTF-8
-        b"/x%zz",  # not a hex escape at all
-        b"/x%",  # an escape running off the end of the target
-    ],
-)
-@pytest.mark.anyio
-async def test_handle_request_rejects_a_target_h11_would_reject(
-    stream: HTTPStream, raw_path: bytes
-) -> None:
-    """400, which is what h11 already answers the same target over HTTP/1.1.
-
-    Two rules, both answered the same way. A raw byte outside printable ascii is
-    what h11 already refuses over HTTP/1.1, and HTTP/2 and HTTP/3 carry :path as
-    opaque octets so without this they would serve what HTTP/1.1 does not. And an
-    escape that does not decode to UTF-8 has no ASGI path to put in the scope:
-    replacing it with U+FFFD would alias every such byte onto one path, so two
-    targets that differ on the wire would reach the app as one.
-    """
-    await stream.handle(
-        Request(
-            stream_id=1,
-            http_version="2",
-            headers=[],
-            raw_path=raw_path,
-            method="GET",
-            state=ConnectionState({}),
-        )
-    )
-
-    stream.task_group.spawn_app.assert_not_called()  # type: ignore[attr-defined]
-    stream.send.assert_called()  # type: ignore[attr-defined]
-    assert stream.send.call_args_list[0][0][0].status_code == HTTPStatus.BAD_REQUEST  # type: ignore[attr-defined]

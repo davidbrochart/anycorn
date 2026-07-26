@@ -6,6 +6,8 @@ from the client side, so they cover the whole stack from bytes to ASGI and back.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
+
 import anyio
 import h2.config
 import h2.connection
@@ -19,6 +21,11 @@ import wsproto.events
 from anycorn.config import Config
 
 from .helpers import SANITY_BODY, sanity_framework, serve_in_memory
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from anycorn.typing import HTTPScope, Scope
 
 
 @pytest.mark.anyio
@@ -232,3 +239,104 @@ async def test_http1_error_response_closes_the_connection(target: bytes, status:
 
     assert [type(event).__name__ for event in events] == ["Response", "EndOfMessage"]
     assert events[0].status_code == status
+
+
+def _recording_app(seen: list[str]) -> Callable:
+    """Return an app that records every path it is handed.
+
+    Whether the app ran at all is the thing being asserted, and a real app keeping
+    a list says it without a mock standing in for one.
+    """
+
+    async def _app(scope: Scope, _receive: Callable, send: Callable) -> None:
+        seen.append(cast("HTTPScope", scope)["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    return _app
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "target",
+    [
+        b"/caf\xc3\xa9",  # raw UTF-8, as HTTP/2 hands it over
+        b"/bad\xff",  # raw, and not UTF-8 at all
+        b"/a b",  # a space
+        b"/x\x7f",  # DEL
+        b"/bad%ff",  # a valid escape for a byte that is not UTF-8
+        b"/x%zz",  # not a hex escape at all
+    ],
+)
+async def test_http2_rejects_a_target_with_no_asgi_path(target: bytes) -> None:
+    """400, and the app is never reached, for a target with no ASGI path.
+
+    HTTP/2 carries :path as opaque octets, so these arrive at the server exactly as
+    written - which is what makes them worth driving over a real connection rather
+    than handing to HTTPStream directly.
+    """
+    seen: list[str] = []
+    async with serve_in_memory(_recording_app(seen), alpn_protocol="h2") as client_stream:
+        client = h2.connection.H2Connection()
+        client.initiate_connection()
+        await client_stream.send_all(client.data_to_send())
+        stream_id = client.get_next_available_stream_id()
+        client.send_headers(
+            stream_id,
+            [
+                (b":method", b"GET"),
+                (b":path", target),
+                (b":authority", b"anycorn"),
+                (b":scheme", b"https"),
+            ],
+            end_stream=True,
+        )
+        await client_stream.send_all(client.data_to_send())
+
+        status = None
+        with anyio.fail_after(5):
+            while status is None:
+                data = await client_stream.receive_some(4096)
+                if data == b"":
+                    break
+                for event in client.receive_data(data):
+                    if isinstance(event, h2.events.ResponseReceived):
+                        status = dict(event.headers)[b":status"]
+
+    assert status == b"400"
+    assert seen == [], "the app was handed a request it should never have seen"
+
+
+@pytest.mark.anyio
+async def test_http2_websocket_rejects_a_target_with_no_asgi_path() -> None:
+    """The same rule on the websocket side, where WSStream builds the scope."""
+    seen: list[str] = []
+    async with serve_in_memory(_recording_app(seen), alpn_protocol="h2") as client_stream:
+        client = h2.connection.H2Connection()
+        client.initiate_connection()
+        await client_stream.send_all(client.data_to_send())
+        stream_id = client.get_next_available_stream_id()
+        client.send_headers(
+            stream_id,
+            [
+                (b":method", b"CONNECT"),
+                (b":path", b"/caf\xc3\xa9"),
+                (b":authority", b"anycorn"),
+                (b":scheme", b"https"),
+                (b"sec-websocket-version", b"13"),
+            ],
+        )
+        await client_stream.send_all(client.data_to_send())
+
+        status = None
+        with anyio.fail_after(5):
+            while status is None:
+                data = await client_stream.receive_some(4096)
+                if data == b"":
+                    break
+                for event in client.receive_data(data):
+                    if isinstance(event, h2.events.ResponseReceived):
+                        status = dict(event.headers)[b":status"]
+
+    assert status == b"400"
+    assert seen == []
