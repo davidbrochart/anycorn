@@ -195,7 +195,9 @@ def _build_environ(scope: HTTPScope, body: bytes) -> dict:
         "REQUEST_METHOD": scope["method"],
         "SCRIPT_NAME": script_name.encode("utf8").decode("latin1"),
         "PATH_INFO": path.encode("utf8").decode("latin1"),
-        "QUERY_STRING": scope["query_string"].decode("ascii"),
+        # latin1, as for the header values below: it round-trips any byte,
+        # where ascii raises on a query string carrying raw UTF-8
+        "QUERY_STRING": scope["query_string"].decode("latin1"),
         "SERVER_NAME": server[0],
         # PEP 3333 requires every CGI-style environ value to be a native string;
         # a WSGI app doing environ["SERVER_PORT"] + something breaks on a raw int.
