@@ -13,11 +13,13 @@ from anyio.streams.tls import TLSAttribute
 
 from anycorn.config import Config
 from anycorn.utils import (
+    ShutdownError,
     build_and_validate_headers,
     build_tls_extension,
     default_tls_extension,
     filter_pseudo_headers,
     is_asgi,
+    raise_shutdown,
     suppress_body,
 )
 
@@ -181,3 +183,36 @@ def test_build_tls_extension_missing_required_certificate() -> None:
     assert extension["client_cert_chain"] == ()
     assert extension["client_cert_name"] is None
     assert extension["client_cert_error"] == "missing-client-certificate"
+
+
+@pytest.mark.anyio
+async def test_raise_shutdown_marks_termination_before_raising() -> None:
+    """The marking has to land before the error, or it lands after the servers are gone.
+
+    ShutdownError is what unwinds them, so anything done after it is raised is done
+    too late for a server to act on - which is the difference between refusing a
+    connection whilst shutting down and accepting one on the way out.
+    """
+    order: list[str] = []
+
+    async def trigger() -> None:
+        order.append("triggered")
+
+    async def on_shutdown() -> None:
+        order.append("terminated")
+
+    with pytest.raises(ShutdownError):
+        await raise_shutdown(trigger, on_shutdown)
+
+    assert order == ["triggered", "terminated"]
+
+
+@pytest.mark.anyio
+async def test_raise_shutdown_without_a_callback() -> None:
+    """The callback stays optional, so existing callers keep working."""
+
+    async def trigger() -> None:
+        return
+
+    with pytest.raises(ShutdownError):
+        await raise_shutdown(trigger)

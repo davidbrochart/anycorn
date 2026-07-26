@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 import anyio
+import anyio.abc
 import pytest
 
 import anycorn.run
@@ -91,6 +92,51 @@ async def test_worker_serve_closes_quic_sockets(tls_certs: TLSCerts) -> None:
         shutdown.set()
 
     assert [sock.fileno() for sock in quic_sockets] == [-1] * len(quic_sockets)
+
+
+@pytest.mark.anyio
+async def test_worker_serve_marks_terminated_before_the_servers_unwind(
+    tls_certs: TLSCerts, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A server must be able to see the worker is going down whilst it still runs.
+
+    QuicProtocol refuses a new connection whilst terminated is set, so marking it only
+    once the servers have been cancelled would leave that check unable to refuse
+    anything - a QUIC Initial arriving as shutdown starts would be taken on by a worker
+    that is already going away.
+    """
+    observed: list[bool] = []
+
+    class _RecordingUDPServer(UDPServer):
+        async def run(
+            self, *, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED
+        ) -> None:
+            try:
+                await super().run(task_status=task_status)
+            finally:
+                observed.append(self.context.terminated.is_set())
+
+    monkeypatch.setattr(anycorn.run, "UDPServer", _RecordingUDPServer)
+
+    config = Config()
+    config.bind = ["127.0.0.1:0"]
+    config.quic_bind = ["127.0.0.1:0"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+
+    shutdown = anyio.Event()
+    async with anyio.create_task_group() as tg:
+        await tg.start(
+            partial(
+                worker_serve,
+                wrap_app(app, config.wsgi_max_body_size, None),
+                config,
+                shutdown_trigger=shutdown.wait,
+            )
+        )
+        shutdown.set()
+
+    assert observed == [True]
 
 
 @pytest.mark.anyio

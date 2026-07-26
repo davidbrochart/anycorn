@@ -7,13 +7,16 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from aioquic.h3.connection import ErrorCode
+from aioquic.h3.connection import H3_ALPN, ErrorCode
+from aioquic.quic.configuration import QuicConfiguration
+from aioquic.quic.connection import QuicConnection
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from anycorn.config import Config
+from anycorn.events import RawData
 from anycorn.protocol.quic import QuicProtocol, _Connection
 from anycorn.typing import ConnectionState
 
@@ -50,11 +53,13 @@ def _write_encrypted_cert(directory: Path) -> tuple[str, str]:
     return str(certfile), str(keyfile)
 
 
-def _make_protocol(config: Config, send: AsyncMock | None = None) -> QuicProtocol:
+def _make_protocol(
+    config: Config, send: AsyncMock | None = None, context: MagicMock | None = None
+) -> QuicProtocol:
     return QuicProtocol(
         MagicMock(),  # app
         config,
-        MagicMock(),  # context
+        MagicMock() if context is None else context,
         MagicMock(),  # task_group
         ConnectionState({}),
         ("127.0.0.1", 4433),  # server
@@ -119,3 +124,57 @@ async def test_close_all_closes_each_connection_once(tmp_path: Path) -> None:
     quic.close.assert_called_once_with(error_code=ErrorCode.H3_NO_ERROR)
     # Once, not once per connection id
     send.assert_awaited_once()
+
+
+CLIENT_ADDRESS = ("127.0.0.1", 44444)
+
+
+def _client_initial() -> bytes:
+    """Return a genuine QUIC Initial datagram, as a client opening a connection sends."""
+    client = QuicConnection(configuration=QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN))
+    client.connect(("127.0.0.1", 4433), now=0.0)
+    datagrams = client.datagrams_to_send(now=0.0)
+    return datagrams[0][0]
+
+
+def _protocol_for_initial(config: Config, *, terminated: bool) -> QuicProtocol:
+    context = MagicMock()
+    context.time.return_value = 0.0
+    context.terminated.is_set.return_value = terminated
+    # Awaited by send_all once a connection exists, so it cannot be a plain MagicMock
+    context.single_task_class.return_value = AsyncMock()
+    return _make_protocol(config, context=context)
+
+
+@pytest.mark.anyio
+async def test_new_connection_refused_once_terminated(tmp_path: Path) -> None:
+    """A worker that is shutting down must not take on a new QUIC connection.
+
+    Paired with the test below, which feeds the very same datagram to a running
+    worker: without it this would still pass if the Initial were simply unacceptable.
+    """
+    certfile, keyfile = _write_encrypted_cert(tmp_path)
+    config = Config()
+    config.certfile = certfile
+    config.keyfile = keyfile
+    config.keyfile_password = _KEY_PASSWORD
+    protocol = _protocol_for_initial(config, terminated=True)
+
+    await protocol.handle(RawData(data=_client_initial(), address=CLIENT_ADDRESS))
+
+    assert protocol.connections == {}
+
+
+@pytest.mark.anyio
+async def test_new_connection_accepted_whilst_running(tmp_path: Path) -> None:
+    """The same Initial is accepted by a worker that is still running."""
+    certfile, keyfile = _write_encrypted_cert(tmp_path)
+    config = Config()
+    config.certfile = certfile
+    config.keyfile = keyfile
+    config.keyfile_password = _KEY_PASSWORD
+    protocol = _protocol_for_initial(config, terminated=False)
+
+    await protocol.handle(RawData(data=_client_initial(), address=CLIENT_ADDRESS))
+
+    assert protocol.connections != {}
