@@ -30,6 +30,12 @@ except ImportError:
 
 @pytest.mark.anyio
 async def test_stream_buffer_push_and_pop() -> None:
+    """The writer resumes once the buffer has drained, not once a chunk is taken.
+
+    Resuming on the size of the chunk popped meant a zero-length pop - which is
+    what _send_data does once the peer's flow control window is exhausted - let
+    the writer on with the buffer still above the high water mark.
+    """
     stream_buffer = StreamBuffer(EventWrapper)
     pushed = False
 
@@ -43,9 +49,20 @@ async def test_stream_buffer_push_and_pop() -> None:
         await anyio.wait_all_tasks_blocked()
         assert not pushed  # Blocked as over high water
 
+        # Nothing could be sent, so nothing has drained and the writer stays put
+        await stream_buffer.pop(0)
+        await anyio.wait_all_tasks_blocked()
+        assert not pushed
+
+        # Drained some, but not to below the low water mark
         await stream_buffer.pop(BUFFER_HIGH_WATER // 4)
         await anyio.wait_all_tasks_blocked()
-        assert pushed  # Resumed, as the pop was under low water
+        assert not pushed
+
+        # Now under it, so there is room for the writer to go on
+        await stream_buffer.pop(BUFFER_HIGH_WATER)
+        await anyio.wait_all_tasks_blocked()
+        assert pushed
 
 
 @pytest.mark.anyio
