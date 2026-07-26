@@ -9,6 +9,7 @@ from urllib.parse import unquote
 
 from anycorn.typing import (
     AppWrapper,
+    ASGIReceiveEvent,
     ASGISendEvent,
     ConnectionState,
     Extensions,
@@ -78,6 +79,9 @@ class HTTPStream:
     ) -> None:
         """Initialize the HTTP stream handler."""
         self.app = app
+        # Only set once a request has been spawned, and read on StreamClosed, which
+        # can arrive first if the connection dies during the spawn
+        self.app_put: Callable[[ASGIReceiveEvent], Awaitable[None]] | None = None
         self.client = client
         self.closed = False
         self.config = config
@@ -148,10 +152,13 @@ class HTTPStream:
                 self.closed = True
 
         elif isinstance(event, Body):
+            # A body cannot arrive before the request that opened the stream
+            assert self.app_put is not None
             await self.app_put(
                 {"type": "http.request", "body": bytes(event.data), "more_body": True}
             )
         elif isinstance(event, EndBody):
+            assert self.app_put is not None
             await self.app_put({"type": "http.request", "body": b"", "more_body": False})
         elif isinstance(event, StreamClosed):
             self.closed = True
