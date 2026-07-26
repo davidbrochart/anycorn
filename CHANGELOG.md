@@ -1,6 +1,6 @@
 # Version history
 
-## Unreleased
+## 0.19.3
 
 - Send CONNECTION_CLOSE to every QUIC peer when the server stops, as nginx does, so an
   HTTP/3 client learns the connection has gone rather than waiting out its idle timeout.
