@@ -93,7 +93,12 @@ class StreamBuffer:
         length = min(len(self.buffer), max_length)
         data = bytes(self.buffer[:length])
         del self.buffer[:length]
-        if len(data) < BUFFER_LOW_WATER:
+        # On what is left, not on what was taken. Keying this on the size of the
+        # chunk popped let a zero-length pop - which is what _send_data does once
+        # the peer's flow control window is exhausted - release the writer with the
+        # buffer still above the high water mark, so the marks did not mean what
+        # they say.
+        if len(self.buffer) < BUFFER_LOW_WATER:
             await self._paused.set()
         if len(self.buffer) == 0:
             await self._is_empty.set()
