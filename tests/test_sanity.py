@@ -256,18 +256,19 @@ def _recording_app(seen: list[str]) -> Callable:
     return _app
 
 
+# Targets that no ASGI scope can carry a path for, driven at both stream types
+NO_ASGI_PATH = [
+    b"/caf\xc3\xa9",  # raw UTF-8, as HTTP/2 hands it over
+    b"/bad\xff",  # raw, and not UTF-8 at all
+    b"/a b",  # a space
+    b"/x\x7f",  # DEL
+    b"/bad%ff",  # a valid escape for a byte that is not UTF-8
+    b"/x%zz",  # not a hex escape at all
+]
+
+
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    "target",
-    [
-        b"/caf\xc3\xa9",  # raw UTF-8, as HTTP/2 hands it over
-        b"/bad\xff",  # raw, and not UTF-8 at all
-        b"/a b",  # a space
-        b"/x\x7f",  # DEL
-        b"/bad%ff",  # a valid escape for a byte that is not UTF-8
-        b"/x%zz",  # not a hex escape at all
-    ],
-)
+@pytest.mark.parametrize("target", NO_ASGI_PATH)
 async def test_http2_rejects_a_target_with_no_asgi_path(target: bytes) -> None:
     """400, and the app is never reached, for a target with no ASGI path.
 
@@ -308,8 +309,14 @@ async def test_http2_rejects_a_target_with_no_asgi_path(target: bytes) -> None:
 
 
 @pytest.mark.anyio
-async def test_http2_websocket_rejects_a_target_with_no_asgi_path() -> None:
-    """The same rule on the websocket side, where WSStream builds the scope."""
+@pytest.mark.parametrize("target", NO_ASGI_PATH)
+async def test_http2_websocket_rejects_a_target_with_no_asgi_path(target: bytes) -> None:
+    """The same rule on the websocket side, where WSStream builds the scope.
+
+    The same targets as the HTTP test: WSStream has its own copy of the check and
+    its own scope to build, so agreeing with HTTPStream is not something the two
+    get for free.
+    """
     seen: list[str] = []
     async with serve_in_memory(_recording_app(seen), alpn_protocol="h2") as client_stream:
         client = h2.connection.H2Connection()
@@ -320,7 +327,7 @@ async def test_http2_websocket_rejects_a_target_with_no_asgi_path() -> None:
             stream_id,
             [
                 (b":method", b"CONNECT"),
-                (b":path", b"/caf\xc3\xa9"),
+                (b":path", target),
                 (b":authority", b"anycorn"),
                 (b":scheme", b"https"),
                 (b"sec-websocket-version", b"13"),
