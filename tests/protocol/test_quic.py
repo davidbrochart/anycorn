@@ -182,3 +182,45 @@ async def test_new_connection_accepted_whilst_running(tmp_path: Path) -> None:
     await protocol.handle(RawData(data=_client_initial(), address=CLIENT_ADDRESS))
 
     assert protocol.connections != {}
+
+
+def _ended_quic() -> QuicConnection:
+    """Return a connection aioquic has finished closing, and so has no timer left."""
+    quic = QuicConnection(configuration=QuicConfiguration(is_client=True, alpn_protocols=H3_ALPN))
+    quic.connect(("192.0.2.1", 4433), now=0.0)
+    quic.datagrams_to_send(now=0.0)
+    quic.close()
+    quic.datagrams_to_send(now=0.0)  # writes the close, beginning the closing period
+    timer = quic.get_timer()
+    assert timer is not None
+    quic.handle_timer(now=timer)  # closing period over: the connection ends
+    assert quic.get_timer() is None
+    return quic
+
+
+@pytest.mark.anyio
+async def test_handle_timer_skips_a_connection_that_has_ended(tmp_path: Path) -> None:
+    """A timer left over from before the connection ended must not be handled.
+
+    aioquic drops its timer once a connection terminates, and handle_timer() then
+    compares the time against it and raises TypeError. A CONNECTION_CLOSE arriving
+    from the peer whilst a timer is pending is enough to reach this, so the timer
+    has to check that the connection is still live rather than assume it.
+    """
+    certfile, keyfile = _write_encrypted_cert(tmp_path)
+    config = Config()
+    config.certfile = certfile
+    config.keyfile = keyfile
+    config.keyfile_password = _KEY_PASSWORD
+
+    context = MagicMock()
+    context.time.return_value = 0.0
+    context.sleep = AsyncMock()
+    send = AsyncMock()
+    protocol = _make_protocol(config, send, context)
+    connection = _Connection(cids=set(), quic=_ended_quic(), task=MagicMock())
+
+    await protocol._handle_timer(0.0, connection)
+
+    # Nothing was sent on behalf of a connection that is already over
+    send.assert_not_awaited()

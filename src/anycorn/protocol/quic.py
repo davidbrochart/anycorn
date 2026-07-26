@@ -227,5 +227,12 @@ class QuicProtocol:
     async def _handle_timer(self, timer: float, connection: _Connection) -> None:
         wait = max(0, timer - self.context.time())
         await self.context.sleep(wait)
+        # The connection can end whilst this waits - a CONNECTION_CLOSE from the peer
+        # ends it at once - and aioquic drops its timer when it does. get_timer() is
+        # then None, and handle_timer() compares the time against it and raises
+        # TypeError. Whoever ended the connection drains its events, so there is
+        # nothing left here to do.
+        if connection.quic.get_timer() is None:
+            return
         connection.quic.handle_timer(now=self.context.time())
         await self._handle_events(connection, None)
