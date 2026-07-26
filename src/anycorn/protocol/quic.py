@@ -8,7 +8,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from aioquic.buffer import Buffer
-from aioquic.h3.connection import H3_ALPN
+from aioquic.h3.connection import H3_ALPN, ErrorCode
 from aioquic.quic.configuration import QuicConfiguration
 from aioquic.quic.connection import QuicConnection
 from aioquic.quic.events import (
@@ -137,10 +137,35 @@ class QuicProtocol:
         elif isinstance(event, Closed):
             pass
 
-    async def send_all(self, connection: _Connection) -> None:
-        """Send all pending datagrams and reschedule the connection timer."""
+    async def _flush_datagrams(self, connection: _Connection) -> None:
+        """Write whatever the connection has queued out to the socket."""
         for data, address in connection.quic.datagrams_to_send(now=self.context.time()):
             await self.send(RawData(data=data, address=address))
+
+    async def close_all(self) -> None:
+        """Tell every peer the connection is going away, as nginx does on shutdown.
+
+        Closing a UDP socket sends the peer nothing, so without this a client of a
+        server that has stopped simply waits out its idle timeout rather than being
+        told. nginx's `ngx_quic_close_connection()` sends CONNECTION_CLOSE, so do the
+        same: an application-level close (frame 0x1d, what `frame_type=None` selects)
+        carrying H3_NO_ERROR, matching the NGX_HTTP_V3_ERR_NO_ERROR nginx finalizes a
+        graceful HTTP/3 shutdown with.
+
+        Only the frame is sent. nginx then holds the connection open for 3*PTO to
+        re-send it to any straggling packet, which is of no use here because the
+        socket is closed immediately after the worker stops.
+        """
+        # One connection is registered under each of its connection ids, so walk the
+        # distinct connections rather than sending a close per id. _Connection is an
+        # unhashable dataclass, hence keying on identity rather than using a set.
+        for connection in {id(entry): entry for entry in self.connections.values()}.values():
+            connection.quic.close(error_code=ErrorCode.H3_NO_ERROR)
+            await self._flush_datagrams(connection)
+
+    async def send_all(self, connection: _Connection) -> None:
+        """Send all pending datagrams and reschedule the connection timer."""
+        await self._flush_datagrams(connection)
 
         timer = connection.quic.get_timer()
         if timer is not None:
@@ -202,5 +227,12 @@ class QuicProtocol:
     async def _handle_timer(self, timer: float, connection: _Connection) -> None:
         wait = max(0, timer - self.context.time())
         await self.context.sleep(wait)
+        # The connection can end whilst this waits - a CONNECTION_CLOSE from the peer
+        # ends it at once - and aioquic drops its timer when it does. get_timer() is
+        # then None, and handle_timer() compares the time against it and raises
+        # TypeError. Whoever ended the connection drains its events, so there is
+        # nothing left here to do.
+        if connection.quic.get_timer() is None:
+            return
         connection.quic.handle_timer(now=self.context.time())
         await self._handle_events(connection, None)

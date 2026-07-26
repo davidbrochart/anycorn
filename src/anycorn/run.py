@@ -295,9 +295,12 @@ async def worker_serve(  # noqa: C901, PLR0912, PLR0915
             task_status.started(binds)
             try:
                 async with anyio.create_task_group() as tg:
+                    # terminated is marked as shutdown begins rather than once the
+                    # servers have unwound, so that they refuse new connections on the
+                    # way out instead of finding out too late to act on it
                     if shutdown_trigger is not None:
-                        tg.start_soon(raise_shutdown, shutdown_trigger)
-                    tg.start_soon(raise_shutdown, context.terminate.wait)
+                        tg.start_soon(raise_shutdown, shutdown_trigger, context.terminated.set)
+                    tg.start_soon(raise_shutdown, context.terminate.wait, context.terminated.set)
 
                     for udp_server in udp_servers:
                         await tg.start(udp_server.run)

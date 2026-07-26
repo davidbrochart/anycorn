@@ -426,9 +426,19 @@ def check_for_updates(files: dict[pathlib.Path, float]) -> bool:
     return False
 
 
-async def raise_shutdown(shutdown_event: Callable[..., Awaitable]) -> None:
-    """Await *shutdown_event* then raise ShutdownError to trigger graceful shutdown."""
+async def raise_shutdown(
+    shutdown_event: Callable[..., Awaitable],
+    on_shutdown: Callable[[], Awaitable[Any]] | None = None,
+) -> None:
+    """Await *shutdown_event*, run *on_shutdown*, then raise ShutdownError.
+
+    *on_shutdown* runs before the error unwinds the servers, whilst they can still
+    see what it does. A worker marking itself terminated only once they have been
+    cancelled cannot stop them accepting anything, because they are already gone.
+    """
     await shutdown_event()
+    if on_shutdown is not None:
+        await on_shutdown()
     raise ShutdownError
 
 

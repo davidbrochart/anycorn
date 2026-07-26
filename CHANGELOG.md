@@ -1,5 +1,13 @@
 # Version history
 
+## Unreleased
+
+- Send CONNECTION_CLOSE to every QUIC peer when the server stops, as nginx does, so an
+  HTTP/3 client learns the connection has gone rather than waiting out its idle timeout.
+- Mark the worker terminated as shutdown begins rather than once its servers have
+  unwound, so that a QUIC Initial arriving during shutdown is refused instead of being
+  taken on by a worker that is going away.
+
 ## 0.19.2
 
 - Keep the QUIC/HTTP-3 server alive when a Windows peer's ICMP port unreachable surfaces
