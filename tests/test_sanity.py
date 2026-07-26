@@ -6,6 +6,7 @@ from the client side, so they cover the whole stack from bytes to ASGI and back.
 
 from __future__ import annotations
 
+import anyio
 import h2.config
 import h2.connection
 import h2.events
@@ -14,6 +15,8 @@ import pytest
 import wsproto
 import wsproto.connection
 import wsproto.events
+
+from anycorn.config import Config
 
 from .helpers import SANITY_BODY, sanity_framework, serve_in_memory
 
@@ -184,3 +187,48 @@ async def test_http2_websocket() -> None:
         assert isinstance(events[0], h2.events.DataReceived)
         client.receive_data(events[0].data)
         assert list(client.events()) == [wsproto.events.CloseConnection(code=1000, reason="")]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("target", "status"),
+    [
+        (b"/bad%ff", 400),  # a valid escape for a byte that is not UTF-8
+        (b"/x%zz", 400),  # not a hex escape at all
+    ],
+)
+async def test_http1_error_response_closes_the_connection(target: bytes, status: int) -> None:
+    """A request answered with an error must finish, not leave the client waiting.
+
+    The error response was written but the stream was never closed, so h11 never
+    reached _maybe_recycle and the connection stayed open until it timed out - the
+    client saw the response and then simply hung. Only reachable once anycorn
+    itself started refusing requests h11 had already let through.
+    """
+    config = Config()
+    config.server_names = ["anycorn"]
+    async with serve_in_memory(sanity_framework, config) as client_stream:
+        client = h11.Connection(h11.CLIENT)
+        await client_stream.send_all(
+            client.send(
+                h11.Request(
+                    method="GET",
+                    target=target,
+                    headers=[(b"host", b"anycorn"), (b"connection", b"close")],
+                )
+            )
+        )
+
+        events = []
+        with anyio.fail_after(5):
+            while True:
+                event = client.next_event()
+                if event is h11.NEED_DATA:
+                    client.receive_data(await client_stream.receive_some(4096))
+                elif isinstance(event, h11.ConnectionClosed):
+                    break
+                else:
+                    events.append(event)
+
+    assert [type(event).__name__ for event in events] == ["Response", "EndOfMessage"]
+    assert events[0].status_code == status

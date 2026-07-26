@@ -278,6 +278,7 @@ async def test_handle_data_before_acceptance(stream: WSStream) -> None:
             )
         ),
         call(EndBody(stream_id=1)),
+        call(StreamClosed(stream_id=1)),
     ]
 
 
@@ -467,6 +468,7 @@ async def test_invalid_server_name(stream: WSStream) -> None:
             )
         ),
         call(EndBody(stream_id=1)),
+        call(StreamClosed(stream_id=1)),
     ]
     # This shouldn't error
     await stream.handle(Body(stream_id=1, data=b"Body"))

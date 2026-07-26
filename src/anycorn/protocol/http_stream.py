@@ -188,8 +188,10 @@ class HTTPStream:
             if not self.closed:
                 # Cleanup if required
                 if self.state == ASGIHTTPState.REQUEST:
+                    # Closes the stream itself, as the 400s and 404s in handle() need
                     await self._send_error_response(500)
-                await self.send(StreamClosed(stream_id=self.stream_id))
+                else:
+                    await self.send(StreamClosed(stream_id=self.stream_id))
         elif message["type"] == "http.response.start" and self.state == ASGIHTTPState.REQUEST:
             self.response = message
             headers = build_and_validate_headers(self.response.get("headers", []))
@@ -323,3 +325,7 @@ class HTTPStream:
                 ResponseSummary(status=status_code, headers=[]),
                 time() - self.start_time,
             )
+        # Without this the response is written but the stream is never finished, so
+        # h11 never reaches _maybe_recycle and the connection is left open until it
+        # times out - the client sees the error response and then simply waits.
+        await self.send(StreamClosed(stream_id=self.stream_id))

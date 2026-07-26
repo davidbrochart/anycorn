@@ -330,13 +330,15 @@ class WSStream:
         if message is None:  # ASGI App has finished sending messages
             # Cleanup if required
             if self.state == ASGIWebsocketState.HANDSHAKE:
+                # Closes the stream itself, as the 400s and 404s in handle() need
                 await self._send_error_response(500)
                 await self.config.log.access(
                     self.scope, {"status": 500, "headers": []}, time() - self.start_time
                 )
-            elif self.state == ASGIWebsocketState.CONNECTED:
-                await self._send_wsproto_event(CloseConnection(code=CloseReason.INTERNAL_ERROR))
-            await self.send(StreamClosed(stream_id=self.stream_id))
+            else:
+                if self.state == ASGIWebsocketState.CONNECTED:
+                    await self._send_wsproto_event(CloseConnection(code=CloseReason.INTERNAL_ERROR))
+                await self.send(StreamClosed(stream_id=self.stream_id))
         elif message["type"] == "websocket.accept" and self.state == ASGIWebsocketState.HANDSHAKE:
             await self._accept(message)
         elif (
@@ -423,6 +425,9 @@ class WSStream:
             await self.config.log.access(
                 self.scope, {"status": status_code, "headers": []}, time() - self.start_time
             )
+        # As in HTTPStream: without this h11 never reaches _maybe_recycle, so the
+        # connection stays open after the error response until it times out.
+        await self.send(StreamClosed(stream_id=self.stream_id))
 
     async def _send_wsproto_event(self, event: WSProtoEvent) -> None:
         try:
