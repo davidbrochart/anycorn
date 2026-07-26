@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -28,7 +27,11 @@ class ProxyFixMiddleware:
         """Process the ASGI scope and apply proxy header rewrites before passing to the app."""
         # Keep the `or` instead of `in {'http' …}` to allow type narrowing
         if scope["type"] == "http" or scope["type"] == "websocket":
-            scope = deepcopy(scope)
+            # Shallow: only client, scheme and headers are replaced, and headers is
+            # rebuilt as a new list rather than mutated. A deepcopy also copied
+            # scope["state"], which carries whatever lifespan put there - a database
+            # pool, a client, a lock - and raised TypeError on anything unpicklable.
+            scope = scope.copy()
             headers = scope["headers"]
             client: str | None = None
             scheme: str | None = None
