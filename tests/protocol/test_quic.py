@@ -126,6 +126,9 @@ async def test_close_all_closes_each_connection_once(tmp_path: Path) -> None:
     send.assert_awaited_once()
 
 
+# Only ever recorded as the peer a datagram came from: nothing is bound or sent to it,
+# so the port neither has to be free nor to exist. Same goes for the addresses handed
+# to _client_initial and _make_protocol below.
 CLIENT_ADDRESS = ("127.0.0.1", 44444)
 
 
