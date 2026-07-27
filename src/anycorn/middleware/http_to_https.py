@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from urllib.parse import urlunsplit
+from urllib.parse import quote, urlunsplit
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -14,6 +14,11 @@ if TYPE_CHECKING:
 MAX_HOST_LENGTH = 255
 # Below this a byte is a control character, which no host name carries
 FIRST_PRINTABLE = 0x20
+# Everything RFC 3986 already allows unescaped in a path, so a target that is
+# a valid URI passes through untouched rather than being encoded a second time.
+# What is left - raw non-ascii bytes, and a literal "?" that would otherwise
+# start a query string - is percent-escaped.
+_PATH_SAFE = "/%:@!$&'()*+,;=~-._"
 
 
 class HTTPToHTTPSRedirectMiddleware:
@@ -108,7 +113,7 @@ class HTTPToHTTPSRedirectMiddleware:
             msg = "Host to redirect to cannot be determined"
             raise ValueError(msg)
 
-        path = scope.get("root_path", "") + scope["raw_path"].decode()
+        path = scope.get("root_path", "") + quote(scope["raw_path"], safe=_PATH_SAFE)
         return urlunsplit((scheme, host, path, scope["query_string"].decode(), ""))
 
 

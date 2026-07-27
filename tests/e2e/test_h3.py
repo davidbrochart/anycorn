@@ -170,6 +170,30 @@ class _H3Transport(httpx2.AsyncBaseTransport):
             extensions={"http_version": b"HTTP/3"},
         )
 
+    async def request_raw_path(self, path: bytes) -> int:
+        """Send a request whose :path is exactly *path*, and return the status.
+
+        httpx builds and normalises the target, so a path carrying bytes no URL
+        library would emit has to be put on the wire by hand.
+        """
+        stream_id = self._quic.get_next_available_stream_id()
+        self._read_queue[stream_id] = []
+        self._read_ready[stream_id] = anyio.Event()
+        self._http.send_headers(
+            stream_id=stream_id,
+            headers=[
+                (b":method", b"GET"),
+                (b":scheme", b"https"),
+                (b":authority", self._address[0].encode()),
+                (b":path", path),
+            ],
+            end_stream=True,
+        )
+        await self._transmit()
+
+        status_code, _, _ = await self._receive_response(stream_id)
+        return status_code
+
     async def _receive_loop(self) -> None:
         while True:
             try:
@@ -421,6 +445,67 @@ async def test_stream_closed_forgets_the_stream(tls_certs: TLSCerts, free_udp_po
                     await anyio.wait_all_tasks_blocked()
 
                 assert connection.h3.streams == {}
+            finally:
+                tg.cancel_scope.cancel()
+    finally:
+        await datagram_socket.aclose()
+
+
+# The same targets tests/test_sanity.py drives at HTTP/1.1 and HTTP/2
+NO_ASGI_PATH = [
+    b"/caf\xc3\xa9",  # raw UTF-8, as HTTP/3 hands it over
+    b"/bad\xff",  # raw, and not UTF-8 at all
+    b"/a b",  # a space
+    b"/x\x7f",  # DEL
+    b"/bad%ff",  # a valid escape for a byte that is not UTF-8
+    b"/x%zz",  # not a hex escape at all
+]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("target", NO_ASGI_PATH)
+async def test_rejects_a_target_with_no_asgi_path(
+    tls_certs: TLSCerts, free_udp_port: int, target: bytes
+) -> None:
+    """400, and the app never sees it, over HTTP/3 as over the other two.
+
+    HTTP/3 carries :path as opaque octets just as HTTP/2 does, and neither gets
+    the check HTTP/1.1 has for free from h11 - so this has to be driven by a real
+    client over a real QUIC connection to know it holds here too. Decoding such a
+    target used to raise out of H3Protocol.handle and take the connection with it.
+    """
+    seen: list[str] = []
+
+    async def _app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
+        seen.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    config = Config()
+    config.bind = []  # only QUIC is needed here, so skip the TCP listener
+    config.quic_bind = [f"{HOST}:{free_udp_port}"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+
+    sockets = config.create_sockets()
+    datagram_socket = await wrap_datagram_socket(sockets.quic_sockets[0])
+    app_wrapper = wrap_app(_app, config.wsgi_max_body_size, None)
+    udp_server = UDPServer(app_wrapper, config, WorkerContext(None), {}, datagram_socket)
+
+    try:
+        async with anyio.create_task_group() as tg:
+            await tg.start(udp_server.run)
+            try:
+                async with _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport:
+                    with anyio.fail_after(10):
+                        status = await transport.request_raw_path(target)
+                    assert status == 400  # noqa: PLR2004
+                    assert seen == [], "the app was handed a request it should never have seen"
+
+                    # The connection is still usable, rather than having been taken down
+                    with anyio.fail_after(10):
+                        assert await transport.request_raw_path(b"/after") == 200  # noqa: PLR2004
+                    assert seen == ["/after"]
             finally:
                 tg.cancel_scope.cancel()
     finally:

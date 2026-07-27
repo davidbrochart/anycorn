@@ -292,6 +292,7 @@ async def test_invalid_server_name(stream: HTTPStream) -> None:
             )
         ),
         call(EndBody(stream_id=1)),
+        call(StreamClosed(stream_id=1)),
     ]
     # This shouldn't error
     await stream.handle(Body(stream_id=1, data=b"Body"))
@@ -558,3 +559,32 @@ async def test_trailers_without_te_do_not_crash(stream: HTTPStream) -> None:
 
     # Still awaiting a response rather than closed, so the app can go on to send one
     assert stream.state == ASGIHTTPState.REQUEST
+
+
+@pytest.mark.parametrize(
+    ("raw_path", "expected"),
+    [
+        (b"/caf%C3%A9", "/café"),  # percent-encoded UTF-8, decoded per the ASGI spec
+        (b"/a%20b", "/a b"),
+        (b"/x%2Fy", "/x/y"),
+    ],
+)
+@pytest.mark.anyio
+async def test_handle_request_percent_encoded_path(
+    stream: HTTPStream, raw_path: bytes, expected: str
+) -> None:
+    """A valid escape sequence is decoded into the character it stands for."""
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[],
+            raw_path=raw_path,
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
+    assert scope["path"] == expected
+    # The undecoded bytes stay available for apps that need them
+    assert scope["raw_path"] == raw_path

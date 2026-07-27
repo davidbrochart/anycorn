@@ -6,7 +6,6 @@ from enum import Enum, auto
 from io import BytesIO, StringIO
 from time import time
 from typing import TYPE_CHECKING
-from urllib.parse import unquote
 
 from wsproto.connection import Connection, ConnectionState, ConnectionType
 from wsproto.events import (
@@ -40,9 +39,12 @@ from anycorn.typing import (
     ConnectionState as ASGIConnectionState,  # wsproto has one of its own
 )
 from anycorn.utils import (
+    InvalidRequestPathError,
     UnexpectedMessageError,
     build_and_validate_headers,
+    decode_asgi_path,
     suppress_body,
+    valid_request_target,
     valid_server_name,
 )
 
@@ -255,6 +257,14 @@ class WSStream:
                 event.headers, event.http_version, self.config.websocket_permessage_deflate
             )
             path, _, query_string = event.raw_path.partition(b"?")
+
+            try:
+                decoded_path = decode_asgi_path(path)
+            except InvalidRequestPathError:
+                await self._send_error_response(400)
+                self.closed = True
+                return
+
             extensions = Extensions()
             if self.tls is not None:
                 extensions["tls"] = self.tls
@@ -264,7 +274,7 @@ class WSStream:
                 "asgi": {"spec_version": "2.3", "version": "3.0"},
                 "scheme": self.scheme,
                 "http_version": event.http_version,
-                "path": unquote(path.decode("ascii")),
+                "path": decoded_path,
                 "raw_path": path,
                 "query_string": query_string,
                 "root_path": self.config.root_path,
@@ -278,7 +288,12 @@ class WSStream:
                 "extensions": extensions,
             }
 
-            if not valid_server_name(self.config, event):
+            if not valid_request_target(path):
+                # As in HTTPStream: what h11 answers an HTTP/1.1 request carrying
+                # such a target, duplicated for the versions that check nothing.
+                await self._send_error_response(400)
+                self.closed = True
+            elif not valid_server_name(self.config, event):
                 await self._send_error_response(404)
                 self.closed = True
             elif not self.handshake.is_valid():
@@ -315,13 +330,15 @@ class WSStream:
         if message is None:  # ASGI App has finished sending messages
             # Cleanup if required
             if self.state == ASGIWebsocketState.HANDSHAKE:
+                # Closes the stream itself, as the 400s and 404s in handle() need
                 await self._send_error_response(500)
                 await self.config.log.access(
                     self.scope, {"status": 500, "headers": []}, time() - self.start_time
                 )
-            elif self.state == ASGIWebsocketState.CONNECTED:
-                await self._send_wsproto_event(CloseConnection(code=CloseReason.INTERNAL_ERROR))
-            await self.send(StreamClosed(stream_id=self.stream_id))
+            else:
+                if self.state == ASGIWebsocketState.CONNECTED:
+                    await self._send_wsproto_event(CloseConnection(code=CloseReason.INTERNAL_ERROR))
+                await self.send(StreamClosed(stream_id=self.stream_id))
         elif message["type"] == "websocket.accept" and self.state == ASGIWebsocketState.HANDSHAKE:
             await self._accept(message)
         elif (
@@ -403,9 +420,14 @@ class WSStream:
             )
         )
         await self.send(EndBody(stream_id=self.stream_id))
-        await self.config.log.access(
-            self.scope, {"status": status_code, "headers": []}, time() - self.start_time
-        )
+        # A target rejected before the scope was built has nothing to log against
+        if hasattr(self, "scope"):
+            await self.config.log.access(
+                self.scope, {"status": status_code, "headers": []}, time() - self.start_time
+            )
+        # As in HTTPStream: without this h11 never reaches _maybe_recycle, so the
+        # connection stays open after the error response until it times out.
+        await self.send(StreamClosed(stream_id=self.stream_id))
 
     async def _send_wsproto_event(self, event: WSProtoEvent) -> None:
         try:
