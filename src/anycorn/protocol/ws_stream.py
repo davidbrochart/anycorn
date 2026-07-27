@@ -235,6 +235,8 @@ class WSStream:
         self.server = server
         self.start_time: float
         self.state = ASGIWebsocketState.HANDSHAKE
+        # Bytes received before the app accepted, held rather than answered
+        self.pre_accept_data = bytearray()
         self.stream_id = stream_id
         self.tls = tls
         self.scheme = "wss" if self.tls is not None else "ws"
@@ -305,8 +307,19 @@ class WSStream:
                 )
                 await self.app_put({"type": "websocket.connect"})
         elif isinstance(event, (Body, Data)) and not self.handshake.accepted:
-            await self._send_error_response(400)
-            self.closed = True
+            # Bytes that arrived with the handshake, before the app has had a
+            # chance to accept. Whether it has by now is down to the event loop -
+            # asyncio happened to run the app first and serve them, trio did not
+            # and answered 400 - so hold them until the handshake resolves rather
+            # than letting the scheduler decide what the peer gets.
+            #
+            # Bounded, since a peer that keeps sending at an app which is slow to
+            # accept would otherwise have the buffer grow for as long as it likes.
+            if len(self.pre_accept_data) + len(event.data) > self.config.websocket_max_message_size:
+                await self._send_error_response(400)
+                self.closed = True
+            else:
+                self.pre_accept_data.extend(event.data)
         elif isinstance(event, (Body, Data)):
             self.connection.receive_data(event.data)
             await self._handle_events()
@@ -450,6 +463,12 @@ class WSStream:
         )
         if self.config.websocket_ping_interval is not None:
             self.task_group.spawn(self._send_pings)
+        if self.pre_accept_data:
+            # Anything the peer sent ahead of the handshake completing is theirs to
+            # have delivered now that there is a connection to decode it with
+            data, self.pre_accept_data = bytes(self.pre_accept_data), bytearray()
+            self.connection.receive_data(data)
+            await self._handle_events()
 
     async def _send_rejection(self, message: WebsocketResponseBodyEvent) -> None:
         # Guaranteed by app_send, which only routes here once a response has started
