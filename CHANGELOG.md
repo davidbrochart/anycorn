@@ -1,5 +1,24 @@
 # Version history
 
+## 0.20.0
+
+- Hold websocket data that arrives before the app accepts.
+- h3 reset tests.
+- Integration tests.
+- Decode a request target that is not ascii.
+- Add a `strict_paths` flag for dispatcher mount matching.
+- Pass on a mounted app's lifespan failure rather than completing for it.
+- Do not read a websocket response that never started.
+- Copy the scope shallowly in `ProxyFixMiddleware`.
+- Refuse a redirect target the client wrote.
+- Resume a paused HTTP/2 writer on what has drained, not what was taken.
+- Discard an HTTP/2 stream's send state when the peer resets it.
+- Decode the WSGI QUERY_STRING as latin1.
+- Give a port-less server a port in the WSGI environ.
+- Do not close an HTTP stream that has not started a response.
+- Initialise `HTTPStream.app_put`.
+- Turn an unmatched websocket away as a websocket.
+
 ## 0.19.3
 
 - Send CONNECTION_CLOSE to every QUIC peer when the server stops, as nginx does, so an
