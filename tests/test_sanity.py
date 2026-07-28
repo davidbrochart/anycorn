@@ -390,3 +390,38 @@ async def test_http2_rejected_request_may_still_send_a_body() -> None:
 
     assert status == b"400"
     assert seen == []
+
+
+@pytest.mark.anyio
+async def test_http1_websocket_frame_arriving_with_the_handshake() -> None:
+    """A frame in the same packet as the upgrade is served, on either backend.
+
+    Whether the app had accepted by the time these bytes were handled came down
+    to the event loop: asyncio ran the app first and served them, trio did not
+    and answered 400, so the same client got a different answer depending on how
+    the server was run. They are held until the handshake resolves now.
+
+    This shows the behaviour a client sees, but it cannot be the guard against
+    the old one coming back - the old one passed here about half the time, being
+    the race it was. test_ws_stream.py pins the holding itself, deterministically.
+    """
+    async with serve_in_memory(sanity_framework) as client_stream:
+        client = wsproto.WSConnection(wsproto.ConnectionType.CLIENT)
+        handshake = client.send(wsproto.events.Request(host="anycorn", target="/"))
+        # wsproto will not frame a message before it has seen the accept, so the
+        # frame is built by the post-handshake connection type - which is what a
+        # client that writes both without waiting puts on the wire
+        framer = wsproto.connection.Connection(wsproto.ConnectionType.CLIENT)
+        frame = framer.send(wsproto.events.BytesMessage(data=SANITY_BODY))
+        await client_stream.send_all(handshake + frame)
+
+        events: list[object] = []
+        with anyio.fail_after(5):
+            while not any(isinstance(event, wsproto.events.TextMessage) for event in events):
+                data = await client_stream.receive_some(4096)
+                assert data != b"", "the connection was closed rather than served"
+                client.receive_data(data)
+                events.extend(client.events())
+
+    assert isinstance(events[0], wsproto.events.AcceptConnection)
+    assert events[-1] == wsproto.events.TextMessage(data="Hello & Goodbye")

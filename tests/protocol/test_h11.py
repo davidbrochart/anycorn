@@ -15,6 +15,7 @@ from anycorn.events import Closed, RawData, Updated
 from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
 from anycorn.protocol.h11 import H2CProtocolRequiredError, H2ProtocolAssumedError, H11Protocol
 from anycorn.protocol.http_stream import HTTPStream
+from anycorn.protocol.ws_stream import WSStream
 from anycorn.typing import ConnectionState
 from anycorn.typing import Event as IOEvent
 from anycorn.worker_context import EventWrapper
@@ -467,10 +468,14 @@ async def test_protocol_handle_data_post_close(protocol: H11Protocol) -> None:
 async def test_protocol_handle_data_after_websocket_upgrade(protocol: H11Protocol) -> None:
     """Trailing data on a websocket upgrade must not crash the worker.
 
-    The bytes after the handshake arrive as a Data event before the app has accepted
-    the connection - while WSStream still has no wsproto connection object. It must
-    answer 400 rather than raise AttributeError on self.connection and take the whole
-    worker down with it.
+    The bytes after the handshake arrive as a Data event before the app has
+    accepted the connection - while WSStream still has no wsproto connection
+    object to decode them with. Reading self.connection there raised
+    AttributeError and took the whole worker down with it.
+
+    They are held until the handshake resolves now, rather than answered, so
+    nothing is sent here: this app never accepts. What matters for the regression
+    is that handling them raises nothing.
 
     https://github.com/pgjones/hypercorn/issues/225
     """
@@ -492,7 +497,9 @@ async def test_protocol_handle_data_after_websocket_upgrade(protocol: H11Protoco
         for (event, *_), _ in protocol.send.call_args_list  # type: ignore[attr-defined]
         if isinstance(event, RawData)
     )
-    assert b"HTTP/1.1 400 " in sent
+    assert sent == b"", "the trailing byte should be held, not answered"
+    assert isinstance(protocol.stream, WSStream)
+    assert protocol.stream.pre_accept_data == b"x"
 
 
 @pytest.mark.anyio
