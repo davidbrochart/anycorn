@@ -330,11 +330,12 @@ class WSStream:
         if message is None:  # ASGI App has finished sending messages
             # Cleanup if required
             if self.state == ASGIWebsocketState.HANDSHAKE:
-                # Closes the stream itself, as the 400s and 404s in handle() need
+                # _send_error_response logs the request and closes the stream
+                # itself, as it does for the 400s and 404s in handle(); logging
+                # again here put the same line in the access log twice, so anything
+                # counting requests double-counted an app that failed during the
+                # handshake. HTTPStream does not do this.
                 await self._send_error_response(500)
-                await self.config.log.access(
-                    self.scope, {"status": 500, "headers": []}, time() - self.start_time
-                )
             else:
                 if self.state == ASGIWebsocketState.CONNECTED:
                     await self._send_wsproto_event(CloseConnection(code=CloseReason.INTERNAL_ERROR))
