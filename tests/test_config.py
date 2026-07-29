@@ -70,12 +70,11 @@ def test_create_ssl_context() -> None:
     context = config.create_ssl_context()
 
     assert context is not None
-    # Compression is disabled (RFC 7540 9.2.1) ...
-    assert context.options & ssl.OP_NO_COMPRESSION
-    # ... and every hardening option create_default_context() sets is preserved rather
-    # than clobbered by the step that disables compression. Comparing against a fresh
-    # default context covers the whole set (OP_CIPHER_SERVER_PREFERENCE, OP_NO_SSLv3,
-    # OP_NO_TICKET, OP_ENABLE_MIDDLEBOX_COMPAT, ...) without pinning a per-version list.
+    # create_ssl_context disables compression (RFC 7540 9.2.1) on top of the hardened
+    # options create_default_context() sets. Every option the default enables - which
+    # includes compression already being disabled - must survive, rather than being
+    # cleared by the step that disables compression. Deriving the expectation from a
+    # fresh default context covers the whole set without pinning a per-version list.
     default_options = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH).options
     missing = default_options & ~context.options
     assert not missing, f"dropped hardening options: {ssl.Options(missing)!r}"
