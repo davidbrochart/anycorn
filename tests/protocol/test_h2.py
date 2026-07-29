@@ -11,7 +11,7 @@ from h2.events import ConnectionTerminated
 
 from anycorn.config import Config
 from anycorn.events import Closed, RawData
-from anycorn.protocol.events import Trailers
+from anycorn.protocol.events import Request, Trailers
 from anycorn.protocol.h2 import (
     BUFFER_HIGH_WATER,
     BufferCompleteError,
@@ -178,6 +178,64 @@ async def test_stream_send_trailers_ends_stream() -> None:
         await protocol.stream_send(Trailers(stream_id=1, headers=[(b"x", b"y")]))
 
     protocol.connection.send_headers.assert_called_once_with(1, [(b"x", b"y")], end_stream=True)
+
+
+@pytest.mark.anyio
+async def test_server_push_counts_once_towards_keep_alive() -> None:
+    """A pushed stream must count once toward keep_alive_requests, like a request.
+
+    _create_server_push builds the pushed stream through _create_stream, which already
+    increments keep_alive_requests; a second increment counted every push twice, so a
+    connection using server push hit keep_alive_max_requests and closed too early.
+    """
+    task_group = AsyncMock()
+    # spawn_app returns the per-request app_put callable; make it awaitable so the
+    # EndBody the push path delivers does not blow up on a bare Mock.
+    task_group.spawn_app = AsyncMock(return_value=AsyncMock())
+    protocol = H2Protocol(
+        Mock(),
+        Config(),
+        WorkerContext(None),
+        task_group,
+        ConnectionState({}),
+        None,
+        None,
+        AsyncMock(),
+        None,
+    )
+
+    client = H2Connection()
+    client.initiate_connection()
+    client.send_headers(
+        1,
+        [
+            (b":method", b"GET"),
+            (b":path", b"/"),
+            (b":authority", b"anycorn"),
+            (b":scheme", b"https"),
+        ],
+        end_stream=True,
+    )
+    await protocol.handle(RawData(data=client.data_to_send()))
+    assert protocol.keep_alive_requests == 1  # the original request
+
+    # Emit a server push exactly as HTTPStream.app_send does for http.response.push.
+    await protocol.stream_send(
+        Request(
+            stream_id=1,
+            headers=[(b":authority", b"anycorn"), (b":scheme", b"https")],
+            http_version="2",
+            method="GET",
+            raw_path=b"/pushed",
+            state=ConnectionState({}),
+        )
+    )
+
+    # A push promise was actually emitted (the else-branch ran, not the refusal)...
+    events = client.receive_data(protocol.send.call_args_list[-1].args[0].data)  # type: ignore[attr-defined]
+    assert any(type(event).__name__ == "PushedStreamReceived" for event in events)
+    # ... and it added exactly one: request (1) + pushed stream (1), not 3.
+    assert protocol.keep_alive_requests == 2  # noqa: PLR2004
 
 
 @pytest.mark.anyio

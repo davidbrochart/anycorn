@@ -433,9 +433,10 @@ class H2Protocol:
         else:
             event = h2.events.RequestReceived(stream_id=push_stream_id)
             event.headers = request_headers
+            # _create_stream already counts this pushed stream towards
+            # keep_alive_requests; incrementing again here counted every push twice.
             await self._create_stream(event)
             await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
-            self.keep_alive_requests += 1
 
     async def _close_stream(self, stream_id: int) -> None:
         if stream_id in self.streams:
