@@ -133,6 +133,33 @@ def test_create_sockets_unix(monkeypatch: MonkeyPatch) -> None:
     sock.set_inheritable.assert_called_with(True)  # type: ignore[attr-defined]  # noqa: FBT003
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows is not Unix.")
+def test_create_sockets_unix_restores_umask_on_bind_failure(monkeypatch: MonkeyPatch) -> None:
+    """A failed bind must not leak the configured umask into the rest of the process."""
+    mock_socket = Mock()
+    mock_socket.return_value.bind.side_effect = OSError("bind failed")
+    monkeypatch.setattr(socket, "socket", mock_socket)
+
+    umask_calls: list[int] = []
+
+    def fake_umask(mask: int) -> int:
+        umask_calls.append(mask)
+        return 0o22
+
+    monkeypatch.setattr(os, "umask", fake_umask)
+
+    config = Config()
+    config.umask = 0o077
+    config.bind = ["unix:/tmp/anycorn.sock"]
+
+    with pytest.raises(OSError, match="bind failed"):
+        config.create_sockets()
+
+    # The configured umask is applied, then restored to what os.umask returned even
+    # though bind() raised in between.
+    assert umask_calls == [0o077, 0o22]
+
+
 def test_create_sockets_fd(monkeypatch: MonkeyPatch) -> None:
     mock_sock_class = Mock(
         return_value=NonCallableMock(**{"getsockopt.return_value": socket.SOCK_STREAM})  # type: ignore[arg-type]
