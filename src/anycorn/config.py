@@ -318,14 +318,19 @@ class Config:
             _set_reuse_socket_option(sock)
 
             if bind.startswith("unix:"):
+                assert binding is not None
+                # os.umask changes process-global state, so restore it in a finally:
+                # a bind() or chown() that raises would otherwise leave the worker's
+                # umask altered for every later socket and file it creates.
                 if self.umask is not None:
                     current_umask = os.umask(self.umask)
-                assert binding is not None
-                sock.bind(binding)
-                if self.user is not None and self.group is not None:
-                    os.chown(binding, self.user, self.group)  # type: ignore[attr-defined]
-                if self.umask is not None:
-                    os.umask(current_umask)
+                try:
+                    sock.bind(binding)
+                    if self.user is not None and self.group is not None:
+                        os.chown(binding, self.user, self.group)  # type: ignore[attr-defined]
+                finally:
+                    if self.umask is not None:
+                        os.umask(current_umask)
             elif bind.startswith("fd://"):
                 pass
             else:
