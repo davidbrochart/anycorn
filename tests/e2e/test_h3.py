@@ -194,6 +194,30 @@ class _H3Transport(httpx2.AsyncBaseTransport):
         status_code, _, _ = await self._receive_response(stream_id)
         return status_code
 
+    async def connect_without_path(self) -> int:
+        """Send a classic CONNECT carrying no :path, and return the status.
+
+        A CONNECT is the one request aioquic delivers with no :path - for any other
+        method validate_request_headers rejects an absent :path as empty - so it is a
+        real request on the wire that reaches the server, not something httpx (or any
+        URL library) would ever build.
+        """
+        stream_id = self._quic.get_next_available_stream_id()
+        self._read_queue[stream_id] = []
+        self._read_ready[stream_id] = anyio.Event()
+        self._http.send_headers(
+            stream_id=stream_id,
+            headers=[
+                (b":method", b"CONNECT"),
+                (b":authority", self._address[0].encode()),
+            ],
+            end_stream=True,
+        )
+        await self._transmit()
+
+        status_code, _, _ = await self._receive_response(stream_id)
+        return status_code
+
     async def open_request(self, path: str) -> int:
         """Send request headers without ending the stream, and return its id.
 
@@ -526,6 +550,56 @@ async def test_rejects_a_target_with_no_asgi_path(
                 async with _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport:
                     with anyio.fail_after(10):
                         status = await transport.request_raw_path(target)
+                    assert status == 400  # noqa: PLR2004
+                    assert seen == [], "the app was handed a request it should never have seen"
+
+                    # The connection is still usable, rather than having been taken down
+                    with anyio.fail_after(10):
+                        assert await transport.request_raw_path(b"/after") == 200  # noqa: PLR2004
+                    assert seen == ["/after"]
+            finally:
+                tg.cancel_scope.cancel()
+    finally:
+        await datagram_socket.aclose()
+
+
+@pytest.mark.anyio
+async def test_a_connect_with_no_path_does_not_crash_the_server(
+    tls_certs: TLSCerts, free_udp_port: int
+) -> None:
+    """A CONNECT with no :path is handled, not a crash.
+
+    A CONNECT is the one request aioquic delivers with no :path (any other method has
+    an absent :path rejected as empty). H3Protocol treats CONNECT as a WebSocket
+    stream and read a :path that was never set, raising UnboundLocalError out of
+    handle - and, with nothing catching it, out of UDPServer.run, taking the whole
+    worker down. Driven here by a real client putting the CONNECT on the wire.
+    """
+    seen: list[str] = []
+
+    async def _app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
+        seen.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    config = Config()
+    config.bind = []  # only QUIC is needed here, so skip the TCP listener
+    config.quic_bind = [f"{HOST}:{free_udp_port}"]
+    config.certfile = str(tls_certs.certfile)
+    config.keyfile = str(tls_certs.keyfile)
+
+    sockets = config.create_sockets()
+    datagram_socket = await wrap_datagram_socket(sockets.quic_sockets[0])
+    app_wrapper = wrap_app(_app, config.wsgi_max_body_size, None)
+    udp_server = UDPServer(app_wrapper, config, WorkerContext(None), {}, datagram_socket)
+
+    try:
+        async with anyio.create_task_group() as tg:
+            await tg.start(udp_server.run)
+            try:
+                async with _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport:
+                    with anyio.fail_after(10):
+                        status = await transport.connect_without_path()
                     assert status == 400  # noqa: PLR2004
                     assert seen == [], "the app was handed a request it should never have seen"
 

@@ -360,6 +360,12 @@ class H2Protocol:
         await self.has_data.set()
 
     async def _create_stream(self, request: h2.events.RequestReceived) -> None:
+        # Defaulted in step with the h3 handler: guard against a CONNECT reaching here
+        # without a :path. The h2 library rejects that before it arrives (no stream is
+        # created), so this is defensive only rather than the live crash it is over
+        # HTTP/3.
+        method = ""
+        raw_path = b""
         for name, value in request.headers:
             if name == b":method":
                 method = value.decode("ascii").upper()

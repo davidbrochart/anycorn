@@ -6,6 +6,7 @@ from unittest.mock import Mock, call
 
 import anyio
 import pytest
+from h2.config import H2Configuration
 from h2.connection import H2Connection
 from h2.events import ConnectionTerminated
 
@@ -153,6 +154,53 @@ async def test_protocol_keep_alive_max_requests() -> None:
     protocol.send.assert_awaited()  # type: ignore[attr-defined]
     events = client.receive_data(protocol.send.call_args_list[1].args[0].data)  # type: ignore[attr-defined]
     assert isinstance(events[-1], ConnectionTerminated)
+
+
+@pytest.mark.anyio
+async def test_connect_without_path_does_not_crash() -> None:
+    """An HTTP/2 CONNECT with no :path must be handled, not crash the connection.
+
+    A CONNECT is routed to a WebSocket stream, and _create_stream read a :path that a
+    CONNECT need not carry. Unlike aioquic over HTTP/3, the h2 library rejects such a
+    request before it reaches _create_stream (no stream is created), which is why the
+    default there is defensive - this pins that a non-conformant peer sending one is
+    turned away cleanly rather than taking the connection down.
+    """
+    sent: list[object] = []
+
+    async def send(event: object) -> None:
+        sent.append(event)
+
+    protocol = H2Protocol(
+        Mock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        ConnectionState({}),
+        None,
+        None,
+        send,
+        None,
+    )
+    # A conformant client will not send a CONNECT without :path, so outbound
+    # validation is disabled to put one on the wire, as a hostile peer could.
+    client = H2Connection(
+        config=H2Configuration(
+            client_side=True,
+            validate_outbound_headers=False,
+            normalize_outbound_headers=False,
+        )
+    )
+    client.initiate_connection()
+    client.send_headers(
+        1,
+        [(b":method", b"CONNECT"), (b":authority", b"anycorn:443")],
+        end_stream=True,
+    )
+
+    # Must not raise, and no stream is handed to the app.
+    await protocol.handle(RawData(data=client.data_to_send()))
+    assert protocol.streams == {}
 
 
 @pytest.mark.anyio
