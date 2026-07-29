@@ -72,10 +72,13 @@ def test_create_ssl_context() -> None:
     assert context is not None
     # Compression is disabled (RFC 7540 9.2.1) ...
     assert context.options & ssl.OP_NO_COMPRESSION
-    # ... and the hardened defaults from create_default_context() are preserved rather
-    # than clobbered by the assignment that disables compression.
-    assert context.options & ssl.OP_CIPHER_SERVER_PREFERENCE
-    assert context.options & ssl.OP_NO_SSLv3
+    # ... and every hardening option create_default_context() sets is preserved rather
+    # than clobbered by the step that disables compression. Comparing against a fresh
+    # default context covers the whole set (OP_CIPHER_SERVER_PREFERENCE, OP_NO_SSLv3,
+    # OP_NO_TICKET, OP_ENABLE_MIDDLEBOX_COMPAT, ...) without pinning a per-version list.
+    default_options = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH).options
+    missing = default_options & ~context.options
+    assert not missing, f"dropped hardening options: {ssl.Options(missing)!r}"
 
 
 @pytest.mark.parametrize(
