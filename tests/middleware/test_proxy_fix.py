@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from anycorn.middleware import ProxyFixMiddleware
-from anycorn.middleware.proxy_fix import _split_outside_quotes, _unquote
+from anycorn.middleware.proxy_fix import (
+    _parse_forwarded_element,
+    _split_outside_quotes,
+    _unquote,
+)
 from anycorn.typing import ConnectionState, HTTPScope
 
 if TYPE_CHECKING:
@@ -110,6 +114,27 @@ def test_unquote(value: str, expected: str) -> None:
 )
 def test_split_outside_quotes(value: str, delimiter: str, expected: list[str]) -> None:
     assert _split_outside_quotes(value, delimiter) == expected
+
+
+@pytest.mark.parametrize(
+    ("element", "expected"),
+    [
+        # Behaviours cross-checked against aiohttp's RFC 7239 parser.
+        (
+            "for=192.0.2.60;proto=http;by=203.0.113.43",
+            {"for": "192.0.2.60", "proto": "http", "by": "203.0.113.43"},
+        ),
+        ("for=1.1.1.1;for=2.2.2.2", {"for": "2.2.2.2"}),  # duplicate param: last wins
+        ("proto=https;;for=1.1.1.1", {"proto": "https", "for": "1.1.1.1"}),  # empty pair skipped
+        # Full port kept - aiohttp truncates this to :4701 (its regex caps at 4 digits).
+        ("for=192.0.2.43:47011", {"for": "192.0.2.43:47011"}),
+        ('secret=";,="', {"secret": ";,="}),  # delimiters inside quotes are data
+        ("novalue", {}),  # a pair with no "=" is skipped
+        ("", {}),  # empty element
+    ],
+)
+def test_parse_forwarded_element(element: str, expected: dict[str, str]) -> None:
+    assert _parse_forwarded_element(element) == expected
 
 
 @pytest.mark.anyio
