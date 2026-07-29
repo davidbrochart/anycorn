@@ -81,6 +81,43 @@ async def test_proxy_fix_modern() -> None:
 
 
 @pytest.mark.anyio
+async def test_proxy_fix_modern_with_optional_whitespace() -> None:
+    """RFC 7239 permits OWS after ";" and quoted values; both must still parse.
+
+    A header like "for=127.0.0.2; proto=https; host=example.com" previously left
+    proto and host unmatched (the parts began with a space), so scheme and host
+    were silently not rewritten.
+    """
+    mock = AsyncMock()
+    app = ProxyFixMiddleware(mock, mode="modern")
+    scope: HTTPScope = {
+        "type": "http",
+        "asgi": {},
+        "http_version": "2",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"forwarded", b'for="127.0.0.2"; proto=https; host=example.com'),
+        ],
+        "client": ("127.0.0.3", 80),
+        "server": None,
+        "extensions": {},
+        "state": ConnectionState({}),
+    }
+    await app(scope, None, None)  # type: ignore[invalid-argument-type]
+    mock.assert_called()
+    scope = mock.call_args[0][0]
+    assert scope["client"] == ("127.0.0.2", 0)
+    assert scope["scheme"] == "https"
+    host_headers = [h for h in scope["headers"] if h[0].lower() == b"host"]
+    assert host_headers == [(b"host", b"example.com")]
+
+
+@pytest.mark.anyio
 async def test_proxy_fix_keeps_unpicklable_state() -> None:
     """The scope carries whatever lifespan put in state, which need not be copyable.
 

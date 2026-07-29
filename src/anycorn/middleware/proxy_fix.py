@@ -42,13 +42,21 @@ class ProxyFixMiddleware:
                 and (value := _get_trusted_value(b"forwarded", headers, self.trusted_hops))
                 is not None
             ):
+                # RFC 7239 permits optional whitespace around the ";" separators,
+                # case-insensitive parameter names, and quoted values (e.g.
+                # for="[2001:db8::1]:4711"). Normalise each part before matching, so a
+                # header like "for=1.2.3.4; proto=https; host=example.com" is parsed
+                # rather than having proto and host silently dropped.
                 for part in value.split(";"):
-                    if part.startswith("for="):
-                        client = part[4:].strip()
-                    elif part.startswith("host="):
-                        host = part[5:].strip()
-                    elif part.startswith("proto="):
-                        scheme = part[6:].strip()
+                    param, _, param_value = part.strip().partition("=")
+                    param_value = param_value.strip().strip('"')
+                    param = param.lower()
+                    if param == "for":
+                        client = param_value
+                    elif param == "host":
+                        host = param_value
+                    elif param == "proto":
+                        scheme = param_value
 
             else:
                 client = _get_trusted_value(b"x-forwarded-for", headers, self.trusted_hops)
