@@ -173,9 +173,7 @@ async def test_proxy_fix_modern_quoted_delimiters_are_not_split() -> None:
     """A "," or ";" inside a quoted value is data, not a separator."""
     mock = AsyncMock()
     app = ProxyFixMiddleware(mock, mode="modern")
-    scope = _http_scope(
-        [(b"forwarded", b'for="[2001:db8::1]:8080"; host="a;b,c"; proto=https')]
-    )
+    scope = _http_scope([(b"forwarded", b'for="[2001:db8::1]:8080"; host="a;b,c"; proto=https')])
     await app(scope, None, None)  # type: ignore[invalid-argument-type]
     scope = mock.call_args[0][0]
     assert scope["client"] == ("[2001:db8::1]:8080", 0)
@@ -193,9 +191,7 @@ async def test_proxy_fix_modern_quoted_comma_does_not_shift_hops() -> None:
     """
     mock = AsyncMock()
     app = ProxyFixMiddleware(mock, mode="modern", trusted_hops=2)
-    scope = _http_scope(
-        [(b"forwarded", b'for="a,b"; proto=http, for=2.2.2.2; proto=https')]
-    )
+    scope = _http_scope([(b"forwarded", b'for="a,b"; proto=http, for=2.2.2.2; proto=https')])
     await app(scope, None, None)  # type: ignore[invalid-argument-type]
     scope = mock.call_args[0][0]
     assert scope["client"] == ("a,b", 0)
