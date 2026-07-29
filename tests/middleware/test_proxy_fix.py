@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from anycorn.middleware import ProxyFixMiddleware
+from anycorn.middleware.proxy_fix import _unquote
 from anycorn.typing import ConnectionState, HTTPScope
 
 if TYPE_CHECKING:
@@ -78,6 +79,23 @@ async def test_proxy_fix_modern() -> None:
     assert scope["scheme"] == "https"
     host_headers = [h for h in scope["headers"] if h[0].lower() == b"host"]
     assert host_headers == [(b"host", b"example.com")]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("192.0.2.60", "192.0.2.60"),  # bare token, unchanged
+        ('"192.0.2.60"', "192.0.2.60"),  # quoted-string, unwrapped
+        ('"[2001:db8::1]:4711"', "[2001:db8::1]:4711"),  # quoted IPv6
+        (r'"a\"b"', 'a"b'),  # quoted-pair: escaped quote
+        (r'"a\\b"', r"a\b"),  # quoted-pair: escaped backslash
+        ('""', ""),  # empty quoted-string
+        ('"', '"'),  # single quote is not a balanced pair
+        ('a"b', 'a"b'),  # stray quote in a token is left alone
+    ],
+)
+def test_unquote(value: str, expected: str) -> None:
+    assert _unquote(value) == expected
 
 
 @pytest.mark.anyio

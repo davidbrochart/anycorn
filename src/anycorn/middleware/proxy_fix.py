@@ -49,7 +49,7 @@ class ProxyFixMiddleware:
                 # rather than having proto and host silently dropped.
                 for part in value.split(";"):
                     param, _, param_value = part.strip().partition("=")
-                    param_value = param_value.strip().strip('"')
+                    param_value = _unquote(param_value.strip())
                     param = param.lower()
                     if param == "for":
                         client = param_value
@@ -79,6 +79,36 @@ class ProxyFixMiddleware:
                 scope["headers"] = headers
 
         await self.app(scope, receive, send)
+
+
+def _unquote(value: str) -> str:
+    r"""Decode an RFC 7239 value: a bare token unchanged, a quoted-string unwrapped.
+
+    RFC 7239 says a value is a token or an RFC 7230 quoted-string, and inside a
+    quoted-string a backslash escapes the following character (so `\"` is a literal
+    quote and `\\` a literal backslash). Only unwrap when the value is actually
+    wrapped in a balanced pair of quotes; a bare token that happens to contain a
+    quote is left alone.
+    """
+    if len(value) < 2 or value[0] != '"' or value[-1] != '"':  # noqa: PLR2004
+        return value
+    inner = value[1:-1]
+    if "\\" not in inner:
+        return inner
+    unescaped: list[str] = []
+    escaped = False
+    for char in inner:
+        if escaped:
+            unescaped.append(char)
+            escaped = False
+        elif char == "\\":
+            escaped = True
+        else:
+            unescaped.append(char)
+    if escaped:
+        # A lone trailing backslash (malformed) is kept as written.
+        unescaped.append("\\")
+    return "".join(unescaped)
 
 
 def _get_trusted_value(
