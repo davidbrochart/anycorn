@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import anyio
+
 from .datagram import DatagramSocket, connect_datagram_socket
 from .logging import Logger
 
@@ -122,10 +124,18 @@ class StatsdLogger(BaseStatsdLogger):
         assert config.statsd_host is not None
         self.address = tuple(config.statsd_host.rsplit(":", 1))
         self._sender: DatagramSocket | None = None
+        self._sender_lock = anyio.Lock()
 
     async def _socket_send(self, message: bytes) -> None:
         if self._sender is None:
-            self._sender = await connect_datagram_socket(self.address[0], int(self.address[1]))
+            # Guard the lazy open: without the lock two coroutines emitting their
+            # first metric concurrently would each open a socket, orphaning all but
+            # one (the checkpoint in connect_datagram_socket lets them interleave).
+            async with self._sender_lock:
+                if self._sender is None:
+                    self._sender = await connect_datagram_socket(
+                        self.address[0], int(self.address[1])
+                    )
 
         await self._sender.send(message)
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 
 import anyio
+import anyio.lowlevel
 import pytest
 from anyio.abc import SocketAttribute
 
@@ -54,6 +55,41 @@ async def test_metrics_survive_a_daemon_that_is_not_listening() -> None:
             await anyio.sleep(0.01)
     finally:
         await logger.aclose()
+
+
+@pytest.mark.anyio
+async def test_concurrent_first_sends_open_one_socket(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two coroutines emitting their first metric together must share one socket.
+
+    The lazy open awaits, so without a lock both callers pass the ``is None`` check
+    and each open a socket, orphaning all but one.
+    """
+    opened = 0
+
+    class _FakeSender:
+        async def send(self, message: bytes) -> None:
+            pass
+
+        async def aclose(self) -> None:
+            pass
+
+    async def fake_connect(_host: str, _port: int) -> _FakeSender:
+        nonlocal opened
+        opened += 1
+        await anyio.lowlevel.checkpoint()  # checkpoint: lets a second caller interleave
+        return _FakeSender()
+
+    monkeypatch.setattr("anycorn.statsd.connect_datagram_socket", fake_connect)
+
+    config = Config()
+    config.statsd_host = "127.0.0.1:9125"
+    logger = StatsdLogger(config)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(logger.increment, "anycorn.a", 1)
+        task_group.start_soon(logger.increment, "anycorn.b", 1)
+
+    assert opened == 1
 
 
 @pytest.mark.anyio
