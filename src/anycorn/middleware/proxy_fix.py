@@ -37,27 +37,14 @@ class ProxyFixMiddleware:
             scheme: str | None = None
             host: str | None = None
 
-            if (
-                self.mode == "modern"
-                and (value := _get_trusted_value(b"forwarded", headers, self.trusted_hops))
-                is not None
-            ):
-                # RFC 7239 permits optional whitespace around the ";" separators,
-                # case-insensitive parameter names, and quoted values (e.g.
-                # for="[2001:db8::1]:4711"). Normalise each part before matching, so a
-                # header like "for=1.2.3.4; proto=https; host=example.com" is parsed
-                # rather than having proto and host silently dropped.
-                for part in value.split(";"):
-                    param, _, param_value = part.strip().partition("=")
-                    param_value = _unquote(param_value.strip())
-                    param = param.lower()
-                    if param == "for":
-                        client = param_value
-                    elif param == "host":
-                        host = param_value
-                    elif param == "proto":
-                        scheme = param_value
+            element = None
+            if self.mode == "modern":
+                element = _select_forwarded_element(headers, self.trusted_hops)
 
+            if element is not None:
+                client = element.get("for")
+                host = element.get("host")
+                scheme = element.get("proto")
             else:
                 client = _get_trusted_value(b"x-forwarded-for", headers, self.trusted_hops)
                 scheme = _get_trusted_value(b"x-forwarded-proto", headers, self.trusted_hops)
@@ -79,6 +66,75 @@ class ProxyFixMiddleware:
                 scope["headers"] = headers
 
         await self.app(scope, receive, send)
+
+
+def _split_outside_quotes(value: str, delimiter: str) -> list[str]:
+    r"""Split *value* on *delimiter*, ignoring delimiters inside a quoted-string.
+
+    RFC 7239 element (",") and pair (";") separators are structural only when they
+    sit outside a quoted-string, so a value such as ``host="a;b,c"`` is a single
+    pair carrying a single value rather than three fragments. Quote state is tracked
+    with RFC 7230 backslash escapes (an escaped quote does not end the string), and
+    the substrings are returned verbatim - quotes and escapes intact - for _unquote
+    to decode.
+    """
+    parts: list[str] = []
+    start = 0
+    in_quotes = False
+    escaped = False
+    for index, char in enumerate(value):
+        if escaped:
+            escaped = False
+        elif char == "\\" and in_quotes:
+            escaped = True
+        elif char == '"':
+            in_quotes = not in_quotes
+        elif char == delimiter and not in_quotes:
+            parts.append(value[start:index])
+            start = index + 1
+    parts.append(value[start:])
+    return parts
+
+
+def _parse_forwarded_element(element: str) -> dict[str, str]:
+    """Parse one Forwarded element into a mapping of lower-cased param to value.
+
+    A later duplicate of a param wins, matching how the last write of a repeated
+    field would be read; malformed pairs with no "=" are skipped.
+    """
+    pairs: dict[str, str] = {}
+    for pair in _split_outside_quotes(element, ";"):
+        name, sep, value = pair.partition("=")
+        if not sep:
+            continue
+        pairs[name.strip().lower()] = _unquote(value.strip())
+    return pairs
+
+
+def _select_forwarded_element(
+    headers: Iterable[tuple[bytes, bytes]], trusted_hops: int
+) -> dict[str, str] | None:
+    """Return the trusted Forwarded element (counting *trusted_hops* from the right).
+
+    All ``forwarded`` header fields are gathered and their comma-separated elements
+    concatenated, as a single field split across lines would be. Returns None when
+    there are fewer elements than trusted hops, so the caller falls back to the
+    X-Forwarded-* headers exactly as before.
+    """
+    if trusted_hops == 0:
+        return None
+
+    elements: list[dict[str, str]] = []
+    for name, value in headers:
+        if name.lower() == b"forwarded":
+            elements.extend(
+                _parse_forwarded_element(element)
+                for element in _split_outside_quotes(value.decode("latin1"), ",")
+            )
+
+    if len(elements) >= trusted_hops:
+        return elements[-trusted_hops]
+    return None
 
 
 def _unquote(value: str) -> str:
