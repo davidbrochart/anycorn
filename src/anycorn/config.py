@@ -231,7 +231,11 @@ class Config:
         context = create_default_context(Purpose.CLIENT_AUTH)
         context.set_ciphers(self.ciphers)
         context.minimum_version = TLSVersion.TLSv1_2  # RFC 7540 Section 9.2: MUST be TLS >=1.2
-        context.options = OP_NO_COMPRESSION  # RFC 7540 Section 9.2.1: MUST disable compression
+        # OR the flag in rather than assigning it: create_default_context already sets
+        # hardened options (OP_CIPHER_SERVER_PREFERENCE, OP_SINGLE_DH_USE, OP_NO_TICKET,
+        # ...) and a plain assignment would clear them all, leaving only compression
+        # disabled. RFC 7540 Section 9.2.1: MUST disable compression.
+        context.options |= OP_NO_COMPRESSION
         context.set_alpn_protocols(self.alpn_protocols)
 
         if self.certfile is not None and self.keyfile is not None:
