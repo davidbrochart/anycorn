@@ -153,6 +153,13 @@ class H3Protocol:
             await stream.handle(StreamClosed(stream_id=stream_id))
 
     async def _create_stream(self, request: HeadersReceived) -> None:
+        # Defaulted because aioquic delivers a CONNECT with no :path - for any other
+        # method it rejects an absent :path as empty, but a CONNECT is allowed to omit
+        # it, and CONNECT is handled as a WebSocket stream below. An unset raw_path
+        # would raise UnboundLocalError; an empty target is rejected downstream with a
+        # 400 instead.
+        method = ""
+        raw_path = b""
         for name, value in request.headers:
             if name == b":method":
                 method = value.decode("ascii").upper()
