@@ -66,6 +66,15 @@ class InvalidRequestPathError(ValueError):
     """Raised when a request path cannot be represented by an ASGI scope."""
 
 
+class ClientDisconnected(OSError):  # noqa: N818
+    """Raised from the app's ``send`` once the client has disconnected.
+
+    ASGI spec version 2.4 requires that calling ``send()`` on a closed connection
+    raises a server-specific subclass of ``OSError``. An application may catch this
+    to do cleanup work before re-raising or returning with no exception.
+    """
+
+
 class UnexpectedMessageError(Exception):
     """Raised when an unexpected ASGI message type is received for the current state."""
 

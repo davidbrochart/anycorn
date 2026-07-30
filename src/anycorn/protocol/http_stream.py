@@ -20,6 +20,7 @@ from anycorn.typing import (
     WorkerContext,
 )
 from anycorn.utils import (
+    ClientDisconnected,
     InvalidRequestPathError,
     UnexpectedMessageError,
     build_and_validate_headers,
@@ -135,7 +136,7 @@ class HTTPStream:
             self.scope = HTTPScope(
                 type="http",
                 http_version=event.http_version,
-                asgi={"spec_version": "2.1", "version": "3.0"},
+                asgi={"spec_version": "2.5", "version": "3.0"},
                 method=event.method,
                 scheme=self.scheme,
                 path=decoded_path,
@@ -182,7 +183,7 @@ class HTTPStream:
             if self.app_put is not None:
                 await self.app_put({"type": "http.disconnect"})
 
-    async def app_send(self, message: ASGISendEvent | None) -> None:  # noqa: C901, PLR0912
+    async def app_send(self, message: ASGISendEvent | None) -> None:  # noqa: C901, PLR0912, PLR0915
         """Handle a message sent by the ASGI application."""
         if message is None:  # ASGI App has finished sending messages
             if not self.closed:
@@ -192,7 +193,14 @@ class HTTPStream:
                     await self._send_error_response(500)
                 else:
                     await self.send(StreamClosed(stream_id=self.stream_id))
-        elif message["type"] == "http.response.start" and self.state == ASGIHTTPState.REQUEST:
+            return
+
+        if self.closed:
+            # ASGI spec 2.4: the client has disconnected, so a send() must raise. The
+            # None sentinel above is the app finishing, not a send, so it returns first.
+            raise ClientDisconnected
+
+        if message["type"] == "http.response.start" and self.state == ASGIHTTPState.REQUEST:
             self.response = message
             headers = build_and_validate_headers(self.response.get("headers", []))
             await self.send(

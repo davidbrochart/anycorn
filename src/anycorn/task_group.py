@@ -13,6 +13,7 @@ import anyio.streams.memory
 import anyio.to_thread
 
 from .typing import AppWrapper, ASGIReceiveCallable, ASGIReceiveEvent, ASGISendEvent, Scope
+from .utils import ClientDisconnected
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -46,6 +47,10 @@ async def _handle(  # noqa: PLR0913
             await app(scope, receive, send, sync_spawn, call_soon)
     except anyio.get_cancelled_exc_class():
         raise
+    except ClientDisconnected:
+        # The client went away and the app let the send() error propagate rather than
+        # handling it (spec 2.4 permits this). That is a normal end, not a failure.
+        pass
     except BaseExceptionGroup as error:
         _, other_errors = error.split(anyio.get_cancelled_exc_class())
         if other_errors is not None:

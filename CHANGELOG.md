@@ -1,5 +1,11 @@
 # Version history
 
+## Unreleased
+
+- Advertise ASGI spec version 2.5. Raise a `ClientDisconnected` (an `OSError` subclass)
+  from the app's `send` once the client has disconnected, as spec 2.4 requires, and
+  carry the peer's close reason on the WebSocket `websocket.disconnect` event.
+
 ## 0.20.0
 
 - Hold websocket data that arrives before the app accepts.

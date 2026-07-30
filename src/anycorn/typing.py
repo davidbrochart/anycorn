@@ -224,6 +224,7 @@ class WebsocketDisconnectEvent(TypedDict):
 
     type: Literal["websocket.disconnect"]
     code: int
+    reason: str | None
 
 
 class WebsocketCloseEvent(TypedDict):

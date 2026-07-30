@@ -13,8 +13,18 @@ import wsproto.connection
 import wsproto.events
 from wsproto.events import BytesMessage, TextMessage
 
+from anycorn.app_wrappers import ASGIWrapper
 from anycorn.config import Config
-from anycorn.protocol.events import Body, Data, EndBody, EndData, Request, Response, StreamClosed
+from anycorn.protocol.events import (
+    Body,
+    Data,
+    EndBody,
+    EndData,
+    Event,
+    Request,
+    Response,
+    StreamClosed,
+)
 from anycorn.protocol.ws_stream import (
     ASGIWebsocketState,
     FrameTooLargeError,
@@ -24,14 +34,17 @@ from anycorn.protocol.ws_stream import (
 )
 from anycorn.task_group import TaskGroup
 from anycorn.typing import (
+    ASGIReceiveCallable,
+    ASGISendCallable,
     ConnectionState,
+    Scope,
     WebsocketAcceptEvent,
     WebsocketCloseEvent,
     WebsocketResponseBodyEvent,
     WebsocketResponseStartEvent,
     WebsocketSendEvent,
 )
-from anycorn.utils import UnexpectedMessageError, default_tls_extension
+from anycorn.utils import ClientDisconnected, UnexpectedMessageError, default_tls_extension
 from anycorn.worker_context import WorkerContext
 from tests.helpers import LogCapture, capture_logs
 
@@ -215,7 +228,7 @@ async def test_handle_request(stream: WSStream) -> None:
     scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
     assert scope == {
         "type": "websocket",
-        "asgi": {"spec_version": "2.3", "version": "3.0"},
+        "asgi": {"spec_version": "2.5", "version": "3.0"},
         "scheme": "ws",
         "http_version": "2",
         "path": "/",
@@ -366,7 +379,9 @@ async def test_handle_connection(stream: WSStream) -> None:
 async def test_handle_closed(stream: WSStream) -> None:
     await stream.handle(StreamClosed(stream_id=1))
     stream.app_put.assert_called()  # type: ignore[attr-defined]
-    assert stream.app_put.call_args_list == [call({"type": "websocket.disconnect", "code": 1006})]  # type: ignore[attr-defined]
+    assert stream.app_put.call_args_list == [  # type: ignore[unresolved-attribute]
+        call({"type": "websocket.disconnect", "code": 1006, "reason": None})
+    ]
 
 
 @pytest.mark.anyio
@@ -397,7 +412,35 @@ async def test_handle_client_close_reports_its_code(stream: WSStream) -> None:
     await stream.handle(Data(stream_id=1, data=b"\x88\x82\x00\x00\x00\x00\x03\xe8"))
     await stream.handle(StreamClosed(stream_id=1))
 
-    assert stream.app_put.call_args_list == [call({"type": "websocket.disconnect", "code": 1000})]
+    assert stream.app_put.call_args_list == [
+        call({"type": "websocket.disconnect", "code": 1000, "reason": ""})
+    ]
+
+
+@pytest.mark.anyio
+async def test_handle_client_close_reports_its_reason(stream: WSStream) -> None:
+    """A close frame's reason text reaches the app on the disconnect event (spec 2.5)."""
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[(b"sec-websocket-version", b"13")],
+            raw_path=b"/",
+            method="GET",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(cast("WebsocketAcceptEvent", {"type": "websocket.accept"}))
+    stream.app_put = AsyncMock()
+
+    # A masked client close frame (zero mask key) carrying code 1001 (0x03e9) and the
+    # reason text "bye".
+    await stream.handle(Data(stream_id=1, data=b"\x88\x85\x00\x00\x00\x00\x03\xe9bye"))
+    await stream.handle(StreamClosed(stream_id=1))
+
+    assert stream.app_put.call_args_list == [
+        call({"type": "websocket.disconnect", "code": 1001, "reason": "bye"})
+    ]
 
 
 @pytest.mark.anyio
@@ -719,14 +762,67 @@ async def test_closure(stream: WSStream) -> None:
     assert stream.closed
     # It is important that the disconnect message has only been sent
     # once.
-    assert stream.app_put.call_args_list == [call({"type": "websocket.disconnect", "code": 1006})]  # type: ignore[unresolved-attribute]
+    assert stream.app_put.call_args_list == [  # type: ignore[unresolved-attribute]
+        call({"type": "websocket.disconnect", "code": 1006, "reason": None})
+    ]
 
 
 @pytest.mark.anyio
-async def test_closed_app_send_noop(stream: WSStream) -> None:
-    stream.closed = True
-    await stream.app_send(cast("WebsocketAcceptEvent", {"type": "websocket.accept"}))
-    stream.send.assert_not_called()  # type: ignore[attr-defined]
+async def test_send_after_client_disconnect_raises(config: Config) -> None:
+    """A real app that sends after the client has gone gets ClientDisconnected (spec 2.4).
+
+    Driven through a real task group and a real ASGI app: the app accepts, receives the
+    websocket.disconnect, then its next send() must raise.
+    """
+    outcome: dict[str, object] = {}
+
+    async def app(scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
+        assert scope["type"] == "websocket"
+        assert (await receive())["type"] == "websocket.connect"
+        accept: WebsocketAcceptEvent = {
+            "type": "websocket.accept",
+            "subprotocol": None,
+            "headers": [],
+        }
+        await send(accept)
+        assert (await receive())["type"] == "websocket.disconnect"
+        late: WebsocketSendEvent = {"type": "websocket.send", "bytes": None, "text": "late"}
+        try:
+            await send(late)
+        except ClientDisconnected as exc:
+            outcome["raised"] = isinstance(exc, OSError)
+
+    async def send(event: Event) -> None:
+        pass
+
+    async with TaskGroup() as task_group:
+        stream = WSStream(
+            ASGIWrapper(app),
+            config,
+            WorkerContext(None),
+            task_group,
+            ("127.0.0.1", 1234),
+            ("127.0.0.1", 8000),
+            send,
+            1,
+            None,
+        )
+        await stream.handle(
+            Request(
+                stream_id=1,
+                http_version="2",
+                headers=[(b"sec-websocket-version", b"13")],
+                raw_path=b"/",
+                method="GET",
+                state=ConnectionState({}),
+            )
+        )
+        await anyio.wait_all_tasks_blocked()
+        await stream.handle(StreamClosed(stream_id=1))
+        await anyio.wait_all_tasks_blocked()
+
+    # An OSError subclass, as the spec requires, and the app really caught it.
+    assert outcome == {"raised": True}
 
 
 @pytest.mark.anyio

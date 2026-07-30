@@ -39,6 +39,7 @@ from anycorn.typing import (
     ConnectionState as ASGIConnectionState,  # wsproto has one of its own
 )
 from anycorn.utils import (
+    ClientDisconnected,
     InvalidRequestPathError,
     UnexpectedMessageError,
     build_and_validate_headers,
@@ -224,6 +225,8 @@ class WSStream:
         # The code the peer closed with, once it has sent a close frame, so the ASGI
         # disconnect reports it rather than defaulting to 1006 (abnormal closure).
         self.close_code: int | None = None
+        # The reason the peer closed with, surfaced on the ASGI disconnect (spec 2.5).
+        self.close_reason: str | None = None
         self.config = config
         self.context = context
         self.task_group = task_group
@@ -273,7 +276,7 @@ class WSStream:
             extensions["websocket.http.response"] = {}
             self.scope = {
                 "type": "websocket",
-                "asgi": {"spec_version": "2.3", "version": "3.0"},
+                "asgi": {"spec_version": "2.5", "version": "3.0"},
                 "scheme": self.scheme,
                 "http_version": event.http_version,
                 "path": decoded_path,
@@ -332,28 +335,36 @@ class WSStream:
                     code = CloseReason.NORMAL_CLOSURE.value
                 else:
                     code = CloseReason.ABNORMAL_CLOSURE.value
-                await self.app_put({"type": "websocket.disconnect", "code": code})
+                await self.app_put(
+                    {"type": "websocket.disconnect", "code": code, "reason": self.close_reason}
+                )
 
     async def app_send(self, message: ASGISendEvent | None) -> None:  # noqa: C901, PLR0912
         """Handle a message sent by the ASGI application."""
-        if self.closed:
-            # Allow app to finish after close
+        if message is None:  # ASGI App has finished sending messages
+            # Allow the app to finish after close; only clean up if still open.
+            if not self.closed:
+                if self.state == ASGIWebsocketState.HANDSHAKE:
+                    # _send_error_response logs the request and closes the stream
+                    # itself, as it does for the 400s and 404s in handle(); logging
+                    # again here put the same line in the access log twice, so anything
+                    # counting requests double-counted an app that failed during the
+                    # handshake. HTTPStream does not do this.
+                    await self._send_error_response(500)
+                else:
+                    if self.state == ASGIWebsocketState.CONNECTED:
+                        await self._send_wsproto_event(
+                            CloseConnection(code=CloseReason.INTERNAL_ERROR)
+                        )
+                    await self.send(StreamClosed(stream_id=self.stream_id))
             return
 
-        if message is None:  # ASGI App has finished sending messages
-            # Cleanup if required
-            if self.state == ASGIWebsocketState.HANDSHAKE:
-                # _send_error_response logs the request and closes the stream
-                # itself, as it does for the 400s and 404s in handle(); logging
-                # again here put the same line in the access log twice, so anything
-                # counting requests double-counted an app that failed during the
-                # handshake. HTTPStream does not do this.
-                await self._send_error_response(500)
-            else:
-                if self.state == ASGIWebsocketState.CONNECTED:
-                    await self._send_wsproto_event(CloseConnection(code=CloseReason.INTERNAL_ERROR))
-                await self.send(StreamClosed(stream_id=self.stream_id))
-        elif message["type"] == "websocket.accept" and self.state == ASGIWebsocketState.HANDSHAKE:
+        if self.closed:
+            # ASGI spec 2.4: the client has disconnected, so a send() must raise. The
+            # None sentinel above is the app finishing, not a send, so it returns first.
+            raise ClientDisconnected
+
+        if message["type"] == "websocket.accept" and self.state == ASGIWebsocketState.HANDSHAKE:
             await self._accept(message)
         elif (
             message["type"] == "websocket.http.response.start"
@@ -421,6 +432,7 @@ class WSStream:
                 # carries that code rather than 1006.
                 # https://github.com/pgjones/hypercorn/issues/127
                 self.close_code = event.code
+                self.close_reason = event.reason
                 if self.connection.state == ConnectionState.REMOTE_CLOSING:
                     await self._send_wsproto_event(event.response())
                 await self.send(StreamClosed(stream_id=self.stream_id))
