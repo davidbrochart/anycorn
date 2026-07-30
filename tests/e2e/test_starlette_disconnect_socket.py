@@ -10,7 +10,7 @@ queued http.disconnect is never handed over and the handler never notices.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import anyio
 import pytest
@@ -23,6 +23,8 @@ from anycorn.config import Config
 
 if TYPE_CHECKING:
     from starlette.requests import Request
+
+    from anycorn.typing import ASGIFramework
 
 # The handler gives up polling after this long so a regression fails the test
 # (via the detected-event timeout below) rather than hanging it.
@@ -55,7 +57,10 @@ async def test_starlette_sees_a_real_socket_disconnect(free_tcp_port: int) -> No
         shutdown = anyio.Event()
         await tg.start(
             lambda *, task_status: anycorn.serve(
-                app, config, shutdown_trigger=shutdown.wait, task_status=task_status
+                cast("ASGIFramework", app),
+                config,
+                shutdown_trigger=shutdown.wait,
+                task_status=task_status,
             )
         )
 
