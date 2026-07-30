@@ -258,9 +258,8 @@ async def worker_serve(  # noqa: C901, PLR0912, PLR0915
             binds = []
             for secure_sock in sockets.secure_sockets:
                 assert ssl_context is not None
-                asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001  # ty:ignore[possibly-missing-attribute]
                 secure_listener = anyio.streams.tls.TLSListener(
-                    asynclib.create_tcp_listener(secure_sock),
+                    await anyio.abc.SocketListener.from_socket(secure_sock),
                     ssl_context,
                     True,  # noqa: FBT003
                     config.ssl_handshake_timeout,
@@ -272,8 +271,7 @@ async def worker_serve(  # noqa: C901, PLR0912, PLR0915
                 await config.log.info("Running on %s (CTRL + C to quit)", url)
 
             for insecure_sock in sockets.insecure_sockets:
-                asynclib = anyio._core._eventloop.get_async_backend()  # noqa: SLF001  # ty:ignore[possibly-missing-attribute]
-                insecure_listener = asynclib.create_tcp_listener(insecure_sock)
+                insecure_listener = await anyio.abc.SocketListener.from_socket(insecure_sock)
                 listeners.append(await socket_stack.enter_async_context(insecure_listener))
                 bind = repr_socket_addr(insecure_sock.family, insecure_sock.getsockname())
                 url = f"http://{bind}"
