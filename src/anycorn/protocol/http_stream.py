@@ -6,6 +6,8 @@ from enum import Enum, auto
 from time import time
 from typing import TYPE_CHECKING
 
+import anyio
+
 from anycorn.typing import (
     AppWrapper,
     ASGIReceiveEvent,
@@ -48,6 +50,7 @@ if TYPE_CHECKING:
 TRAILERS_VERSIONS = {"2", "3"}
 PUSH_VERSIONS = {"2", "3"}
 EARLY_HINTS_VERSIONS = {"2", "3"}
+PATHSEND_CHUNK_SIZE = 65536
 
 
 class ASGIHTTPState(Enum):
@@ -132,6 +135,10 @@ class HTTPStream:
             if event.http_version in EARLY_HINTS_VERSIONS:
                 extensions["http.response.early_hint"] = {}
 
+            # Path send just streams a file from disk as the body, so it works on
+            # every HTTP version rather than being tied to h2/h3 features above.
+            extensions["http.response.pathsend"] = {}
+
             self.scope = HTTPScope(
                 type="http",
                 http_version=event.http_version,
@@ -182,7 +189,7 @@ class HTTPStream:
             if self.app_put is not None:
                 await self.app_put({"type": "http.disconnect"})
 
-    async def app_send(self, message: ASGISendEvent | None) -> None:  # noqa: C901, PLR0912
+    async def app_send(self, message: ASGISendEvent | None) -> None:  # noqa: C901, PLR0912, PLR0915
         """Handle a message sent by the ASGI application."""
         if message is None:  # ASGI App has finished sending messages
             if not self.closed:
@@ -251,6 +258,8 @@ class HTTPStream:
                     self.state = ASGIHTTPState.TRAILERS
                 else:
                     await self._send_closed()
+        elif message["type"] == "http.response.pathsend" and self.state == ASGIHTTPState.RESPONSE:
+            await self._send_pathsend(message["path"])
         elif (
             message["type"] == "http.response.trailers"
             and self.scope["http_version"] in TRAILERS_VERSIONS
@@ -295,6 +304,20 @@ class HTTPStream:
                 await self._send_closed()
         else:
             raise UnexpectedMessageError(self.state, message["type"])
+
+    async def _send_pathsend(self, path: str) -> None:
+        # Path send names a file the app has already set Content-Length for; the
+        # server reads it out as the body. It is the terminal body message, so it
+        # finishes the response exactly as an http.response.body with more_body False.
+        if not suppress_body(self.scope["method"], int(self.response["status"])):
+            async with await anyio.open_file(path, "rb") as file_:
+                while chunk := await file_.read(PATHSEND_CHUNK_SIZE):
+                    await self.send(Body(stream_id=self.stream_id, data=chunk))
+
+        if self.response.get("trailers", False):
+            self.state = ASGIHTTPState.TRAILERS
+        else:
+            await self._send_closed()
 
     async def _send_closed(self) -> None:
         # Mark CLOSED before the first await: a StreamClosed event handled while

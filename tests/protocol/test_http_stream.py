@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import call
 
 import pytest
@@ -23,12 +23,16 @@ from anycorn.statsd import StatsdLogger
 from anycorn.typing import (
     ConnectionState,
     HTTPResponseBodyEvent,
+    HTTPResponsePathSendEvent,
     HTTPResponseStartEvent,
     HTTPScope,
 )
 from anycorn.utils import UnexpectedMessageError, default_tls_extension
 from anycorn.worker_context import WorkerContext
 from tests.helpers import LogCapture, capture_logs
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 try:
     from unittest.mock import AsyncMock
@@ -93,7 +97,7 @@ async def test_handle_request_http_1(stream: HTTPStream, http_version: str) -> N
         "headers": [],
         "client": None,
         "server": None,
-        "extensions": {},
+        "extensions": {"http.response.pathsend": {}},
         "state": ConnectionState({}),
     }
 
@@ -129,6 +133,7 @@ async def test_handle_request_http_2(stream: HTTPStream) -> None:
             "http.response.trailers": {},
             "http.response.early_hint": {},
             "http.response.push": {},
+            "http.response.pathsend": {},
         },
         "state": ConnectionState({}),
     }
@@ -199,6 +204,60 @@ async def test_handle_closed(stream: HTTPStream) -> None:
     await stream.handle(StreamClosed(stream_id=1))
     stream.app_put.assert_called()  # type: ignore[attr-defined]
     assert stream.app_put.call_args_list == [call({"type": "http.disconnect"})]  # type: ignore[attr-defined]
+
+
+def _get_request() -> Request:
+    return Request(
+        stream_id=1,
+        http_version="1.1",
+        headers=[(b"host", b"anycorn")],
+        raw_path=b"/",
+        method="GET",
+        state=ConnectionState({}),
+    )
+
+
+@pytest.mark.anyio
+async def test_pathsend_extension_is_advertised(stream: HTTPStream) -> None:
+    """Path send is protocol-agnostic, so it is offered on HTTP/1.1 too."""
+    await stream.handle(_get_request())
+    scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
+    assert scope["extensions"]["http.response.pathsend"] == {}
+
+
+@pytest.mark.anyio
+async def test_pathsend_streams_the_named_file(stream: HTTPStream, tmp_path: Path) -> None:
+    """A pathsend message streams the file at that path as the response body, then closes."""
+    sent: list[Event] = []
+
+    async def send(event: Event) -> None:
+        sent.append(event)
+
+    stream.send = send  # a real collector rather than the fixture's mock
+    await stream.handle(_get_request())
+
+    payload = b"the quick brown fox\n" * 5000  # larger than PATHSEND_CHUNK_SIZE
+    file_path = tmp_path / "payload.bin"
+    file_path.write_bytes(payload)
+
+    await stream.app_send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-length", str(len(payload)).encode())],
+        }
+    )
+    pathsend: HTTPResponsePathSendEvent = {
+        "type": "http.response.pathsend",
+        "path": str(file_path),
+    }
+    await stream.app_send(pathsend)
+
+    # The whole file went out as body, and the response was finished off.
+    body = b"".join(event.data for event in sent if isinstance(event, Body))
+    assert body == payload
+    assert any(isinstance(event, EndBody) for event in sent)
+    assert any(isinstance(event, StreamClosed) for event in sent)
 
 
 @pytest.mark.anyio

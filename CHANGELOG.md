@@ -1,5 +1,10 @@
 # Version history
 
+## Unreleased
+
+- Implement the Path Send extension (`http.response.pathsend`), streaming a file the
+  app names by path as the response body on any HTTP version.
+
 ## 0.20.0
 
 - Hold websocket data that arrives before the app accepts.
