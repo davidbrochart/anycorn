@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sys
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import anyio
 import anyio.abc
@@ -28,6 +28,31 @@ else:
     from typing_extensions import Self
 
 
+def _receive_without_leading_checkpoint(
+    channel: anyio.streams.memory.MemoryObjectReceiveStream[ASGIReceiveEvent],
+) -> ASGIReceiveCallable:
+    """Return a receive() that hands over an already-queued event without checkpointing.
+
+    anyio's ``MemoryObjectReceiveStream.receive`` checkpoints before returning even a
+    buffered event. Starlette's ``Request.is_disconnected`` polls receive() inside an
+    already-cancelled scope to pick up a queued ``http.disconnect`` without waiting;
+    the leading checkpoint is cancelled before the disconnect is returned, so the app
+    never learns the client has gone. Return a buffered event synchronously, and only
+    checkpoint - as a normal receive would - when there is nothing to hand over.
+    """
+
+    async def receive() -> ASGIReceiveEvent:
+        try:
+            return channel.receive_nowait()
+        except anyio.WouldBlock:
+            # channel.receive() checkpoints itself before waiting, so nothing extra is
+            # needed here - the point is only to skip that checkpoint when an event is
+            # already queued, which the receive_nowait above does.
+            return await channel.receive()
+
+    return receive
+
+
 async def _handle(  # noqa: PLR0913
     app: AppWrapper,
     config: Config,
@@ -43,7 +68,7 @@ async def _handle(  # noqa: PLR0913
     app_send_channel, app_receive_channel = channels
     try:
         async with app_send_channel, app_receive_channel:
-            receive = cast("ASGIReceiveCallable", app_receive_channel.receive)
+            receive = _receive_without_leading_checkpoint(app_receive_channel)
             await app(scope, receive, send, sync_spawn, call_soon)
     except anyio.get_cancelled_exc_class():
         raise

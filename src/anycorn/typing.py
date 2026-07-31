@@ -61,6 +61,7 @@ Extensions = TypedDict(
     {
         "tls": TLSExtension,
         "http.response.push": Mapping[str, Any],
+        "http.response.pathsend": Mapping[str, Any],
         "http.response.trailers": Mapping[str, Any],
         "http.response.early_hint": Mapping[str, Any],
         "websocket.http.response": Mapping[str, Any],
@@ -165,6 +166,13 @@ class HTTPEarlyHintEvent(TypedDict):
 
     type: Literal["http.response.early_hint"]
     links: Iterable[bytes]
+
+
+class HTTPResponsePathSendEvent(TypedDict):
+    """ASGI HTTP path send event (``http.response.pathsend`` extension)."""
+
+    type: Literal["http.response.pathsend"]
+    path: str
 
 
 class HTTPDisconnectEvent(TypedDict):
@@ -290,6 +298,7 @@ ASGISendEvent = (
     | HTTPResponseTrailersEvent
     | HTTPServerPushEvent
     | HTTPEarlyHintEvent
+    | HTTPResponsePathSendEvent
     | HTTPDisconnectEvent
     | WebsocketAcceptEvent
     | WebsocketSendEvent

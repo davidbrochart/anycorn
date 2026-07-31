@@ -5,6 +5,8 @@
 - Advertise ASGI spec version 2.5. Raise a `ClientDisconnected` (an `OSError` subclass)
   from the app's `send` once the client has disconnected, as spec 2.4 requires, and
   carry the peer's close reason on the WebSocket `websocket.disconnect` event.
+- Implement the Path Send extension (`http.response.pathsend`), streaming a file the
+  app names by path as the response body on any HTTP version.
 
 ## 0.20.0
 
