@@ -343,6 +343,44 @@ async def test_pathsend_streams_the_named_file(stream: HTTPStream, tmp_path: Pat
 
 
 @pytest.mark.anyio
+async def test_lowering_the_spec_version_advertises_it_and_drops_the_raise() -> None:
+    """A configured spec_version below 2.4 is advertised, and send() no longer raises."""
+    config = Config()
+    config.asgi_spec_version = "2.3"
+    outcome: dict[str, object] = {}
+
+    async def app(scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
+        assert scope["asgi"]["spec_version"] == "2.3"
+        assert (await receive())["type"] == "http.disconnect"
+        # Below 2.4 the send after disconnect is dropped rather than raising, so the
+        # handler runs to completion instead of being interrupted.
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        outcome["completed"] = True
+
+    async def send(event: Event) -> None:
+        pass
+
+    async with TaskGroup() as task_group:
+        stream = HTTPStream(
+            ASGIWrapper(app),
+            config,
+            WorkerContext(None),
+            task_group,
+            ("127.0.0.1", 1234),
+            ("127.0.0.1", 8000),
+            send,
+            1,
+            None,
+        )
+        await stream.handle(_get_request())
+        await anyio.wait_all_tasks_blocked()
+        await stream.handle(StreamClosed(stream_id=1))
+        await anyio.wait_all_tasks_blocked()
+
+    assert outcome == {"completed": True}
+
+
+@pytest.mark.anyio
 async def test_send_response(stream: HTTPStream, logs: LogCapture) -> None:
     await stream.handle(
         Request(

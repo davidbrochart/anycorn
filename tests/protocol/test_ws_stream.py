@@ -385,6 +385,19 @@ async def test_handle_closed(stream: WSStream) -> None:
 
 
 @pytest.mark.anyio
+async def test_disconnect_reason_is_dropped_below_spec_2_5() -> None:
+    """The disconnect reason is a 2.5 addition, so a lower advertised version omits it."""
+    config = Config()
+    config.asgi_spec_version = "2.4"
+    stream = WSStream(
+        AsyncMock(), config, WorkerContext(None), AsyncMock(), None, None, AsyncMock(), 1, None
+    )
+    stream.app_put = AsyncMock()
+    await stream.handle(StreamClosed(stream_id=1))
+    assert stream.app_put.call_args_list == [call({"type": "websocket.disconnect", "code": 1006})]
+
+
+@pytest.mark.anyio
 async def test_handle_client_close_reports_its_code(stream: WSStream) -> None:
     """A clean client close must reach the app as its own code, not 1006.
 

@@ -27,6 +27,7 @@ from anycorn.utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
     decode_asgi_path,
+    parse_spec_version,
     suppress_body,
     valid_request_target,
     valid_server_name,
@@ -102,6 +103,7 @@ class HTTPStream:
         self.task_group = task_group
         self.tls = tls
         self.scheme = "https" if self.tls is not None else "http"
+        self._spec_version = parse_spec_version(config.asgi_spec_version)
 
     @property
     def idle(self) -> bool:
@@ -143,7 +145,7 @@ class HTTPStream:
             self.scope = HTTPScope(
                 type="http",
                 http_version=event.http_version,
-                asgi={"spec_version": "2.5", "version": "3.0"},
+                asgi={"spec_version": self.config.asgi_spec_version, "version": "3.0"},
                 method=event.method,
                 scheme=self.scheme,
                 path=decoded_path,
@@ -202,9 +204,10 @@ class HTTPStream:
                     await self.send(StreamClosed(stream_id=self.stream_id))
             return
 
-        if self.closed:
-            # ASGI spec 2.4: the client has disconnected, so a send() must raise. The
+        if self.closed and self._spec_version >= (2, 4):
+            # From spec 2.4 the client has disconnected, so a send() must raise. The
             # None sentinel above is the app finishing, not a send, so it returns first.
+            # Below 2.4 the send is left to fall through and be dropped, as it used to.
             raise ClientDisconnected
 
         if message["type"] == "http.response.start" and self.state == ASGIHTTPState.REQUEST:

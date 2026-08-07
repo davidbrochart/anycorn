@@ -30,6 +30,7 @@ from anycorn.typing import (
     TaskGroup,
     TLSExtension,
     WebsocketAcceptEvent,
+    WebsocketDisconnectEvent,
     WebsocketResponseBodyEvent,
     WebsocketResponseStartEvent,
     WebsocketScope,
@@ -44,6 +45,7 @@ from anycorn.utils import (
     UnexpectedMessageError,
     build_and_validate_headers,
     decode_asgi_path,
+    parse_spec_version,
     suppress_body,
     valid_request_target,
     valid_server_name,
@@ -243,6 +245,7 @@ class WSStream:
         self.stream_id = stream_id
         self.tls = tls
         self.scheme = "wss" if self.tls is not None else "ws"
+        self._spec_version = parse_spec_version(config.asgi_spec_version)
 
         self.connection: Connection
         self.handshake: Handshake
@@ -276,7 +279,7 @@ class WSStream:
             extensions["websocket.http.response"] = {}
             self.scope = {
                 "type": "websocket",
-                "asgi": {"spec_version": "2.5", "version": "3.0"},
+                "asgi": {"spec_version": self.config.asgi_spec_version, "version": "3.0"},
                 "scheme": self.scheme,
                 "http_version": event.http_version,
                 "path": decoded_path,
@@ -335,9 +338,14 @@ class WSStream:
                     code = CloseReason.NORMAL_CLOSURE.value
                 else:
                     code = CloseReason.ABNORMAL_CLOSURE.value
-                await self.app_put(
-                    {"type": "websocket.disconnect", "code": code, "reason": self.close_reason}
-                )
+                disconnect: WebsocketDisconnectEvent = {
+                    "type": "websocket.disconnect",
+                    "code": code,
+                }
+                if self._spec_version >= (2, 5):
+                    # The reason on the disconnect event is a spec 2.5 addition.
+                    disconnect["reason"] = self.close_reason
+                await self.app_put(disconnect)
 
     async def app_send(self, message: ASGISendEvent | None) -> None:  # noqa: C901, PLR0912
         """Handle a message sent by the ASGI application."""
@@ -359,9 +367,10 @@ class WSStream:
                     await self.send(StreamClosed(stream_id=self.stream_id))
             return
 
-        if self.closed:
-            # ASGI spec 2.4: the client has disconnected, so a send() must raise. The
+        if self.closed and self._spec_version >= (2, 4):
+            # From spec 2.4 the client has disconnected, so a send() must raise. The
             # None sentinel above is the app finishing, not a send, so it returns first.
+            # Below 2.4 the send is left to fall through and be dropped, as it used to.
             raise ClientDisconnected
 
         if message["type"] == "websocket.accept" and self.state == ASGIWebsocketState.HANDSHAKE:

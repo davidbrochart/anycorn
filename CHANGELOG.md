@@ -7,6 +7,10 @@
   carry the peer's close reason on the WebSocket `websocket.disconnect` event.
 - Implement the Path Send extension (`http.response.pathsend`), streaming a file the
   app names by path as the response body on any HTTP version.
+- Add a `Config.asgi_spec_version` option (default `"2.5"`) to pin the advertised
+  spec version. The behaviour follows it: below `"2.4"` a `send` after disconnect is
+  dropped rather than raising, and below `"2.5"` the `websocket.disconnect` carries no
+  reason - so an app that depends on the older behaviour can opt out.
 
 ## 0.20.0
 
