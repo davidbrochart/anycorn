@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import call
 
+import anyio
 import pytest
 
+from anycorn.app_wrappers import ASGIWrapper
 from anycorn.config import Config
 from anycorn.protocol.events import (
     Body,
@@ -20,14 +22,18 @@ from anycorn.protocol.events import (
 )
 from anycorn.protocol.http_stream import ASGIHTTPState, HTTPStream
 from anycorn.statsd import StatsdLogger
+from anycorn.task_group import TaskGroup
 from anycorn.typing import (
+    ASGIReceiveCallable,
+    ASGISendCallable,
     ConnectionState,
     HTTPResponseBodyEvent,
     HTTPResponsePathSendEvent,
     HTTPResponseStartEvent,
     HTTPScope,
+    Scope,
 )
-from anycorn.utils import UnexpectedMessageError, default_tls_extension
+from anycorn.utils import ClientDisconnected, UnexpectedMessageError, default_tls_extension
 from anycorn.worker_context import WorkerContext
 from tests.helpers import LogCapture, capture_logs
 
@@ -87,7 +93,7 @@ async def test_handle_request_http_1(stream: HTTPStream, http_version: str) -> N
     assert scope == {
         "type": "http",
         "http_version": http_version,
-        "asgi": {"spec_version": "2.1", "version": "3.0"},
+        "asgi": {"spec_version": "2.5", "version": "3.0"},
         "method": "GET",
         "scheme": "http",
         "path": "/",
@@ -119,7 +125,7 @@ async def test_handle_request_http_2(stream: HTTPStream) -> None:
     assert scope == {
         "type": "http",
         "http_version": "2",
-        "asgi": {"spec_version": "2.1", "version": "3.0"},
+        "asgi": {"spec_version": "2.5", "version": "3.0"},
         "method": "GET",
         "scheme": "http",
         "path": "/",
@@ -218,6 +224,82 @@ def _get_request() -> Request:
 
 
 @pytest.mark.anyio
+async def test_send_after_client_disconnect_raises(config: Config) -> None:
+    """A real app that sends after the client has gone gets ClientDisconnected (spec 2.4).
+
+    Driven through a real task group and a real ASGI app rather than poking app_send:
+    the app receives the http.disconnect, then its next send() must raise.
+    """
+    outcome: dict[str, object] = {}
+
+    async def app(scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
+        assert scope["type"] == "http"
+        assert (await receive())["type"] == "http.disconnect"
+        try:
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+        except ClientDisconnected as exc:
+            outcome["raised"] = isinstance(exc, OSError)
+
+    async def send(event: Event) -> None:
+        pass
+
+    async with TaskGroup() as task_group:
+        stream = HTTPStream(
+            ASGIWrapper(app),
+            config,
+            WorkerContext(None),
+            task_group,
+            ("127.0.0.1", 1234),
+            ("127.0.0.1", 8000),
+            send,
+            1,
+            None,
+        )
+        await stream.handle(_get_request())
+        await anyio.wait_all_tasks_blocked()
+        await stream.handle(StreamClosed(stream_id=1))
+        await anyio.wait_all_tasks_blocked()
+
+    # An OSError subclass, as the spec requires, and the app really caught it.
+    assert outcome == {"raised": True}
+
+
+@pytest.mark.anyio
+async def test_client_disconnect_left_uncaught_is_not_a_framework_error(
+    config: Config, logs: LogCapture
+) -> None:
+    """The spec lets an app re-raise the disconnect; that clean exit is not logged as an error."""
+
+    async def app(scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
+        assert scope["type"] == "http"
+        assert (await receive())["type"] == "http.disconnect"
+        # Do not catch: let ClientDisconnected propagate out of the app.
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+
+    async def send(event: Event) -> None:
+        pass
+
+    async with TaskGroup() as task_group:
+        stream = HTTPStream(
+            ASGIWrapper(app),
+            config,
+            WorkerContext(None),
+            task_group,
+            ("127.0.0.1", 1234),
+            ("127.0.0.1", 8000),
+            send,
+            1,
+            None,
+        )
+        await stream.handle(_get_request())
+        await anyio.wait_all_tasks_blocked()
+        await stream.handle(StreamClosed(stream_id=1))
+        await anyio.wait_all_tasks_blocked()
+
+    assert logs.error == []
+
+
+@pytest.mark.anyio
 async def test_pathsend_extension_is_advertised(stream: HTTPStream) -> None:
     """Path send is protocol-agnostic, so it is offered on HTTP/1.1 too."""
     await stream.handle(_get_request())
@@ -258,6 +340,44 @@ async def test_pathsend_streams_the_named_file(stream: HTTPStream, tmp_path: Pat
     assert body == payload
     assert any(isinstance(event, EndBody) for event in sent)
     assert any(isinstance(event, StreamClosed) for event in sent)
+
+
+@pytest.mark.anyio
+async def test_lowering_the_spec_version_advertises_it_and_drops_the_raise() -> None:
+    """A configured spec_version below 2.4 is advertised, and send() no longer raises."""
+    config = Config()
+    config.asgi_spec_version = "2.3"
+    outcome: dict[str, object] = {}
+
+    async def app(scope: Scope, receive: ASGIReceiveCallable, send: ASGISendCallable) -> None:
+        assert scope["asgi"]["spec_version"] == "2.3"
+        assert (await receive())["type"] == "http.disconnect"
+        # Below 2.4 the send after disconnect is dropped rather than raising, so the
+        # handler runs to completion instead of being interrupted.
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        outcome["completed"] = True
+
+    async def send(event: Event) -> None:
+        pass
+
+    async with TaskGroup() as task_group:
+        stream = HTTPStream(
+            ASGIWrapper(app),
+            config,
+            WorkerContext(None),
+            task_group,
+            ("127.0.0.1", 1234),
+            ("127.0.0.1", 8000),
+            send,
+            1,
+            None,
+        )
+        await stream.handle(_get_request())
+        await anyio.wait_all_tasks_blocked()
+        await stream.handle(StreamClosed(stream_id=1))
+        await anyio.wait_all_tasks_blocked()
+
+    assert outcome == {"completed": True}
 
 
 @pytest.mark.anyio

@@ -19,6 +19,7 @@ from anycorn.utils import (
     default_tls_extension,
     filter_pseudo_headers,
     is_asgi,
+    parse_spec_version,
     raise_shutdown,
     suppress_body,
 )
@@ -216,3 +217,17 @@ async def test_raise_shutdown_without_a_callback() -> None:
 
     with pytest.raises(ShutdownError):
         await raise_shutdown(trigger)
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("2.0", (2, 0)), ("2.4", (2, 4)), ("2.5", (2, 5))],
+)
+def test_parse_spec_version_accepts_known_versions(value: str, expected: tuple[int, int]) -> None:
+    assert parse_spec_version(value) == expected
+
+
+@pytest.mark.parametrize("value", ["2.6", "3.0", "2", "banana", ""])
+def test_parse_spec_version_rejects_unknown(value: str) -> None:
+    with pytest.raises(ValueError, match="Unknown ASGI spec_version"):
+        parse_spec_version(value)

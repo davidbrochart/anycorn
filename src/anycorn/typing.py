@@ -232,6 +232,8 @@ class WebsocketDisconnectEvent(TypedDict):
 
     type: Literal["websocket.disconnect"]
     code: int
+    # Carried only when the advertised spec_version is >= 2.5.
+    reason: NotRequired[str | None]
 
 
 class WebsocketCloseEvent(TypedDict):
