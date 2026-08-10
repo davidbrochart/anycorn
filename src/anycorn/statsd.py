@@ -128,16 +128,17 @@ class StatsdLogger(BaseStatsdLogger):
 
     async def _socket_send(self, message: bytes) -> None:
         if self._sender is None:
-            # Guard the lazy open: without the lock two coroutines emitting their
-            # first metric concurrently would each open a socket, orphaning all but
-            # one (the checkpoint in connect_datagram_socket lets them interleave).
-            async with self._sender_lock:
-                if self._sender is None:
-                    self._sender = await connect_datagram_socket(
-                        self.address[0], int(self.address[1])
-                    )
-
+            await self._open_sender()
         await self._sender.send(message)
+
+    async def _open_sender(self) -> None:
+        # Guard the lazy open: without the lock two coroutines emitting their first
+        # metric concurrently would each open a socket, orphaning all but one (the
+        # checkpoint in connect_datagram_socket lets them interleave).
+        async with self._sender_lock:
+            if self._sender is not None:
+                return  # a peer opened the socket first while we waited for the lock
+            self._sender = await connect_datagram_socket(self.address[0], int(self.address[1]))
 
     async def aclose(self) -> None:
         """Close the UDP socket, if one has been opened."""

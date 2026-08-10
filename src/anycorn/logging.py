@@ -14,9 +14,9 @@ from typing import IO, TYPE_CHECKING, Any
 
 from anyio.abc import AsyncResource
 
-if sys.version_info >= (3, 11):
+if sys.version_info >= (3, 11):  # pragma: >=3.11 cover
     import tomllib
-else:
+else:  # pragma: <3.11 cover
     import tomli as tomllib
 
 

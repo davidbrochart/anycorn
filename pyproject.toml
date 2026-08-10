@@ -54,6 +54,8 @@ test = [
     "anycorn[h3]",
     "httpx2",
     "pytest>=9.1.1",
+    "pytest-cov",
+    "covdefaults",
     "mock",
     "starlette",
     "trio",
@@ -69,9 +71,24 @@ dev = [
 anycorn = "anycorn.__main__:main"
 
 [tool.pytest.ini_options]
-addopts = "-W error --showlocals --strict-markers --color=yes -v"
+addopts = "-W error --showlocals --strict-markers --color=yes -v --cov"
 testpaths = ["tests"]
 strict = true
+
+[tool.coverage.run]
+plugins = ["covdefaults"]
+source = ["src/anycorn", "tests"]
+
+[tool.coverage.report]
+omit = [
+    # kernel TLS runs only on Linux + Python 3.12+ with a kTLS-capable OpenSSL, so the
+    # other matrix jobs (macOS, Windows, Linux 3.10/3.11) can never exercise it. Per-job
+    # 100% enforcement cannot express "cover only there", so the module and the tests that
+    # drive it are left ungated - they still run and assert on Linux 3.12+.
+    "*/anycorn/ktls.py",
+    "*/tests/test_ktls.py",
+    "*/tests/e2e/test_ktls_real.py",
+]
 
 [tool.ruff]
 lint.extend-select = [# https://docs.astral.sh/ruff/settings/#extend-select
