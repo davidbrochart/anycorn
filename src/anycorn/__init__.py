@@ -8,14 +8,14 @@ import anyio.abc
 
 from .config import Config
 from .run import worker_serve
-from .utils import wrap_app
+from .utils import ClientDisconnected, wrap_app
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from .typing import Framework
 
-__all__ = ("Config", "serve")
+__all__ = ("ClientDisconnected", "Config", "serve")
 __version__ = importlib.metadata.version("anycorn")
 
 
