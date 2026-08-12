@@ -9,6 +9,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from anycorn.middleware import ProxyFixMiddleware
+from anycorn.middleware.proxy_fix import (
+    _parse_forwarded_element,
+    _split_outside_quotes,
+    _unquote,
+)
 from anycorn.typing import ConnectionState, HTTPScope
 
 if TYPE_CHECKING:
@@ -78,6 +83,144 @@ async def test_proxy_fix_modern() -> None:
     assert scope["scheme"] == "https"
     host_headers = [h for h in scope["headers"] if h[0].lower() == b"host"]
     assert host_headers == [(b"host", b"example.com")]
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("192.0.2.60", "192.0.2.60"),  # bare token, unchanged
+        ('"192.0.2.60"', "192.0.2.60"),  # quoted-string, unwrapped
+        ('"[2001:db8::1]:4711"', "[2001:db8::1]:4711"),  # quoted IPv6
+        (r'"a\"b"', 'a"b'),  # quoted-pair: escaped quote
+        (r'"a\\b"', r"a\b"),  # quoted-pair: escaped backslash
+        ('""', ""),  # empty quoted-string
+        ('"', '"'),  # single quote is not a balanced pair
+        ('a"b', 'a"b'),  # stray quote in a token is left alone
+    ],
+)
+def test_unquote(value: str, expected: str) -> None:
+    assert _unquote(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "delimiter", "expected"),
+    [
+        ("a,b,c", ",", ["a", "b", "c"]),
+        ('for="a,b",for=c', ",", ['for="a,b"', "for=c"]),  # comma inside quotes
+        ('for=a;host="x;y";proto=z', ";", ["for=a", 'host="x;y"', "proto=z"]),
+        (r'for="a\"b,c"', ",", [r'for="a\"b,c"']),  # escaped quote keeps quotes open
+        ("", ",", [""]),
+    ],
+)
+def test_split_outside_quotes(value: str, delimiter: str, expected: list[str]) -> None:
+    assert _split_outside_quotes(value, delimiter) == expected
+
+
+@pytest.mark.parametrize(
+    ("element", "expected"),
+    [
+        # Behaviours cross-checked against aiohttp's RFC 7239 parser.
+        (
+            "for=192.0.2.60;proto=http;by=203.0.113.43",
+            {"for": "192.0.2.60", "proto": "http", "by": "203.0.113.43"},
+        ),
+        ("for=1.1.1.1;for=2.2.2.2", {"for": "2.2.2.2"}),  # duplicate param: last wins
+        ("proto=https;;for=1.1.1.1", {"proto": "https", "for": "1.1.1.1"}),  # empty pair skipped
+        # Full port kept - aiohttp truncates this to :4701 (its regex caps at 4 digits).
+        ("for=192.0.2.43:47011", {"for": "192.0.2.43:47011"}),
+        ('secret=";,="', {"secret": ";,="}),  # delimiters inside quotes are data
+        ("novalue", {}),  # a pair with no "=" is skipped
+        ("", {}),  # empty element
+    ],
+)
+def test_parse_forwarded_element(element: str, expected: dict[str, str]) -> None:
+    assert _parse_forwarded_element(element) == expected
+
+
+@pytest.mark.anyio
+async def test_proxy_fix_modern_with_optional_whitespace() -> None:
+    """RFC 7239 permits OWS after ";" and quoted values; both must still parse.
+
+    A header like "for=127.0.0.2; proto=https; host=example.com" previously left
+    proto and host unmatched (the parts began with a space), so scheme and host
+    were silently not rewritten.
+    """
+    mock = AsyncMock()
+    app = ProxyFixMiddleware(mock, mode="modern")
+    scope: HTTPScope = {
+        "type": "http",
+        "asgi": {},
+        "http_version": "2",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [
+            (b"forwarded", b'for="127.0.0.2"; proto=https; host=example.com'),
+        ],
+        "client": ("127.0.0.3", 80),
+        "server": None,
+        "extensions": {},
+        "state": ConnectionState({}),
+    }
+    await app(scope, None, None)  # type: ignore[invalid-argument-type]
+    mock.assert_called()
+    scope = mock.call_args[0][0]
+    assert scope["client"] == ("127.0.0.2", 0)
+    assert scope["scheme"] == "https"
+    host_headers = [h for h in scope["headers"] if h[0].lower() == b"host"]
+    assert host_headers == [(b"host", b"example.com")]
+
+
+def _http_scope(headers: list[tuple[bytes, bytes]]) -> HTTPScope:
+    return {
+        "type": "http",
+        "asgi": {},
+        "http_version": "2",
+        "method": "GET",
+        "scheme": "http",
+        "path": "/",
+        "raw_path": b"/",
+        "query_string": b"",
+        "root_path": "",
+        "headers": headers,
+        "client": ("127.0.0.3", 80),
+        "server": None,
+        "extensions": {},
+        "state": ConnectionState({}),
+    }
+
+
+@pytest.mark.anyio
+async def test_proxy_fix_modern_quoted_delimiters_are_not_split() -> None:
+    """A "," or ";" inside a quoted value is data, not a separator."""
+    mock = AsyncMock()
+    app = ProxyFixMiddleware(mock, mode="modern")
+    scope = _http_scope([(b"forwarded", b'for="[2001:db8::1]:8080"; host="a;b,c"; proto=https')])
+    await app(scope, None, None)  # type: ignore[invalid-argument-type]
+    scope = mock.call_args[0][0]
+    assert scope["client"] == ("[2001:db8::1]:8080", 0)
+    assert scope["scheme"] == "https"
+    host_headers = [h for h in scope["headers"] if h[0].lower() == b"host"]
+    assert host_headers == [(b"host", b"a;b,c")]
+
+
+@pytest.mark.anyio
+async def test_proxy_fix_modern_quoted_comma_does_not_shift_hops() -> None:
+    """A comma inside a quoted value must not be counted as an extra element.
+
+    With trusted_hops=2 and two real elements, the trusted element is the first.
+    A naive comma split would see three fragments and pick the wrong one.
+    """
+    mock = AsyncMock()
+    app = ProxyFixMiddleware(mock, mode="modern", trusted_hops=2)
+    scope = _http_scope([(b"forwarded", b'for="a,b"; proto=http, for=2.2.2.2; proto=https')])
+    await app(scope, None, None)  # type: ignore[invalid-argument-type]
+    scope = mock.call_args[0][0]
+    assert scope["client"] == ("a,b", 0)
+    assert scope["scheme"] == "http"
 
 
 @pytest.mark.anyio
