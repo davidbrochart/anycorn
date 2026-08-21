@@ -323,6 +323,8 @@ class WSStream:
         elif isinstance(event, (Body, Data)):
             self.connection.receive_data(event.data)
             await self._handle_events()
+        elif isinstance(event, (EndBody, EndData)):
+            await self._peer_ended_stream()
         elif isinstance(event, StreamClosed):
             self.closed = True
             if self.app_put is not None:
@@ -399,6 +401,28 @@ class WSStream:
         else:
             raise UnexpectedMessageError(self.state, message["type"])
 
+    async def _peer_ended_stream(self) -> None:
+        """Close the WebSocket, the peer having ended its side of the stream.
+
+        Over HTTP/2 and HTTP/3 that is what a TCP close is over HTTP/1.1 (RFC 8441
+        s5.3). Left unhandled the app never heard the disconnect and the stream never
+        went idle, so the connection could not be reclaimed either. h11 swaps in a
+        pass-through connection the moment it sees the upgrade, so a WebSocket there
+        is never sent one of these.
+        """
+        if self.state == ASGIWebsocketState.CONNECTED:
+            self.state = ASGIWebsocketState.CLOSED
+            # End our side too, rather than leaving the stream half open with its send
+            # buffer and its place in the priority tree outliving it.
+            await self.send(EndData(stream_id=self.stream_id))
+            await self.send(StreamClosed(stream_id=self.stream_id))
+        elif self.state == ASGIWebsocketState.HANDSHAKE:
+            # The peer gave up before the handshake resolved, so there is nothing left
+            # for the app to accept onto.
+            await self._send_error_response(400)
+        else:
+            await self.send(StreamClosed(stream_id=self.stream_id))
+
     async def _handle_events(self) -> None:
         for event in self.connection.events():
             if isinstance(event, Message):
@@ -423,6 +447,13 @@ class WSStream:
                 self.close_code = event.code
                 if self.connection.state == ConnectionState.REMOTE_CLOSING:
                     await self._send_wsproto_event(event.response())
+                self.state = ASGIWebsocketState.CLOSED
+                # End our side as well, as the app-initiated close does. Over HTTP/1.1
+                # this is ignored and the connection is torn down regardless, but over
+                # HTTP/2 and HTTP/3 the stream would otherwise be left half open: the
+                # peer never sees it end, and its send buffer and place in the priority
+                # tree outlive it for as long as the connection lasts.
+                await self.send(EndData(stream_id=self.stream_id))
                 await self.send(StreamClosed(stream_id=self.stream_id))
 
     async def _send_error_response(self, status_code: int) -> None:

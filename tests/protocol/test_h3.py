@@ -6,11 +6,13 @@ from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aioquic.h3.events import HeadersReceived
 from aioquic.quic.events import QuicEvent, StopSendingReceived, StreamReset
 
 from anycorn.config import Config
 from anycorn.protocol.events import Body, EndBody, Event, Response, StreamClosed
 from anycorn.protocol.h3 import H3Protocol
+from anycorn.protocol.ws_stream import WSStream
 from anycorn.typing import ConnectionState, TLSExtension
 from anycorn.worker_context import WorkerContext
 
@@ -37,16 +39,6 @@ def _make_protocol() -> H3Protocol:
         MagicMock(),  # quic
         AsyncMock(),  # send
     )
-
-
-@pytest.mark.anyio
-async def test_stream_send_stream_closed_removes_stream() -> None:
-    protocol = _make_protocol()
-    protocol.streams = {1: object(), 2: object()}  # type: ignore[dict-item]
-
-    await protocol.stream_send(StreamClosed(stream_id=1))
-
-    assert protocol.streams == {2: protocol.streams[2]}
 
 
 @pytest.mark.anyio
@@ -116,6 +108,25 @@ class _RecordingH3Connection:
         end_stream: bool,  # noqa: ARG002, FBT001
     ) -> None:
         self._write("data", stream_id)
+
+
+@pytest.mark.anyio
+async def test_stream_send_stream_closed_removes_stream() -> None:
+    """The stream is dropped, and told, so the app hears the disconnect.
+
+    Popping it and no more left a WebSocket that closed itself - which is how every
+    WebSocket ends - with an app still waiting on receive() for ever. h2 hands the
+    event back the same way, as does _reset_stream here.
+    """
+    protocol = _make_protocol()
+    closing, other = _RecordingStream(), _RecordingStream()
+    protocol.streams = {1: closing, 2: other}  # type: ignore[dict-item]
+
+    await protocol.stream_send(StreamClosed(stream_id=1))
+
+    assert protocol.streams == {2: other}
+    assert closing.events == [StreamClosed(stream_id=1)]
+    assert other.events == []
 
 
 @pytest.mark.anyio
@@ -212,3 +223,73 @@ async def test_closing_a_reset_stream_stops_it_being_remembered() -> None:
     await protocol.stream_send(Body(stream_id=1, data=b"reused"))
 
     assert connection.attempted == [("data", 1)]
+
+
+class _HeaderRecordingH3Connection(_RecordingH3Connection):
+    """Keeps the headers of every response, which the routing tests assert on."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.responses: list[list[tuple[bytes, bytes]]] = []
+
+    def send_headers(
+        self,
+        stream_id: int,
+        headers: list[tuple[bytes, bytes]],
+        end_stream: bool = False,  # noqa: FBT001, FBT002
+    ) -> None:
+        self.responses.append(headers)
+        super().send_headers(stream_id, headers, end_stream)
+
+
+def _connect_headers(protocol_header: bytes | None) -> list[tuple[bytes, bytes]]:
+    headers = [
+        (b":method", b"CONNECT"),
+        (b":scheme", b"https"),
+        (b":authority", b"anycorn"),
+        (b":path", b"/ws"),
+        (b"sec-websocket-version", b"13"),
+    ]
+    if protocol_header is not None:
+        headers.insert(1, (b":protocol", protocol_header))
+    return headers
+
+
+@pytest.mark.anyio
+async def test_extended_connect_for_websocket_opens_a_websocket_stream() -> None:
+    """RFC 9220 carries RFC 8441's extended CONNECT over to HTTP/3."""
+    protocol = _make_protocol()
+    protocol.task_group = AsyncMock()
+    connection = _HeaderRecordingH3Connection()
+    protocol.connection = connection
+
+    await protocol._create_stream(
+        HeadersReceived(stream_id=0, stream_ended=False, headers=_connect_headers(b"websocket"))
+    )
+
+    assert isinstance(protocol.streams[0], WSStream)
+    assert connection.responses == []  # nothing refused; the app answers the handshake
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("protocol_header", [None, b"webtransport"])
+async def test_connect_for_another_protocol_is_not_implemented(
+    protocol_header: bytes | None,
+) -> None:
+    """Only :protocol websocket is tunnelled, and nothing else opens a stream.
+
+    aioquic requires no more than :method and :authority, so unlike h2 it hands a
+    plain tunnel CONNECT straight to the server - which used to serve every CONNECT
+    as a WebSocket. RFC 8441 s4 asks for 501 on a :protocol that is not supported.
+    """
+    protocol = _make_protocol()
+    protocol.task_group = AsyncMock()
+    connection = _HeaderRecordingH3Connection()
+    protocol.connection = connection
+
+    await protocol._create_stream(
+        HeadersReceived(stream_id=0, stream_ended=False, headers=_connect_headers(protocol_header))
+    )
+
+    assert protocol.streams == {}
+    assert dict(connection.responses[0])[b":status"] == b"501"
