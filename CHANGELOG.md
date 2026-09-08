@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Extend the Path Send extension (`http.response.pathsend`) with optional `offset` and
+  `count` keys, so an app can send a byte range of a file without loading it, enabling
+  HTTP range requests. The capability is advertised via `{"ranges": True}` in the
+  extension scope dict.
 - Implement the Path Send extension (`http.response.pathsend`), streaming a file the
   app names by path as the response body on any HTTP version.
 - Implement the Zero Copy Send extension (`http.response.zerocopysend`) with a real

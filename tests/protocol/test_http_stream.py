@@ -88,7 +88,7 @@ async def test_handle_request_http_1(stream: HTTPStream, http_version: str) -> N
     stream.task_group.spawn_app.assert_called()  # type: ignore[attr-defined]
     scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
     # Zero copy send is offered on plaintext HTTP/1.1, but only where os.sendfile exists.
-    expected_extensions: dict = {"http.response.pathsend": {}}
+    expected_extensions: dict = {"http.response.pathsend": {"ranges": True}}
     if have_sendfile:
         expected_extensions["http.response.zerocopysend"] = {}
     assert scope == {
@@ -140,7 +140,7 @@ async def test_handle_request_http_2(stream: HTTPStream) -> None:
             "http.response.trailers": {},
             "http.response.early_hint": {},
             "http.response.push": {},
-            "http.response.pathsend": {},
+            "http.response.pathsend": {"ranges": True},
         },
         "state": ConnectionState({}),
     }
@@ -229,7 +229,7 @@ async def test_pathsend_extension_is_advertised(stream: HTTPStream) -> None:
     """Path send is protocol-agnostic, so it is offered on HTTP/1.1 too."""
     await stream.handle(_get_request())
     scope = stream.task_group.spawn_app.call_args[0][2]  # type: ignore[attr-defined]
-    assert scope["extensions"]["http.response.pathsend"] == {}
+    assert scope["extensions"]["http.response.pathsend"] == {"ranges": True}
 
 
 @pytest.mark.anyio
@@ -265,6 +265,77 @@ async def test_pathsend_streams_the_named_file(stream: HTTPStream, tmp_path: Pat
     # The bytes actually reaching a client are covered by the socketpair test below.
     zerocopy = next(event for event in sent if isinstance(event, ZeroCopySend))
     assert (zerocopy.offset, zerocopy.count) == (0, len(payload))
+    assert any(isinstance(event, EndBody) for event in sent)
+    assert any(isinstance(event, StreamClosed) for event in sent)
+
+
+@pytest.mark.anyio
+async def test_pathsend_sends_a_byte_range(stream: HTTPStream, tmp_path: Path) -> None:
+    """A pathsend message with offset/count sends just that byte window of the file."""
+    sent: list[Event] = []
+
+    async def send(event: Event) -> None:
+        sent.append(event)
+
+    stream.send = send
+    await stream.handle(_get_request())
+
+    payload = bytes(range(256)) * 100
+    file_path = tmp_path / "payload.bin"
+    file_path.write_bytes(payload)
+
+    await stream.app_send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-length", b"100")],
+        }
+    )
+    pathsend: HTTPResponsePathSendEvent = {
+        "type": "http.response.pathsend",
+        "path": str(file_path),
+        "offset": 1000,
+        "count": 100,
+    }
+    await stream.app_send(pathsend)
+
+    zerocopy = next(event for event in sent if isinstance(event, ZeroCopySend))
+    assert (zerocopy.offset, zerocopy.count) == (1000, 100)
+    assert any(isinstance(event, EndBody) for event in sent)
+    assert any(isinstance(event, StreamClosed) for event in sent)
+
+
+@pytest.mark.anyio
+async def test_pathsend_count_defaults_to_end_of_file(stream: HTTPStream, tmp_path: Path) -> None:
+    """Omitting count sends from offset to the end of the file."""
+    sent: list[Event] = []
+
+    async def send(event: Event) -> None:
+        sent.append(event)
+
+    stream.send = send
+    await stream.handle(_get_request())
+
+    payload = bytes(range(256)) * 100
+    file_path = tmp_path / "payload.bin"
+    file_path.write_bytes(payload)
+
+    await stream.app_send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-length", str(len(payload) - 1000).encode())],
+        }
+    )
+    pathsend: HTTPResponsePathSendEvent = {
+        "type": "http.response.pathsend",
+        "path": str(file_path),
+        "offset": 1000,
+    }
+    await stream.app_send(pathsend)
+
+    zerocopy = next(event for event in sent if isinstance(event, ZeroCopySend))
+    assert (zerocopy.offset, zerocopy.count) == (1000, len(payload) - 1000)
     assert any(isinstance(event, EndBody) for event in sent)
     assert any(isinstance(event, StreamClosed) for event in sent)
 
