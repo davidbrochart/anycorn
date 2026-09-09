@@ -7,7 +7,7 @@ from enum import Enum, auto
 from time import time
 from typing import TYPE_CHECKING
 
-from anycorn.sendfile import read_file_chunks
+from anycorn.sendfile import open_file, read_file_chunks
 from anycorn.typing import (
     AppWrapper,
     ASGIReceiveEvent,
@@ -346,12 +346,14 @@ class HTTPStream:
         # It is the terminal body message, hence more_body is False. offset/count are
         # optional, mirroring zerocopysend, so an app can send a byte range of the file
         # without loading it - HTTP range requests. The defaults read the whole file.
-        fd = os.open(path, os.O_RDONLY)
+        # The file is opened off the event loop because os.open walks the path and can
+        # block on a cold page cache or a slow filesystem.
+        fd, size = await open_file(path)
         try:
             if offset is None:
                 offset = 0
             if count is None:
-                count = os.fstat(fd).st_size - offset
+                count = size - offset
             await self._send_zerocopy_body(fd, offset, count, more_body=False)
         finally:
             os.close(fd)
