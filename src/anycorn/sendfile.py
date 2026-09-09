@@ -64,9 +64,9 @@ async def sendfile(sock: socket.socket, in_fd: int, offset: int | None, count: i
 
 
 def _open_and_stat(path: str) -> tuple[int, int]:
-    """Open ``path`` read-only and return its size.
+    """Open `path` read-only and return its size.
 
-    Runs in a worker thread: ``os.open`` walks the path and locates the inode, which
+    Runs in a worker thread: `os.open` walks the path and locates the inode, which
     can block on a cold page cache or a slow/network filesystem, and so must not run
     on the event loop. The returned descriptor is the caller's to close; the size is
     read from the already-open descriptor's in-memory inode metadata, which never
@@ -81,11 +81,11 @@ def _open_and_stat(path: str) -> tuple[int, int]:
 
 
 async def open_file(path: str) -> tuple[int, int]:
-    """Open ``path`` read-only off the event loop, returning ``(fd, size)``.
+    """Open `path` read-only off the event loop, returning `(fd, size)`.
 
-    Backs the ``http.response.pathsend`` extension, whose ``os.open`` would otherwise
+    Backs the `http.response.pathsend` extension, whose `os.open` would otherwise
     block the event loop on the path lookup. The size is read here too so the caller
-    can honor ``count`` defaults without a second syscall.
+    can honor `count` defaults without a second syscall.
     """
     return await anyio.to_thread.run_sync(_open_and_stat, path)
 
