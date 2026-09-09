@@ -78,6 +78,42 @@ async def test_pathsend_delivers_the_file(tmp_path: Path) -> None:
 
 
 @pytest.mark.anyio
+async def test_pathsend_delivers_a_byte_range(tmp_path: Path) -> None:
+    """Path send with offset/count transmits just that window of the file, for range requests."""
+    payload = bytes(range(256)) * 500
+    file_path = tmp_path / "payload.bin"
+    await anyio.Path(file_path).write_bytes(payload)
+    window = payload[1000:1500]
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:  # noqa: ANN401, ARG001
+        assert scope["extensions"]["http.response.pathsend"] == {"ranges": True}
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 206,
+                "headers": [
+                    (b"content-length", str(len(window)).encode()),
+                    (b"content-range", b"bytes 1000-1499/128000"),
+                    (b"accept-ranges", b"bytes"),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.pathsend",
+                "path": str(file_path),
+                "offset": 1000,
+                "count": len(window),
+            }
+        )
+
+    response = await _serve_and_get(app)
+    response.raise_for_status()
+    assert response.status_code == 206  # noqa: PLR2004
+    assert response.content == window
+
+
+@pytest.mark.anyio
 async def test_zerocopysend_delivers_a_file_descriptor(tmp_path: Path) -> None:
     """The app hands over an open descriptor and offset/count; the window is sent."""
     payload = bytes(range(256)) * 500

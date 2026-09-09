@@ -9,7 +9,7 @@ import anyio
 import anyio.to_thread
 import pytest
 
-from anycorn.sendfile import have_sendfile, sendfile
+from anycorn.sendfile import have_sendfile, open_file, sendfile
 
 from .helpers import tcp_socket_pair
 
@@ -28,6 +28,23 @@ async def _drain(sock: socket.socket, expected: int) -> bytes:
             break
         received.extend(chunk)
     return bytes(received)
+
+
+@pytest.mark.anyio
+async def test_open_file_returns_fd_and_size(tmp_path: Path) -> None:
+    """open_file opens the path off-thread and reports its size."""
+    payload = bytes(range(256)) * 20
+    file_path = tmp_path / "payload.bin"
+    await anyio.Path(file_path).write_bytes(payload)
+
+    fd, size = await open_file(str(file_path))
+    try:
+        assert size == len(payload)
+        # The descriptor refers to the file we opened, and reads back its bytes.
+        assert os.fstat(fd).st_size == len(payload)
+        assert os.pread(fd, len(payload), 0) == payload
+    finally:
+        os.close(fd)
 
 
 @pytest.mark.anyio

@@ -174,6 +174,8 @@ class HTTPResponsePathSendEvent(TypedDict):
 
     type: Literal["http.response.pathsend"]
     path: str
+    offset: NotRequired[int]
+    count: NotRequired[int]
 
 
 class HTTPResponseZeroCopySendEvent(TypedDict):

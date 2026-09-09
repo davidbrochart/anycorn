@@ -7,7 +7,7 @@ from enum import Enum, auto
 from time import time
 from typing import TYPE_CHECKING
 
-from anycorn.sendfile import read_file_chunks
+from anycorn.sendfile import open_file, read_file_chunks
 from anycorn.typing import (
     AppWrapper,
     ASGIReceiveEvent,
@@ -145,8 +145,10 @@ class HTTPStream:
                 extensions["http.response.early_hint"] = {}
 
             # Path send just streams a file from disk as the body, so it works on
-            # every HTTP version rather than being tied to h2/h3 features above.
-            extensions["http.response.pathsend"] = {}
+            # every HTTP version rather than being tied to h2/h3 features above. It
+            # also supports HTTP range requests via the optional offset/count keys,
+            # advertised so applications know they may use them.
+            extensions["http.response.pathsend"] = {"ranges": True}
             # Zero copy send is only offered where it can really be zero copy: os.sendfile
             # over an HTTP/1.1 socket the kernel can send unencrypted (plaintext) or encrypt
             # itself (kTLS). HTTP/2 and HTTP/3 frame the body, and userspace TLS encrypts it
@@ -276,7 +278,7 @@ class HTTPStream:
                 else:
                     await self._send_closed()
         elif message["type"] == "http.response.pathsend" and self.state == ASGIHTTPState.RESPONSE:
-            await self._send_pathsend(message["path"])
+            await self._send_pathsend(message["path"], message.get("offset"), message.get("count"))
         elif (
             message["type"] == "http.response.zerocopysend" and self.state == ASGIHTTPState.RESPONSE
         ):
@@ -337,15 +339,22 @@ class HTTPStream:
         else:
             raise UnexpectedMessageError(self.state, message["type"])
 
-    async def _send_pathsend(self, path: str) -> None:
+    async def _send_pathsend(self, path: str, offset: int | None, count: int | None) -> None:
         # Path send names a file the app has already set Content-Length for; unlike
         # zerocopysend the server owns the descriptor, opening and closing it. It routes
         # through the same zero-copy body, so it too is os.sendfile on plaintext HTTP/1.1.
-        # It is the terminal body message, hence more_body is False.
-        fd = os.open(path, os.O_RDONLY)
+        # It is the terminal body message, hence more_body is False. offset/count are
+        # optional, mirroring zerocopysend, so an app can send a byte range of the file
+        # without loading it - HTTP range requests. The defaults read the whole file.
+        # The file is opened off the event loop because os.open walks the path and can
+        # block on a cold page cache or a slow filesystem.
+        fd, size = await open_file(path)
         try:
-            count = os.fstat(fd).st_size
-            await self._send_zerocopy_body(fd, 0, count, more_body=False)
+            if offset is None:
+                offset = 0
+            if count is None:
+                count = size - offset
+            await self._send_zerocopy_body(fd, offset, count, more_body=False)
         finally:
             os.close(fd)
 
