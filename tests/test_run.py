@@ -363,7 +363,7 @@ async def test_worker_serve_graceful_timeout_bounds_the_drain() -> None:
     config.graceful_timeout = 0.2
     shutdown = anyio.Event()
 
-    with anyio.fail_after(5):
+    with anyio.fail_after(2):
         async with anyio.create_task_group() as tg:
             binds = await tg.start(
                 partial(
