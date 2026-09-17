@@ -319,6 +319,10 @@ async def worker_serve(  # noqa: C901, PLR0912, PLR0915
                     for udp_server in udp_servers:
                         await tg.start(udp_server.run)
 
+                    # Connections run under server_tg, not tg: tg is torn down the
+                    # moment shutdown is triggered, which stops accepting, whilst
+                    # in-flight requests keep going until the graceful_timeout
+                    # deadline placed on server_tg below.
                     for listener in listeners:
                         tg.start_soon(
                             partial(
@@ -326,6 +330,7 @@ async def worker_serve(  # noqa: C901, PLR0912, PLR0915
                                 tcp_server_handler(
                                     app, config, context, ConnectionState(lifespan_state.copy())
                                 ),
+                                task_group=server_tg,
                             ),
                         )
 

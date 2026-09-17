@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import signal
 import socket
 import sys
@@ -292,3 +293,88 @@ def test_run_terminates_workers_when_it_raises(
 
     assert signal.signal is not fake_signal.signal  # the real module was never touched
     assert len(terminated) == 1
+
+
+@pytest.mark.anyio
+async def test_worker_serve_drains_an_in_flight_request_on_shutdown() -> None:
+    """A request already being served when shutdown starts must get its response.
+
+    graceful_timeout exists so that the worker waits for in-flight work. If the
+    connection handlers are cancelled the moment shutdown is triggered, the deadline
+    that is set afterwards has nothing left to bound and the client sees its
+    connection close with no response.
+    """
+    started = anyio.Event()
+
+    async def slow_app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
+        assert scope["type"] == "http"
+        started.set()
+        await anyio.sleep(0.5)
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [(b"content-length", b"2")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b"OK", "more_body": False})
+
+    config = Config()
+    config.bind = ["127.0.0.1:0"]
+    config.graceful_timeout = 5
+    shutdown = anyio.Event()
+    response = b""
+
+    async with anyio.create_task_group() as tg:
+        binds = await tg.start(
+            partial(
+                worker_serve,
+                wrap_app(slow_app, config.wsgi_max_body_size, None),
+                config,
+                shutdown_trigger=shutdown.wait,
+            )
+        )
+        host, port = binds[0].removeprefix("http://").rsplit(":", 1)
+        async with await anyio.connect_tcp(host, int(port)) as stream:
+            await stream.send(b"GET / HTTP/1.1\r\nHost: anycorn\r\nConnection: close\r\n\r\n")
+            with anyio.fail_after(5):
+                await started.wait()
+            shutdown.set()
+            with anyio.fail_after(5), contextlib.suppress(anyio.EndOfStream):
+                while True:
+                    response += await stream.receive()
+
+    assert response.startswith(b"HTTP/1.1 200")
+    assert response.endswith(b"OK")
+
+
+@pytest.mark.anyio
+async def test_worker_serve_graceful_timeout_bounds_the_drain() -> None:
+    """Draining in-flight requests must end at graceful_timeout, not when they do."""
+    started = anyio.Event()
+
+    async def stuck_app(scope: Any, _receive: Any, _send: Any) -> None:  # noqa: ANN401
+        assert scope["type"] == "http"
+        started.set()
+        await anyio.sleep_forever()
+
+    config = Config()
+    config.bind = ["127.0.0.1:0"]
+    config.graceful_timeout = 0.2
+    shutdown = anyio.Event()
+
+    with anyio.fail_after(2):
+        async with anyio.create_task_group() as tg:
+            binds = await tg.start(
+                partial(
+                    worker_serve,
+                    wrap_app(stuck_app, config.wsgi_max_body_size, None),
+                    config,
+                    shutdown_trigger=shutdown.wait,
+                )
+            )
+            host, port = binds[0].removeprefix("http://").rsplit(":", 1)
+            async with await anyio.connect_tcp(host, int(port)) as stream:
+                await stream.send(b"GET / HTTP/1.1\r\nHost: anycorn\r\n\r\n")
+                await started.wait()
+                shutdown.set()
