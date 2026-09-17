@@ -1,7 +1,8 @@
 # Version history
 
-## Unreleased
+## 0.20.1
 
+- Drain in-flight requests until `graceful_timeout` on shutdown.
 - Implement the Path Send extension (`http.response.pathsend`), streaming a file the
   app names by path as the response body on any HTTP version.
 - Implement the Zero Copy Send extension (`http.response.zerocopysend`) with a real
