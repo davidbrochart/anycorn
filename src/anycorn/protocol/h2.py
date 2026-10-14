@@ -174,8 +174,11 @@ class H2Protocol:
         if headers is not None:
             event = h2.events.RequestReceived(stream_id=1)
             event.headers = headers
-            await self._create_stream(event)
-            await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
+            # An h2c upgrade carries whatever method the HTTP/1.1 request used, so this
+            # can be a CONNECT that is answered rather than served - there is then no
+            # stream to end the body of.
+            if await self._create_stream(event):
+                await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
         self.task_group.spawn(self.send_task)
 
     async def send_task(self) -> None:
@@ -287,8 +290,7 @@ class H2Protocol:
                     self.connection.update_settings(
                         {h2.settings.SettingCodes.MAX_CONCURRENT_STREAMS: 0}
                     )
-                else:
-                    await self._create_stream(event)
+                elif await self._create_stream(event):
                     await self.send(Updated(idle=False))
 
                 if self.keep_alive_requests > self.config.keep_alive_max_requests:
@@ -364,20 +366,31 @@ class H2Protocol:
             self.priority.block(event.stream_id)
         await self.has_data.set()
 
-    async def _create_stream(self, request: h2.events.RequestReceived) -> None:
+    async def _create_stream(self, request: h2.events.RequestReceived) -> bool:
+        """Hand the request to a new stream, returning whether one was created."""
         # Defaulted in step with the h3 handler: guard against a CONNECT reaching here
         # without a :path. The h2 library rejects that before it arrives (no stream is
         # created), so this is defensive only rather than the live crash it is over
         # HTTP/3.
         method = ""
         raw_path = b""
+        protocol = None
         for name, value in request.headers:
             if name == b":method":
                 method = value.decode("ascii").upper()
             elif name == b":path":
                 raw_path = value
+            elif name == b":protocol":
+                protocol = value.lower()
 
         if method == "CONNECT":
+            if protocol != b"websocket":
+                # WebSockets are the only protocol this server tunnels, and this is
+                # not a forward proxy, so a CONNECT naming anything else - or naming
+                # nothing, which is a request for a plain TCP tunnel - is turned away.
+                # RFC 8441 s4 and RFC 9113 s8.5 both say 501 for exactly this.
+                await self._reject_connect(request.stream_id)
+                return False
             self.streams[request.stream_id] = WSStream(
                 self.app,
                 self.config,
@@ -423,6 +436,20 @@ class H2Protocol:
         )
         self.keep_alive_requests += 1
         await self.context.mark_request()
+        return True
+
+    async def _reject_connect(self, stream_id: int) -> None:
+        """Answer a CONNECT this server will not tunnel, without opening a stream."""
+        self.connection.send_headers(
+            stream_id,
+            [
+                (b":status", b"501"),
+                (b"content-length", b"0"),
+                *self.config.response_headers("h2"),
+            ],
+            end_stream=True,
+        )
+        await self._flush()
 
     async def _create_server_push(
         self, stream_id: int, path: bytes, headers: list[tuple[bytes, bytes]]
@@ -447,8 +474,8 @@ class H2Protocol:
             event.headers = request_headers
             # Counted towards keep_alive_requests once, by _create_stream, like any
             # other request - not again here.
-            await self._create_stream(event)
-            await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
+            if await self._create_stream(event):
+                await self.streams[event.stream_id].handle(EndBody(stream_id=event.stream_id))
 
     async def _close_stream(self, stream_id: int) -> None:
         if stream_id in self.streams:

@@ -12,6 +12,7 @@ import anyio
 import h2.config
 import h2.connection
 import h2.events
+import h2.settings
 import h11
 import pytest
 import wsproto
@@ -25,7 +26,9 @@ from .helpers import SANITY_BODY, sanity_framework, serve_in_memory
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from anycorn.typing import HTTPScope, Scope
+    from anycorn.typing import HTTPScope, Scope, WebsocketScope
+
+    from .helpers import MemoryClientStream
 
 
 @pytest.mark.anyio
@@ -161,6 +164,7 @@ async def test_http2_websocket() -> None:
             stream_id,
             [
                 (":method", "CONNECT"),
+                (":protocol", "websocket"),
                 (":path", "/"),
                 (":authority", "anycorn"),
                 (":scheme", "https"),
@@ -327,6 +331,7 @@ async def test_http2_websocket_rejects_a_target_with_no_asgi_path(target: bytes)
             stream_id,
             [
                 (b":method", b"CONNECT"),
+                (b":protocol", b"websocket"),
                 (b":path", target),
                 (b":authority", b"anycorn"),
                 (b":scheme", b"https"),
@@ -425,3 +430,174 @@ async def test_http1_websocket_frame_arriving_with_the_handshake() -> None:
 
     assert isinstance(events[0], wsproto.events.AcceptConnection)
     assert events[-1] == wsproto.events.TextMessage(data="Hello & Goodbye")
+
+
+async def _h2_connect(
+    client_stream: MemoryClientStream,
+    h2_client: h2.connection.H2Connection,
+    headers: list[tuple[bytes, bytes]],
+) -> int:
+    """Open a stream carrying *headers* and return its id."""
+    stream_id = h2_client.get_next_available_stream_id()
+    h2_client.send_headers(stream_id, headers)
+    await client_stream.send_all(h2_client.data_to_send())
+    return stream_id
+
+
+async def _read_h2_response(
+    client_stream: MemoryClientStream, h2_client: h2.connection.H2Connection
+) -> dict[bytes, bytes]:
+    """Read until the server answers, and return the response headers it answered with."""
+    with anyio.fail_after(5):
+        while True:
+            data = await client_stream.receive_some(4096)
+            if data == b"":
+                msg = "the connection closed before the server answered"
+                raise AssertionError(msg)
+            for event in h2_client.receive_data(data):
+                if isinstance(event, h2.events.ResponseReceived):
+                    return dict(event.headers)
+            await client_stream.send_all(h2_client.data_to_send())
+
+
+WEBSOCKET_CONNECT_HEADERS = [
+    (b":method", b"CONNECT"),
+    (b":protocol", b"websocket"),
+    (b":path", b"/"),
+    (b":authority", b"anycorn"),
+    (b":scheme", b"https"),
+    (b"sec-websocket-version", b"13"),
+]
+
+
+@pytest.mark.anyio
+async def test_http2_advertises_the_extended_connect_setting() -> None:
+    """The opening SETTINGS carries SETTINGS_ENABLE_CONNECT_PROTOCOL.
+
+    That setting is the whole of what a browser waits for: without it Chrome and
+    Firefox will not send the extended CONNECT of RFC 8441, and there is no HTTP/1.1
+    Upgrade to fall back to on a connection that is already HTTP/2.
+    """
+    async with serve_in_memory(sanity_framework, alpn_protocol="h2") as client_stream:
+        h2_client = h2.connection.H2Connection()
+        h2_client.initiate_connection()
+        await client_stream.send_all(h2_client.data_to_send())
+
+        settings = None
+        with anyio.fail_after(5):
+            while settings is None:
+                for event in h2_client.receive_data(await client_stream.receive_some(4096)):
+                    if isinstance(event, h2.events.RemoteSettingsChanged):
+                        settings = event.changed_settings
+
+        enabled = settings[h2.settings.SettingCodes.ENABLE_CONNECT_PROTOCOL]
+        assert enabled.new_value == 1
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("protocol", [None, b"webtransport"])
+async def test_http2_connect_for_another_protocol_is_not_implemented(
+    protocol: bytes | None,
+) -> None:
+    """WebSockets are the only protocol tunnelled; anything else is answered 501.
+
+    Every CONNECT used to be handed to a WebSocket stream, so a request for a plain
+    tunnel - or for another protocol over extended CONNECT - came back as the 400 of
+    a malformed WebSocket handshake. This server is not a forward proxy, and RFC 8441
+    s4 asks for 501 on a :protocol it does not support.
+    """
+    seen: list[str] = []
+    async with serve_in_memory(_recording_app(seen), alpn_protocol="h2") as client_stream:
+        h2_client = h2.connection.H2Connection()
+        h2_client.initiate_connection()
+        await client_stream.send_all(h2_client.data_to_send())
+        headers = [
+            (b":method", b"CONNECT"),
+            (b":path", b"/"),
+            (b":authority", b"anycorn"),
+            (b":scheme", b"https"),
+        ]
+        if protocol is not None:
+            headers.insert(1, (b":protocol", protocol))
+        await _h2_connect(client_stream, h2_client, headers)
+
+        response = await _read_h2_response(client_stream, h2_client)
+
+    assert response[b":status"] == b"501"
+    assert seen == []
+
+
+@pytest.mark.anyio
+async def test_http2_websocket_negotiates_a_subprotocol() -> None:
+    """Subprotocol negotiation rides on the extended CONNECT as it does on an upgrade."""
+    subprotocols = []
+
+    async def _app(scope: Scope, receive: Callable, send: Callable) -> None:
+        subprotocols.extend(cast("WebsocketScope", scope)["subprotocols"])
+        await receive()
+        await send({"type": "websocket.accept", "subprotocol": "superchat"})
+        await receive()
+
+    async with serve_in_memory(_app, alpn_protocol="h2") as client_stream:
+        h2_client = h2.connection.H2Connection()
+        h2_client.initiate_connection()
+        await client_stream.send_all(h2_client.data_to_send())
+        await _h2_connect(
+            client_stream,
+            h2_client,
+            [*WEBSOCKET_CONNECT_HEADERS, (b"sec-websocket-protocol", b"chat, superchat")],
+        )
+
+        response = await _read_h2_response(client_stream, h2_client)
+
+    assert subprotocols == ["chat", "superchat"]
+    assert response[b":status"] == b"200"
+    assert response[b"sec-websocket-protocol"] == b"superchat"
+    # RFC 8441 s5.1: the HTTP/1.1 handshake headers have no place over HTTP/2
+    assert b"sec-websocket-accept" not in response
+    assert b"upgrade" not in response
+
+
+@pytest.mark.anyio
+async def test_http2_websocket_peer_ending_the_stream_disconnects_the_app() -> None:
+    """END_STREAM from the peer is what a TCP close is over HTTP/1.1 (RFC 8441 s5.3).
+
+    It went unhandled, so the app was never told the peer had gone, and the stream
+    stayed on the connection for as long as the connection lived - never idle, so
+    never reclaimed either.
+    """
+    received: list[str] = []
+    disconnected = anyio.Event()
+
+    async def _app(_scope: Scope, receive: Callable, send: Callable) -> None:
+        await receive()
+        await send({"type": "websocket.accept"})
+        while True:
+            message = await receive()
+            received.append(message["type"])
+            if message["type"] == "websocket.disconnect":
+                disconnected.set()
+                return
+
+    async with serve_in_memory(_app, alpn_protocol="h2") as client_stream:
+        h2_client = h2.connection.H2Connection()
+        h2_client.initiate_connection()
+        await client_stream.send_all(h2_client.data_to_send())
+        stream_id = await _h2_connect(client_stream, h2_client, WEBSOCKET_CONNECT_HEADERS)
+        assert (await _read_h2_response(client_stream, h2_client))[b":status"] == b"200"
+
+        h2_client.end_stream(stream_id)
+        await client_stream.send_all(h2_client.data_to_send())
+
+        with anyio.fail_after(5):
+            await disconnected.wait()
+
+        # The server ends its side too, rather than leaving the stream half open
+        ended = False
+        with anyio.fail_after(5):
+            while not ended:
+                for event in h2_client.receive_data(await client_stream.receive_some(4096)):
+                    if isinstance(event, h2.events.StreamEnded):
+                        ended = True
+
+    assert received == ["websocket.disconnect"]

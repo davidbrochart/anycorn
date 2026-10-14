@@ -108,8 +108,14 @@ class H3Protocol:
     async def stream_send(self, event: StreamEvent) -> None:
         """Send a stream event to the remote client."""
         if isinstance(event, StreamClosed):
-            self.streams.pop(event.stream_id, None)
+            stream = self.streams.pop(event.stream_id, None)
             self._reset_streams.discard(event.stream_id)
+            if stream is not None:
+                # Handed back to the stream, as h2 does and as _reset_stream does here,
+                # so it knows it is closed and the app hears the disconnect. Popping it
+                # and no more left a WebSocket that closed itself - which is how every
+                # WebSocket ends - with an app still waiting on receive() for ever.
+                await stream.handle(event)
             return
         if isinstance(event, Request):
             await self._create_server_push(event.stream_id, event.raw_path, event.headers)
@@ -160,13 +166,25 @@ class H3Protocol:
         # 400 instead.
         method = ""
         raw_path = b""
+        protocol = None
         for name, value in request.headers:
             if name == b":method":
                 method = value.decode("ascii").upper()
             elif name == b":path":
                 raw_path = value
+            elif name == b":protocol":
+                protocol = value.lower()
 
         if method == "CONNECT":
+            if protocol != b"websocket":
+                # WebSockets are the only protocol this server tunnels, and this is
+                # not a forward proxy, so a CONNECT naming anything else - or naming
+                # nothing, which is a request for a plain tunnel - is turned away.
+                # RFC 9220 carries RFC 8441's 501 for this over to HTTP/3. aioquic
+                # requires only :method and :authority, so unlike h2 it hands such a
+                # request straight here rather than rejecting it first.
+                await self._reject_connect(request.stream_id)
+                return
             self.streams[request.stream_id] = WSStream(
                 self.app,
                 self.config,
@@ -202,6 +220,19 @@ class H3Protocol:
             )
         )
         await self.context.mark_request()
+
+    async def _reject_connect(self, stream_id: int) -> None:
+        """Answer a CONNECT this server will not tunnel, without opening a stream."""
+        self.connection.send_headers(
+            stream_id,
+            [
+                (b":status", b"501"),
+                (b"content-length", b"0"),
+                *self.config.response_headers("h3"),
+            ],
+            end_stream=True,
+        )
+        await self.send()
 
     async def _create_server_push(
         self, stream_id: int, path: bytes, headers: list[tuple[bytes, bytes]]

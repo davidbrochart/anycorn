@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Any
 import anyio
 import httpx2
 import pytest
+import wsproto.connection
+import wsproto.events
 from aioquic.h3.connection import H3_ALPN, H3Connection
 from aioquic.h3.events import DataReceived, HeadersReceived
 from aioquic.quic.configuration import QuicConfiguration
@@ -239,6 +241,68 @@ class _H3Transport(httpx2.AsyncBaseTransport):
         )
         await self._transmit()
         return stream_id
+
+    async def open_websocket(self, path: bytes) -> tuple[int, int]:
+        """Send the extended CONNECT of RFC 8441/9220, returning the stream id and status.
+
+        This is the handshake a browser sends for a WebSocket on an HTTP/3 connection -
+        a CONNECT naming :protocol websocket, with the stream left open for the frames
+        that follow.
+        """
+        stream_id = self._quic.get_next_available_stream_id()
+        self._read_queue[stream_id] = []
+        self._read_ready[stream_id] = anyio.Event()
+        self._http.send_headers(
+            stream_id=stream_id,
+            headers=[
+                (b":method", b"CONNECT"),
+                (b":protocol", b"websocket"),
+                (b":scheme", b"https"),
+                (b":authority", self._address[0].encode()),
+                (b":path", path),
+                (b"sec-websocket-version", b"13"),
+            ],
+            end_stream=False,
+        )
+        await self._transmit()
+
+        status_code, _, _ = await self._receive_response(stream_id)
+        return stream_id, status_code
+
+    async def connect_with_protocol(self, protocol: bytes) -> int:
+        """Send an extended CONNECT naming *protocol*, and return the status."""
+        stream_id = self._quic.get_next_available_stream_id()
+        self._read_queue[stream_id] = []
+        self._read_ready[stream_id] = anyio.Event()
+        self._http.send_headers(
+            stream_id=stream_id,
+            headers=[
+                (b":method", b"CONNECT"),
+                (b":protocol", protocol),
+                (b":scheme", b"https"),
+                (b":authority", self._address[0].encode()),
+                (b":path", b"/chat"),
+            ],
+            end_stream=False,
+        )
+        await self._transmit()
+
+        status_code, _, _ = await self._receive_response(stream_id)
+        return status_code
+
+    async def send_stream_data(
+        self, stream_id: int, data: bytes = b"", *, end: bool = False
+    ) -> None:
+        """Put *data* on the stream, optionally ending our side of it."""
+        self._http.send_data(stream_id=stream_id, data=data, end_stream=end)
+        await self._transmit()
+
+    async def receive_stream_data(self, stream_id: int) -> tuple[bytes, bool]:
+        """Return the next DATA payload on the stream, and whether the stream ended."""
+        while True:
+            event = await self._wait_for_http_event(stream_id)
+            if isinstance(event, DataReceived):
+                return event.data, event.stream_ended
 
     async def reset(self, stream_id: int, error_code: int = 0) -> None:
         """Abandon a request with RESET_STREAM, as a cancelling client does."""
@@ -574,6 +638,9 @@ async def test_a_connect_with_no_path_does_not_crash_the_server(
     stream and read a :path that was never set, raising UnboundLocalError out of
     handle - and, with nothing catching it, out of UDPServer.run, taking the whole
     worker down. Driven here by a real client putting the CONNECT on the wire.
+
+    Carrying no :protocol, this is a request for a plain tunnel rather than the
+    extended CONNECT a WebSocket uses, so the answer is 501 (RFC 8441 s4).
     """
     seen: list[str] = []
 
@@ -600,7 +667,7 @@ async def test_a_connect_with_no_path_does_not_crash_the_server(
                 async with _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport:
                     with anyio.fail_after(10):
                         status = await transport.connect_without_path()
-                    assert status == 400  # noqa: PLR2004
+                    assert status == 501  # noqa: PLR2004
                     assert seen == [], "the app was handed a request it should never have seen"
 
                     # The connection is still usable, rather than having been taken down
@@ -862,3 +929,151 @@ async def test_a_reset_stream_disconnects_the_app_and_is_not_written_to(
                 tg.cancel_scope.cancel()
     finally:
         await datagram_socket.aclose()
+
+
+def _websocket_echo(received: list[Any], disconnected: anyio.Event) -> Callable:
+    """Return a WebSocket app that echoes in upper case and records what it was given."""
+
+    async def _app(scope: Any, receive: Any, send: Any) -> None:  # noqa: ANN401
+        assert scope["type"] == "websocket"
+        received.append(dict(scope))
+        assert (await receive())["type"] == "websocket.connect"
+        await send({"type": "websocket.accept"})
+        while True:
+            message = await receive()
+            received.append(message)
+            if message["type"] == "websocket.receive":
+                await send({"type": "websocket.send", "text": message["text"].upper()})
+            else:
+                disconnected.set()
+                return
+
+    return _app
+
+
+async def _read_websocket_events(
+    transport: _H3Transport, websocket: wsproto.connection.Connection, stream_id: int
+) -> tuple[list[wsproto.events.Event], bool]:
+    """Read one DATA frame off the stream and decode the WebSocket events in it."""
+    data, stream_ended = await transport.receive_stream_data(stream_id)
+    websocket.receive_data(data)
+    return list(websocket.events()), stream_ended
+
+
+@pytest.mark.anyio
+async def test_h3_websocket_over_extended_connect(
+    tls_certs: TLSCerts, free_tcp_port: int, free_udp_port: int
+) -> None:
+    """A WebSocket really works over HTTP/3, frames and all - not just routing.
+
+    RFC 9220 carries RFC 8441's extended CONNECT over to HTTP/3, and aioquic offers
+    the setting that permits it. The unit tests pin which stream a CONNECT is routed
+    to; only a real client on a real QUIC connection says that the frames then flow,
+    and that the close at the end reaches both the peer and the app.
+    """
+    received: list[Any] = []
+    disconnected = anyio.Event()
+
+    async with (
+        _serving(tls_certs, free_tcp_port, free_udp_port, _websocket_echo(received, disconnected)),
+        _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
+    ):
+        with anyio.fail_after(10):
+            stream_id, status = await transport.open_websocket(b"/chat?a=b")
+        assert status == 200  # noqa: PLR2004
+
+        websocket = wsproto.connection.Connection(wsproto.connection.ConnectionType.CLIENT)
+        await transport.send_stream_data(
+            stream_id, websocket.send(wsproto.events.TextMessage(data="hello"))
+        )
+        with anyio.fail_after(10):
+            events, _ = await _read_websocket_events(transport, websocket, stream_id)
+        assert events == [
+            wsproto.events.TextMessage(data="HELLO", frame_finished=True, message_finished=True)
+        ]
+
+        # The peer closing must end the server's side of the stream too, rather than
+        # leaving it half open - which over HTTP/1.1 the connection teardown hid
+        await transport.send_stream_data(
+            stream_id, websocket.send(wsproto.events.CloseConnection(code=1000))
+        )
+        with anyio.fail_after(10):
+            events, stream_ended = await _read_websocket_events(transport, websocket, stream_id)
+            assert events == [wsproto.events.CloseConnection(code=1000, reason="")]
+            while not stream_ended:
+                _, stream_ended = await transport.receive_stream_data(stream_id)
+            # And the app hears it, rather than waiting on receive() for ever
+            await disconnected.wait()
+
+    scope = received[0]
+    assert scope["http_version"] == "3"
+    assert scope["scheme"] == "wss"
+    assert scope["path"] == "/chat"
+    assert scope["query_string"] == b"a=b"
+    assert [message["type"] for message in received[1:]] == [
+        "websocket.receive",
+        "websocket.disconnect",
+    ]
+
+
+@pytest.mark.anyio
+async def test_h3_websocket_peer_ending_the_stream_disconnects_the_app(
+    tls_certs: TLSCerts, free_tcp_port: int, free_udp_port: int
+) -> None:
+    """END_STREAM from the peer is what a TCP close is over HTTP/1.1 (RFC 8441 s5.3).
+
+    It went unhandled, so the app was never told the peer had gone and the stream
+    never went idle - it stayed on the connection for as long as the connection did.
+    """
+    received: list[Any] = []
+    disconnected = anyio.Event()
+
+    async with (
+        _serving(tls_certs, free_tcp_port, free_udp_port, _websocket_echo(received, disconnected)),
+        _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
+    ):
+        with anyio.fail_after(10):
+            stream_id, status = await transport.open_websocket(b"/chat")
+        assert status == 200  # noqa: PLR2004
+
+        await transport.send_stream_data(stream_id, end=True)
+
+        with anyio.fail_after(10):
+            await disconnected.wait()
+            # The server ends its side too, rather than leaving the stream half open
+            stream_ended = False
+            while not stream_ended:
+                _, stream_ended = await transport.receive_stream_data(stream_id)
+
+    assert [message["type"] for message in received[1:]] == ["websocket.disconnect"]
+
+
+@pytest.mark.anyio
+async def test_h3_extended_connect_for_another_protocol_is_not_implemented(
+    tls_certs: TLSCerts, free_tcp_port: int, free_udp_port: int
+) -> None:
+    """A :protocol this server does not tunnel is refused, on the wire.
+
+    The companion to test_a_connect_with_no_path_does_not_crash_the_server, which
+    covers a CONNECT carrying no :protocol at all.
+    """
+    seen: list[str] = []
+
+    async def _app(scope: Any, _receive: Any, send: Any) -> None:  # noqa: ANN401
+        assert scope["type"] == "http"
+        seen.append(scope["path"])
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async with (
+        _serving(tls_certs, free_tcp_port, free_udp_port, _app),
+        _H3Transport.connect(HOST, free_udp_port, tls_certs) as transport,
+    ):
+        with anyio.fail_after(10):
+            assert await transport.connect_with_protocol(b"webtransport") == 501  # noqa: PLR2004
+        assert seen == [], "the app was handed a request it should never have seen"
+
+        # The connection is still usable, rather than having been taken down with it
+        with anyio.fail_after(10):
+            assert await transport.request_raw_path(b"/after") == 200  # noqa: PLR2004
+        assert seen == ["/after"]

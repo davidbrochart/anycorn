@@ -8,11 +8,11 @@ import anyio
 import pytest
 from h2.config import H2Configuration
 from h2.connection import H2Connection
-from h2.events import ConnectionTerminated, PushedStreamReceived
+from h2.events import ConnectionTerminated, PushedStreamReceived, ResponseReceived
 
 from anycorn.app_wrappers import ASGIWrapper
 from anycorn.config import Config
-from anycorn.events import Closed, Event, RawData
+from anycorn.events import Closed, Event, RawData, Updated
 from anycorn.protocol.events import Trailers
 from anycorn.protocol.h2 import (
     BUFFER_HIGH_WATER,
@@ -20,6 +20,7 @@ from anycorn.protocol.h2 import (
     H2Protocol,
     StreamBuffer,
 )
+from anycorn.protocol.ws_stream import WSStream
 from anycorn.task_group import TaskGroup
 from anycorn.typing import ASGIReceiveCallable, ASGISendCallable, ConnectionState, Scope
 from anycorn.worker_context import EventWrapper, WorkerContext
@@ -202,6 +203,119 @@ async def test_connect_without_path_does_not_crash() -> None:
 
     # Must not raise, and no stream is handed to the app.
     await protocol.handle(RawData(data=client.data_to_send()))
+    assert protocol.streams == {}
+
+
+@pytest.mark.anyio
+async def test_extended_connect_for_websocket_opens_a_websocket_stream() -> None:
+    """The RFC 8441 handshake a browser sends is routed by its :protocol."""
+    protocol = H2Protocol(
+        Mock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        ConnectionState({}),
+        None,
+        None,
+        AsyncMock(),
+        None,
+    )
+    client = H2Connection(config=H2Configuration(client_side=True))
+    client.initiate_connection()
+    client.send_headers(
+        1,
+        [
+            (b":method", b"CONNECT"),
+            (b":protocol", b"websocket"),
+            (b":scheme", b"https"),
+            (b":authority", b"anycorn"),
+            (b":path", b"/ws"),
+            (b"sec-websocket-version", b"13"),
+        ],
+    )
+
+    await protocol.handle(RawData(data=client.data_to_send()))
+
+    assert isinstance(protocol.streams[1], WSStream)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("connect_protocol", [None, b"webtransport"])
+async def test_connect_for_another_protocol_is_not_implemented(
+    connect_protocol: bytes | None,
+) -> None:
+    """Only :protocol websocket is tunnelled, and nothing else opens a stream.
+
+    Every CONNECT used to become a WebSocket stream, so a plain tunnel CONNECT - or
+    one naming another protocol - came back as the 400 of a malformed WebSocket
+    handshake. RFC 8441 s4 asks for 501 on a :protocol that is not supported.
+    """
+    sent: list[object] = []
+
+    async def send(event: object) -> None:
+        sent.append(event)
+
+    protocol = H2Protocol(
+        Mock(),
+        Config(),
+        WorkerContext(None),
+        AsyncMock(),
+        ConnectionState({}),
+        None,
+        None,
+        send,
+        None,
+    )
+    client = H2Connection(config=H2Configuration(client_side=True))
+    client.initiate_connection()
+    headers = [
+        (b":method", b"CONNECT"),
+        (b":scheme", b"https"),
+        (b":authority", b"anycorn"),
+        (b":path", b"/ws"),
+    ]
+    if connect_protocol is not None:
+        headers.insert(1, (b":protocol", connect_protocol))
+    client.send_headers(1, headers)
+
+    await protocol.handle(RawData(data=client.data_to_send()))
+
+    assert protocol.streams == {}
+    # Nor is the connection told it is busy over a request that never opened a stream
+    assert not any(isinstance(event, Updated) for event in sent)
+    events = []
+    for event in sent:
+        if isinstance(event, RawData):
+            events.extend(client.receive_data(event.data))
+    responses = [event for event in events if isinstance(event, ResponseReceived)]
+    assert dict(responses[0].headers)[b":status"] == b"501"
+
+
+@pytest.mark.anyio
+async def test_h2c_upgrade_from_a_connect_does_not_crash() -> None:
+    """An h2c upgrade carries the HTTP/1.1 method, so it can be a CONNECT.
+
+    Nothing is served for one, so initiate has no stream to hand the end of the body
+    to - reading self.streams for it would be a KeyError, out of the connection's
+    very first call.
+    """
+    protocol = H2Protocol(
+        Mock(),
+        Config(),
+        WorkerContext(None),
+        Mock(),  # spawn() for the send task is a plain call, not a coroutine
+        ConnectionState({}),
+        None,
+        None,
+        AsyncMock(),
+        None,
+    )
+
+    await protocol.initiate(
+        [(b":method", b"CONNECT"), (b":path", b"anycorn:443"), (b":authority", b"anycorn")],
+        "AAMAAABkAAQAoAAAAAIAAAAA",
+    )
+
     assert protocol.streams == {}
 
 

@@ -363,6 +363,65 @@ async def test_handle_connection(stream: WSStream) -> None:
 
 
 @pytest.mark.anyio
+async def test_peer_ending_the_stream_closes_the_connected_websocket(
+    stream: WSStream,
+) -> None:
+    """END_STREAM is what a TCP close is over HTTP/1.1 - the WebSocket is over.
+
+    RFC 8441 s5.3. Only h2 and h3 deliver this to a WebSocket; h11 swaps in a
+    pass-through connection the moment it sees the upgrade. It went unhandled, so
+    the app never heard the disconnect and the stream never went idle - the
+    connection could not be reclaimed either.
+    """
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[(b"sec-websocket-version", b"13")],
+            raw_path=b"/",
+            method="CONNECT",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(cast("WebsocketAcceptEvent", {"type": "websocket.accept"}))
+    stream.send.reset_mock()  # type: ignore[attr-defined]
+
+    await stream.handle(EndBody(stream_id=1))
+
+    assert stream.state == ASGIWebsocketState.CLOSED
+    assert stream.idle
+    # Our side is ended too, rather than left half open
+    assert stream.send.call_args_list == [  # type: ignore[attr-defined]
+        call(EndData(stream_id=1)),
+        call(StreamClosed(stream_id=1)),
+    ]
+
+
+@pytest.mark.anyio
+async def test_peer_ending_the_stream_during_the_handshake_is_refused(
+    stream: WSStream,
+) -> None:
+    """Nothing left to accept onto, so the handshake is answered rather than left open."""
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[(b"sec-websocket-version", b"13")],
+            raw_path=b"/",
+            method="CONNECT",
+            state=ConnectionState({}),
+        )
+    )
+    stream.send.reset_mock()  # type: ignore[attr-defined]
+
+    await stream.handle(EndBody(stream_id=1))
+
+    sent = [call_[0][0] for call_ in stream.send.call_args_list]  # type: ignore[attr-defined]
+    assert sent[0].status_code == HTTPStatus.BAD_REQUEST
+    assert sent[-1] == StreamClosed(stream_id=1)
+
+
+@pytest.mark.anyio
 async def test_handle_closed(stream: WSStream) -> None:
     await stream.handle(StreamClosed(stream_id=1))
     stream.app_put.assert_called()  # type: ignore[attr-defined]
@@ -398,6 +457,36 @@ async def test_handle_client_close_reports_its_code(stream: WSStream) -> None:
     await stream.handle(StreamClosed(stream_id=1))
 
     assert stream.app_put.call_args_list == [call({"type": "websocket.disconnect", "code": 1000})]
+
+
+@pytest.mark.anyio
+async def test_client_close_ends_the_stream(stream: WSStream) -> None:
+    """The peer closing must end our side too, as an app-initiated close does.
+
+    Over HTTP/1.1 the connection is torn down regardless and EndData is ignored, but
+    over HTTP/2 and HTTP/3 the stream was left half open - the peer never saw it end,
+    and its send buffer and place in the priority tree outlived it.
+    """
+    await stream.handle(
+        Request(
+            stream_id=1,
+            http_version="2",
+            headers=[(b"sec-websocket-version", b"13")],
+            raw_path=b"/",
+            method="CONNECT",
+            state=ConnectionState({}),
+        )
+    )
+    await stream.app_send(cast("WebsocketAcceptEvent", {"type": "websocket.accept"}))
+    stream.send.reset_mock()  # type: ignore[attr-defined]
+
+    # A masked client close frame carrying code 1000
+    await stream.handle(Data(stream_id=1, data=b"\x88\x82\x00\x00\x00\x00\x03\xe8"))
+
+    sent = [call_[0][0] for call_ in stream.send.call_args_list]  # type: ignore[attr-defined]
+    assert isinstance(sent[0], Data)  # our close frame in reply
+    assert sent[1:] == [EndData(stream_id=1), StreamClosed(stream_id=1)]
+    assert stream.idle
 
 
 @pytest.mark.anyio
