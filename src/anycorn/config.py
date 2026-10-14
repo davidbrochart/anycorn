@@ -112,6 +112,10 @@ class Config:
     alpn_protocols: list[str]
     alt_svc_headers: ClassVar[list[str]] = []
     application_path: str
+    # The ASGI HTTP/WebSocket (www) spec version advertised to apps in the scope.
+    # Behaviour follows it: >= "2.4" makes send() raise once the client has gone,
+    # and >= "2.5" carries the peer's reason on a websocket.disconnect.
+    asgi_spec_version: str = "2.5"
     backlog = 100
     ca_certs: str | None = None
     certfile: str | None = None

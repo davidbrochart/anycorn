@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import socket
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -774,9 +774,10 @@ def _cancelled_request_app(
     """Return an app that keeps going after the client has abandoned the request.
 
     Which is what an app doing real work does: it is mid-handler when the reset
-    lands, and only finds out at its next receive(). Sending the response it had
-    already prepared is then entirely reasonable of it, and must not take the
-    connection down.
+    lands, and only finds out at its next receive(). Trying to send the response it
+    had already prepared is then entirely reasonable of it: under ASGI spec 2.4 that
+    send raises ClientDisconnected, which the app handles, and either way it must not
+    take the connection down.
     """
 
     async def _app(scope: Any, receive: Any, send: Any) -> None:  # noqa: ANN401
@@ -794,8 +795,11 @@ def _cancelled_request_app(
             if message["type"] == "http.disconnect":
                 break
         disconnected.set()
-        await send({"type": "http.response.start", "status": 200, "headers": []})
-        await send({"type": "http.response.body", "body": b"too late"})
+        # The stream is gone, so the send now raises rather than being silently
+        # dropped (ASGI spec 2.4); the app catches it and carries on.
+        with suppress(anycorn.ClientDisconnected):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"too late"})
         responded.set()
 
     return _app
@@ -808,13 +812,14 @@ async def test_a_reset_stream_disconnects_the_app_and_is_not_written_to(
     """A client's RESET_STREAM must reach the app as a disconnect, and not break the rest.
 
     Driven by a real client abandoning a real request, so what is asserted is only
-    what a peer can observe: the app is told, it may respond anyway, and the
-    connection goes on serving other requests.
+    what a peer can observe: the app is told, its late send raises ClientDisconnected
+    which it handles (ASGI spec 2.4), and the connection goes on serving other
+    requests.
 
-    Deliberately not asserted here, because end to end cannot tell: *which* of
-    H3Protocol's two guards kept the connection up. Skipping the send and catching
-    aioquic's assertion have the same effect from outside, so removing either one
-    alone leaves this test passing. test_h3.py pins the skip itself.
+    The protocol-level guards that keep a write off a reset stream - skipping the
+    send, and catching aioquic's assertion - still exist for anything that does reach
+    the writer, and test_h3.py pins them; end to end only shows that a real reset
+    reaches the app and the connection survives the app responding into it.
 
     https://github.com/pgjones/hypercorn/issues/352
     """
