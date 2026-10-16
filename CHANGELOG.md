@@ -1,5 +1,10 @@
 # Version history
 
+## 0.20.2
+
+- Add a `max_rss` config flag and `--max-rss` CLI option to gracefully recycle workers
+  whose current RSS exceeds a configured MiB limit.
+
 ## 0.20.1
 
 - Drain in-flight requests until `graceful_timeout` on shutdown.

@@ -103,6 +103,11 @@ def _load_config(config_path: str | None) -> Config:
     type=int,
 )
 @click.option(
+    "--max-rss",
+    help="Maximum RSS in MiB a worker may use before restarting",
+    type=int,
+)
+@click.option(
     "--max-requests-jitter",
     help="This jitter causes the max-requests per worker to be "
     "randomized by randint(0, max_requests_jitter)",
@@ -247,6 +252,7 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
     graceful_timeout: int | None,
     read_timeout: int | None,
     max_requests: int | None,
+    max_rss: int | None,
     max_requests_jitter: int | None,
     group: int | None,
     worker_class: str | None,
@@ -312,6 +318,8 @@ def main(  # noqa: C901 PLR0913 PLR0912 PLR0915
         cfg.logconfig = log_config
     if max_requests is not None:
         cfg.max_requests = max_requests
+    if max_rss is not None:
+        cfg.max_rss = max_rss
     if max_requests_jitter is not None:
         cfg.max_requests_jitter = max_requests_jitter
     if pid is not None:

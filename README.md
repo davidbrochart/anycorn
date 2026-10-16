@@ -35,3 +35,18 @@ anyio.run(serve, app, Config())
 See Hypercorn's
 [documentation](https://hypercorn.readthedocs.io/en/latest/how_to_guides/api_usage.html) for more
 details.
+
+## Worker recycling
+
+Workers can be recycled after a fixed number of requests with `--max-requests`, or after their
+current resident set size exceeds a limit with `--max-rss`:
+
+```bash
+anycorn --workers 4 --max-rss 512 module:app
+```
+
+`max_rss` is specified in MiB and is disabled by default. Anycorn samples the worker RSS
+periodically and uses the same graceful shutdown path as request-count recycling, so in-flight
+requests can drain until `graceful_timeout` before the master process respawns the worker. When
+`--workers 0` is used, no master process exists to respawn the worker; exceeding `max_rss` stops
+that single worker, matching `max_requests` behavior.

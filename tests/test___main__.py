@@ -52,6 +52,7 @@ def test_load_config(monkeypatch: MonkeyPatch) -> None:
         ("--ciphers", "DHE-RSA-AES128-SHA", "ciphers"),
         ("--keep-alive", 20, "keep_alive_timeout"),
         ("--keyfile", "/path", "keyfile"),
+        ("--max-rss", 128, "max_rss"),
         ("--pid", "/path", "pid_path"),
         ("--root-path", "/path", "root_path"),
         ("--workers", 2, "workers"),

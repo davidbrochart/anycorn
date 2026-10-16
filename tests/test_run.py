@@ -141,6 +141,44 @@ async def test_worker_serve_marks_terminated_before_the_servers_unwind(
 
 
 @pytest.mark.anyio
+async def test_watch_max_rss_terminates_worker_when_over_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = Config()
+    config.max_rss = 1
+    context = WorkerContext(None)
+    logged: list[tuple[str, tuple[object, ...]]] = []
+
+    async def info(message: str, *args: object) -> None:
+        logged.append((message, args))
+
+    monkeypatch.setattr(config.log, "info", info)
+    monkeypatch.setattr(anycorn.run, "MAX_RSS_CHECK_INTERVAL", 0)
+
+    await anycorn.run._watch_max_rss(context, config, lambda: 2 * 1024 * 1024)
+
+    assert context.terminate.is_set()
+    assert logged == [
+        (
+            "Worker RSS %.1f MiB exceeded max_rss %d MiB; recycling worker",
+            (2.0, 1),
+        )
+    ]
+
+
+@pytest.mark.anyio
+async def test_worker_serve_terminates_when_over_max_rss(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = Config()
+    config.bind = ["127.0.0.1:0"]
+    config.max_rss = 1
+    monkeypatch.setattr(anycorn.run, "MAX_RSS_CHECK_INTERVAL", 0)
+    monkeypatch.setattr(anycorn.run, "_read_current_rss", lambda: 2 * 1024 * 1024)
+
+    with anyio.fail_after(5):
+        await worker_serve(wrap_app(app, config.wsgi_max_body_size, None), config)
+
+
+@pytest.mark.anyio
 async def test_udp_server_serialises_concurrent_sends() -> None:
     """QUIC sends from several tasks at once must not collide on the socket.
 

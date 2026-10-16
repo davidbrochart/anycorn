@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 access_log_format = "bob"
 h11_max_incomplete_size = 4
+max_rss = 128
 
 # The reuse option _create_sockets sets is platform-specific: SO_EXCLUSIVEADDRUSE on
 # Windows (so a second server on a busy port fails), SO_REUSEADDR elsewhere. getattr
@@ -62,6 +63,18 @@ def test_config_from_toml() -> None:
     path = str(Path(__file__).parent / "assets/config.toml")
     config = Config.from_toml(path)
     _check_standard_config(config)
+
+
+def test_config_from_toml_sets_max_rss(tmp_path: Path) -> None:
+    path = tmp_path / "config.toml"
+    path.write_text(f"max_rss = {max_rss}\n")
+    config = Config.from_toml(path)
+    assert config.max_rss == max_rss
+
+
+def test_config_from_mapping_sets_max_rss() -> None:
+    config = Config.from_mapping(max_rss=max_rss)
+    assert config.max_rss == max_rss
 
 
 def test_create_ssl_context() -> None:
