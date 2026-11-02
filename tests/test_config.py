@@ -256,3 +256,86 @@ def test_response_headers(monkeypatch: MonkeyPatch) -> None:
     ]
     config.include_server_header = False
     assert config.response_headers("test") == [(b"date", b"Sat, 02 Dec 2017 15:43:15 GMT")]
+
+
+@pytest.mark.parametrize("operation", ["setsockopt", "bind", "setblocking", "set_inheritable"])
+@pytest.mark.parametrize("error_type", [OSError, KeyboardInterrupt])
+def test_create_sockets_closes_all_on_failure(
+    monkeypatch: MonkeyPatch, operation: str, error_type: type[BaseException]
+) -> None:
+    first, failing = Mock(), Mock()
+    error = error_type("setup failed")
+    getattr(failing, operation).side_effect = error
+    monkeypatch.setattr(socket, "socket", Mock(side_effect=[first, failing]))
+    config = Config()
+    config.bind = ["127.0.0.1:0", "127.0.0.1:0"]
+
+    with pytest.raises(error_type, match="setup failed") as caught:
+        config.create_sockets()
+
+    assert caught.value is error
+    first.close.assert_called_once_with()
+    failing.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("failing_group", ["insecure_bind", "quic_bind", "addresses"])
+def test_create_sockets_closes_previous_groups(
+    monkeypatch: MonkeyPatch, failing_group: str
+) -> None:
+    created: list[Mock] = []
+
+    def make_socket(*_args: object) -> Mock:
+        sock = Mock()
+        created.append(sock)
+        return sock
+
+    monkeypatch.setattr(socket, "socket", make_socket)
+    config = Config()
+    config.certfile = config.keyfile = "unused"
+    config.bind = config.insecure_bind = config.quic_bind = ["127.0.0.1:0"]
+    error = OSError("setup failed")
+    if failing_group == "addresses":
+        monkeypatch.setattr(config, "_set_quic_addresses", Mock(side_effect=error))
+    else:
+        original = config._create_sockets
+
+        def create(binds: list[str], type_: int) -> list[socket.socket]:
+            if len(created) == (1 if failing_group == "insecure_bind" else 2):
+                raise error
+            return original(binds, type_)
+
+        monkeypatch.setattr(config, "_create_sockets", create)
+
+    with pytest.raises(OSError, match="setup failed"):
+        config.create_sockets()
+
+    assert created
+    for sock in created:
+        sock.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize("failure", ["type", "setup", "later_bind", "later_group"])
+def test_create_sockets_preserves_fd_on_failure(monkeypatch: MonkeyPatch, failure: str) -> None:
+    inherited, failing = Mock(), Mock()
+    inherited.getsockopt.return_value = (
+        socket.SOCK_DGRAM if failure == "type" else socket.SOCK_STREAM
+    )
+    if failure == "setup":
+        inherited.setblocking.side_effect = OSError("setup failed")
+    failing.bind.side_effect = OSError("setup failed")
+    monkeypatch.setattr(socket, "socket", Mock(side_effect=[inherited, failing]))
+    config = Config()
+    config.bind = ["fd://2"]
+    if failure == "later_bind":
+        config.bind.append("127.0.0.1:0")
+    elif failure == "later_group":
+        config.certfile = config.keyfile = "unused"
+        config.insecure_bind = ["127.0.0.1:0"]
+
+    with pytest.raises(anycorn.config.SocketTypeError if failure == "type" else OSError):
+        config.create_sockets()
+
+    inherited.detach.assert_called_once_with()
+    inherited.close.assert_not_called()
+    if failure in {"later_bind", "later_group"}:
+        failing.close.assert_called_once_with()

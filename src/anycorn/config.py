@@ -267,16 +267,26 @@ class Config:
 
     def create_sockets(self) -> Sockets:
         """Create and return the server sockets."""
-        if self.ssl_enabled:
-            secure_sockets = self._create_sockets(self.bind)
-            insecure_sockets = self._create_sockets(self.insecure_bind)
-            quic_sockets = self._create_sockets(self.quic_bind, socket.SOCK_DGRAM)
-            self._set_quic_addresses(quic_sockets)
-        else:
-            secure_sockets = []
-            insecure_sockets = self._create_sockets(self.bind)
-            quic_sockets = []
-        return Sockets(secure_sockets, insecure_sockets, quic_sockets)
+        with contextlib.ExitStack() as cleanup:
+
+            def create(binds: list[str], type_: int = socket.SOCK_STREAM) -> list[socket.socket]:
+                sockets = self._create_sockets(binds, type_)
+                for bind, sock in zip(binds, sockets, strict=True):
+                    cleanup.callback(sock.detach if bind.startswith("fd://") else sock.close)
+                return sockets
+
+            if self.ssl_enabled:
+                secure_sockets = create(self.bind)
+                insecure_sockets = create(self.insecure_bind)
+                quic_sockets = create(self.quic_bind, socket.SOCK_DGRAM)
+                self._set_quic_addresses(quic_sockets)
+            else:
+                secure_sockets = []
+                insecure_sockets = create(self.bind)
+                quic_sockets = []
+            result = Sockets(secure_sockets, insecure_sockets, quic_sockets)
+            cleanup.pop_all()
+            return result
 
     def _set_quic_addresses(self, sockets: list[socket.socket]) -> None:
         self._quic_addresses = []
@@ -291,66 +301,73 @@ class Config:
                     stacklevel=2,
                 )
 
-    def _create_sockets(  # noqa: C901, PLR0912
+    def _create_sockets(  # noqa: C901, PLR0912, PLR0915
         self, binds: list[str], type_: int = socket.SOCK_STREAM
     ) -> list[socket.socket]:
         sockets: list[socket.socket] = []
-        for bind in binds:
-            binding: Any = None
-            if bind.startswith("unix:"):
-                sock = socket.socket(socket.AF_UNIX, type_)
-                binding = bind[5:]
-                with contextlib.suppress(FileNotFoundError):
-                    if stat.S_ISSOCK(pathlib.Path(binding).stat().st_mode):
-                        pathlib.Path(binding).unlink()
-            elif bind.startswith("fd://"):
-                sock = socket.socket(fileno=int(bind[5:]))
-                actual_type = sock.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE)
-                if actual_type != type_:
-                    raise SocketTypeError(type_, actual_type)
-            else:
-                bind = bind.replace("[", "").replace("]", "")  # noqa: PLW2901
-                try:
-                    value = bind.rsplit(":", 1)
-                    host, port = value[0], int(value[1])
-                except (ValueError, IndexError):
-                    host, port = bind, 8000
-                sock = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, type_)
+        with contextlib.ExitStack() as cleanup:
+            for bind in binds:
+                binding: Any = None
+                if bind.startswith("unix:"):
+                    sock = socket.socket(socket.AF_UNIX, type_)
+                    cleanup.callback(sock.close)
+                    binding = bind[5:]
+                    with contextlib.suppress(FileNotFoundError):
+                        if stat.S_ISSOCK(pathlib.Path(binding).stat().st_mode):
+                            pathlib.Path(binding).unlink()
+                elif bind.startswith("fd://"):
+                    sock = socket.socket(fileno=int(bind[5:]))
+                    # On failure, preserve the caller-owned descriptor.
+                    cleanup.callback(sock.detach)
+                    actual_type = sock.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE)
+                    if actual_type != type_:
+                        raise SocketTypeError(type_, actual_type)
+                else:
+                    bind = bind.replace("[", "").replace("]", "")  # noqa: PLW2901
+                    try:
+                        value = bind.rsplit(":", 1)
+                        host, port = value[0], int(value[1])
+                    except (ValueError, IndexError):
+                        host, port = bind, 8000
+                    sock = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, type_)
 
-                if type_ == socket.SOCK_STREAM:
-                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                    cleanup.callback(sock.close)
 
-                if self.workers > 1:
-                    with contextlib.suppress(AttributeError):
-                        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-                binding = (host, port)
+                    if type_ == socket.SOCK_STREAM:
+                        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
 
-            _set_reuse_socket_option(sock)
+                    if self.workers > 1:
+                        with contextlib.suppress(AttributeError):
+                            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+                    binding = (host, port)
 
-            if bind.startswith("unix:"):
-                assert binding is not None
-                # os.umask changes process-global state, so restore it in a finally:
-                # a bind() or chown() that raises would otherwise leave the worker's
-                # umask altered for every later socket and file it creates.
-                if self.umask is not None:
-                    current_umask = os.umask(self.umask)
-                try:
-                    sock.bind(binding)
-                    if self.user is not None and self.group is not None:
-                        os.chown(binding, self.user, self.group)  # type: ignore[attr-defined]
-                finally:
+                _set_reuse_socket_option(sock)
+
+                if bind.startswith("unix:"):
+                    assert binding is not None
+                    # os.umask changes process-global state, so restore it in a finally:
+                    # a bind() or chown() that raises would otherwise leave the worker's
+                    # umask altered for every later socket and file it creates.
                     if self.umask is not None:
-                        os.umask(current_umask)
-            elif bind.startswith("fd://"):
-                pass
-            else:
-                assert binding is not None
-                sock.bind(binding)
+                        current_umask = os.umask(self.umask)
+                    try:
+                        sock.bind(binding)
+                        if self.user is not None and self.group is not None:
+                            os.chown(binding, self.user, self.group)  # type: ignore[attr-defined]
+                    finally:
+                        if self.umask is not None:
+                            os.umask(current_umask)
+                elif bind.startswith("fd://"):
+                    pass
+                else:
+                    assert binding is not None
+                    sock.bind(binding)
 
-            sock.setblocking(False)  # noqa: FBT003
-            with contextlib.suppress(AttributeError):
-                sock.set_inheritable(True)
-            sockets.append(sock)
+                sock.setblocking(False)  # noqa: FBT003
+                with contextlib.suppress(AttributeError):
+                    sock.set_inheritable(True)
+                sockets.append(sock)
+            cleanup.pop_all()
         return sockets
 
     def response_headers(self, protocol: str) -> list[tuple[bytes, bytes]]:
